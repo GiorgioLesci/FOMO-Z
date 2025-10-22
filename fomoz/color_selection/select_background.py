@@ -203,15 +203,17 @@ class SelectBackground:
         for z_l in self.z_lim:
             self.mask.append(self._select_objects(z_l, mags))
 
-    def load_parameters(self, input_dict):
+    def load_parameters(self, optimize, optimization_type="iterative"):
         """
         Load precomputed optimal color cut parameters
         and reconstruct interpolator objects.
 
         Parameters
         ----------
-        input_dict : dict
-            Dictionary containing optimal cut parameters.
+        optimize : Optimize
+            `Optimize` object.
+        optimization_type : {"single", "iterative"}, optional
+            Type of optimization results. Default is "iterative".
 
         Returns
         -------
@@ -219,7 +221,17 @@ class SelectBackground:
             Updates ``self.dict`` in place with the loaded dictionary and
             reconstructed interpolator objects.
         """
-        self.dict = copy.deepcopy(input_dict)
+        if optimization_type not in ["single", "iterative"]:
+            raise ValueError(
+                f"Optimization type '{optimization_type}' is not allowed."
+            )
+
+        dictionary = (
+            optimize.dict_single if optimization_type == "single"
+            else optimize.dict_iterative
+        )
+
+        self.dict = copy.deepcopy(dictionary)
         self._reconstruct_interpolators()
 
     def load_parameters_from_file(self, input_dir, file_name):
