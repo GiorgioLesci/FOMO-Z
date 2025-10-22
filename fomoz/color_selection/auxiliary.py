@@ -244,8 +244,11 @@ def float_representer(dumper, value):
     if value == 0.0:
         text = "0"
         return dumper.represent_scalar("tag:yaml.org,2002:int", text)
+
     elif value.is_integer():
         text = f"{int(value)}"
+
     else:
         text = f"{value:.6g}"
+
     return dumper.represent_scalar("tag:yaml.org,2002:float", text)
