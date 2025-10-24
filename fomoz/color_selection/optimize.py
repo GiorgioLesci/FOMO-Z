@@ -774,7 +774,7 @@ class Optimize:
             # After all the interpolation is done, remove z_l
             del input_dict[key]["z_l"]
 
-    def process_single_threshold(
+    def process_L24(
             self, purity_min, completeness_min=0.0, smoothing=0.0, k=3
         ):
         """
@@ -851,7 +851,7 @@ class Optimize:
         self._restructure_dict(self.dict_single)
         self._interpolate(self.dict_single, smoothing=smoothing, k=k)
 
-    def process_iterative_threshold(
+    def process(
         self, purity_tot_min, start_purity=0.999, step=0.001, cpu_number=None,
         smoothing=0.0, k=3, store_iterations=False
     ):
