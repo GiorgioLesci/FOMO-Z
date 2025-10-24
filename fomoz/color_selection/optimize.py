@@ -1031,8 +1031,8 @@ class Optimize:
         dictionary = make_yaml_serializable(dictionary)
 
         # Additional metadata
-        dictionary["metadata"]["z_l"] = list(self.z_lim)
-        dictionary["metadata"]["purity_min"] = purity_min
+        dictionary["metadata"]["z_l"] = [float(z) for z in self.z_lim]
+        dictionary["metadata"]["purity_min"] = [float(P) for P in purity_min]
         dictionary["metadata"]["reference_sample"] = reference_sample_name
         dictionary["metadata"]["notes"] = notes
 
