@@ -242,13 +242,12 @@ def float_representer(dumper, value):
         Precision hardcoded as ``{value:.6g}``
     """
     if value == 0.0:
-        text = "0"
-        return dumper.represent_scalar("tag:yaml.org,2002:int", text)
+        return dumper.represent_scalar("tag:yaml.org,2002:int", "0")
 
     elif value.is_integer():
         text = f"{int(value)}"
+        return dumper.represent_scalar("tag:yaml.org,2002:int", text)
 
     else:
         text = f"{value:.6g}"
-
-    return dumper.represent_scalar("tag:yaml.org,2002:float", text)
+        return dumper.represent_scalar("tag:yaml.org,2002:float", text)
