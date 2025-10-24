@@ -1042,7 +1042,7 @@ class Optimize:
 
         with open(file_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(
-                new_dictionary, f, sort_keys=False, allow_unicode=True
+                dictionary, f, sort_keys=False, allow_unicode=True
             )
 
     def plot(self, loclegend="upper right"):
