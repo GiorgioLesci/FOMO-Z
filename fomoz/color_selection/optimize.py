@@ -628,7 +628,8 @@ class Optimize:
                 Slopes of the cut (if applicable).
         """
         dict_restructured = {}
-        dict_restructured["bands"] = self.bands
+        dict_restructured["metadata"] = {}
+        dict_restructured["metadata"]["bands"] = self.bands
 
         for i in range(len(self.colors)):
             for j in range(i, len(self.colors)):
@@ -723,14 +724,13 @@ class Optimize:
             Updates ``input_dict`` in place by renaming ``"c"``
             as ``"c_optimal"`` and ``"s"`` as ``"s_optimal"``,
             and adding:
-            - ``"c_knots"``, ``"c_coefficients"``, ``"c_order"``
-            - ``"s_knots"``, ``"s_coefficients"``, ``"s_order"``
-              (if ``s`` is present)
+            - ``"knots"``, ``"order"``, ``"c_coefficients"``
+            - ``"s_coefficients"`` (if ``s`` is present)
         """
         for key in input_dict.keys():
 
             # skip metadata
-            if key == 'bands':
+            if key == 'metadata':
                 continue
 
             # rename c and s keys
@@ -755,9 +755,9 @@ class Optimize:
                 ext=2,
             )
             t, c, order = c_spline._eval_args
-            input_dict[key]["c_knots"] = list(t)
+            input_dict[key]["knots"] = list(t)
+            input_dict[key]["order"] = int(order)
             input_dict[key]["c_coefficients"] = list(c)
-            input_dict[key]["c_order"] = int(order)
 
             # Interpolate s (if present)
             if "s_optimal" in input_dict[key]:
@@ -769,9 +769,10 @@ class Optimize:
                     ext=2,
                 )
                 t, c, order = s_spline._eval_args
-                input_dict[key]["s_knots"] = t
                 input_dict[key]["s_coefficients"] = c
-                input_dict[key]["s_order"] = order
+
+            # After all the interpolation is done, remove z_l
+            del input_dict[key]["z_l"]
 
     def process_single_threshold(
             self, purity_min, completeness_min=0.0, smoothing=0.0, k=3
@@ -830,8 +831,10 @@ class Optimize:
             "(single purity threshold case)...",
         )
         if isinstance(purity_min, float):
-            purity_min = [purity_min] * len(self.z_lim)
-        self._get_optimal_single_threshold_cuts(purity_min, completeness_min)
+            self.purity_min = [purity_min] * len(self.z_lim)
+        self._get_optimal_single_threshold_cuts(
+            self.purity_min, completeness_min
+        )
 
         print("Combining the optimal cuts...")
         self._combine_optimal_cuts(
@@ -931,7 +934,7 @@ class Optimize:
                 Total foreground failure rate across all bins.
         """
         if isinstance(purity_tot_min, float):
-            purity_tot_min = [purity_tot_min] * len(self.z_lim)
+            self.purity_tot_min = [purity_tot_min] * len(self.z_lim)
 
         print("\nRunning iterative purity threshold search...")
         start_time = time.time()
@@ -945,7 +948,7 @@ class Optimize:
         args_list = [
             (
                 z_l,
-                purity_tot_min[np.where(self.z_lim == z_l)[0][0]],
+                self.purity_tot_min[np.where(self.z_lim == z_l)[0][0]],
                 start_purity,
                 step,
                 store_iterations
@@ -980,7 +983,8 @@ class Optimize:
         self._interpolate(self.dict_iterative, smoothing=smoothing, k=k)
 
     def write_optimal_selection(
-            self, output_dir, file_name, optimization_type="iterative"
+            self, output_dir, file_name, optimization_type="iterative",
+            reference_sample_name="", notes=""
         ):
         """
         Save the optimal color selection to a YAML file.
@@ -1000,6 +1004,11 @@ class Optimize:
             - "single": saves ``self.dict_single``
             - "iterative": saves ``self.dict_iterative``
             Default is "iterative".
+        reference_sample_name : str, optional
+            Name of the reference sample, stored in the
+            ``reference_sample`` entry of the dictionary.
+        notes : str, optional
+            Additional notes entering the metadata.
 
         Returns
         -------
@@ -1011,18 +1020,30 @@ class Optimize:
                 f"Optimization type '{optimization_type}' is not allowed."
             )
 
-        dictionary = (
-            self.dict_single if optimization_type == "single"
-            else self.dict_iterative
-        )
+        if optimization_type == "single":
+            dictionary = self.dict_single
+            purity_min = self.purity_min
+        else:
+            dictionary = self.dict_iterative
+            purity_min = self.purity_tot_min
 
+        # Make the dictionary yaml-serializable
         dictionary = make_yaml_serializable(dictionary)
 
+        # Additional metadata
+        dictionary["metadata"]["z_l"] = self.z_lim
+        dictionary["metadata"]["purity_min"] = purity_min
+        dictionary["metadata"]["reference_sample"] = reference_sample_name
+        dictionary["metadata"]["notes"] = notes
+
+        # Write
         os.makedirs(output_dir, exist_ok=True)
         file_path = os.path.join(output_dir, f"{file_name}.yaml")
 
         with open(file_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(dictionary, f, sort_keys=False, allow_unicode=True)
+            yaml.safe_dump(
+                new_dictionary, f, sort_keys=False, allow_unicode=True
+            )
 
     def plot(self, loclegend="upper right"):
         """

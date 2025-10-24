@@ -10,6 +10,7 @@ applying a calibrated color selection and for any redshift threshold.
 import os
 import numpy as np
 import numexpr as ne
+import re
 from scipy.interpolate import BSpline
 import yaml
 import copy
@@ -30,8 +31,7 @@ class SelectBackground:
     dict : dict
         Dictionary containing the optimal cut parameters and their associated
         interpolators. Keys are expressions (strings) to be evaluated via
-        `numexpr`. The ``"bands"`` key stores the list of magnitude
-        names.
+        `numexpr`. The ``"metadata"`` key stores the metadata.
     mask : list of numpy.ndarray
         Boolean masks for each redshift in the grid, computed after calling
         ``process``.
@@ -68,38 +68,35 @@ class SelectBackground:
         """
         for key, entry in self.dict.items():
 
-            if key == "bands":  # skip metadata
+            # skip metadata
+            if key == "metadata":
                 continue
 
             # reconstruct c interpolator
             if all(
-                k in entry for k in ("c_knots", "c_coefficients", "c_order")
+                k in entry for k in ("knots", "order", "c_coefficients")
             ):
-                c_knots = np.array(entry["c_knots"], dtype=float)
-                c_knots[0] -= tol
-                c_knots[-1] += tol
+                knots = np.array(entry["knots"], dtype=float)
+                knots[0] -= tol
+                knots[-1] += tol
 
                 self.dict[key]["c_interp"] = BSpline(
-                    c_knots,
+                    knots,
                     entry["c_coefficients"],
-                    entry["c_order"],
+                    entry["order"],
                     extrapolate=False,
                 )
 
-            # reconstruct s interpolator if present
-            if all(
-                k in entry for k in ("s_knots", "s_coefficients", "s_order")
-            ):
-                s_knots = np.array(entry["s_knots"], dtype=float)
-                s_knots[0] -= tol
-                s_knots[-1] += tol
-
-                self.dict[key]["s_interp"] = BSpline(
-                    s_knots,
-                    entry["s_coefficients"],
-                    entry["s_order"],
-                    extrapolate=False,
-                )
+                # reconstruct s interpolator if present
+                if all(
+                    k in entry for k in ("knots", "order", "s_coefficients")
+                ):
+                    self.dict[key]["s_interp"] = BSpline(
+                        knots,
+                        entry["s_coefficients"],
+                        entry["order"],
+                        extrapolate=False,
+                    )
 
     def _select_objects(self, z_l, mags):
         """
@@ -117,7 +114,7 @@ class SelectBackground:
         z_l : float
             Redshift threshold at which the cuts should be evaluated.
         mags : dict
-            Dictionary mapping magnitude names (as in ``self.dict['bands']``)
+            Dictionary mapping magnitude names
             to numpy arrays of magnitudes for all objects.
 
         Returns
@@ -126,19 +123,19 @@ class SelectBackground:
             Boolean mask array of shape (n_objects,), where True indicates
             that the object satisfies at least one of the color conditions.
         """
-        mask = np.full(len(mags[self.dict['bands'][0]]), False)
+        mask = np.full(len(mags[list(mags.keys())[0]]), False)
         local_dict = dict(mags)
         local_dict["c"] = None
         local_dict["s"] = None
         for expr in self.dict.keys():
 
-            if expr == "bands":
+            if expr == "metadata":
                 continue
 
             if (
-                min(self.dict[expr]["z_l"]) - 1e-6
-                <= float(z_l)
-                <= max(self.dict[expr]["z_l"]) + 1e-6
+                min(self.dict[expr]["knots"]) - 1e-6
+                <= z_l
+                <= max(self.dict[expr]["knots"]) + 1e-6
             ):
                 # set c
                 if "c_interp" in self.dict[expr]:
@@ -173,7 +170,7 @@ class SelectBackground:
         dataset : pandas.DataFrame
             Table containing the photometric dataset. Must have columns
             corresponding to the magnitude names stored in
-            ``self.dict['bands']``.
+            ``self.dict['metadata']['bands']``.
 
         Returns
         -------
@@ -188,8 +185,8 @@ class SelectBackground:
             )
 
         if (
-            "c" in self.dict["bands"]
-            or "s" in self.dict["bands"]
+            "c" in self.dict["metadata"]["bands"]
+            or "s" in self.dict["metadata"]["bands"]
         ):
             raise ValueError("Magnitude keys cannot equal 'c' or 's'.")
 
@@ -198,10 +195,15 @@ class SelectBackground:
         else:
             self.z_lim = z_lim
         
+        # Magnitude mapping
+        mags = {
+            band: dataset[band].to_numpy()
+            for band in self.dict['metadata']['bands']
+        }
+
         self.mask = []
-        mags = {band: dataset[band].to_numpy() for band in self.dict['bands']}
         for z_l in self.z_lim:
-            self.mask.append(self._select_objects(z_l, mags))
+            self.mask.append(self._select_objects(float(z_l), mags))
 
     def load_parameters(self, optimize, optimization_type="iterative"):
         """
