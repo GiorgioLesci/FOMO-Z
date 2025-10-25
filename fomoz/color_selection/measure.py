@@ -84,10 +84,15 @@ class Measure:
             errMsg = f"z_gal_string='{z_gal_string}' "
             errMsg += "not found in dataset columns."
             raise KeyError(errMsg)
+
+        if "c" in bands or "s" in bands:
+            raise ValueError("Magnitude keys cannot equal 'c' or 's'.")
+
         if z_gal_string in bands:
             errMsg = f"z_gal_string='{z_gal_string}' conflicts "
             errMsg += f"with a band name in {bands}."
             raise ValueError(errMsg)
+
         if "redshift" in dataset.columns and z_gal_string != "redshift":
             errMsg = "Dataset already contains a 'redshift' column. "
             errMsg += "Please rename it or set z_gal_string='redshift'."

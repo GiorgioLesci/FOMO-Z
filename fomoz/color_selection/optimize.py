@@ -1034,7 +1034,9 @@ class Optimize:
         dictionary["metadata"]["z_l"] = [float(z) for z in self.z_lim]
         dictionary["metadata"]["purity_min"] = [float(P) for P in purity_min]
         dictionary["metadata"]["reference_sample"] = reference_sample_name
-        dictionary["metadata"]["notes"] = notes
+        dictionary["metadata"]["notes"] = (
+            "Produced with the FOMO-Z Python code. " + notes
+        )
 
         # Write
         os.makedirs(output_dir, exist_ok=True)

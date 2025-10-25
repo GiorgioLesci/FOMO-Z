@@ -184,12 +184,6 @@ class SelectBackground:
                 "before the call of this function"
             )
 
-        if (
-            "c" in self.dict["metadata"]["bands"]
-            or "s" in self.dict["metadata"]["bands"]
-        ):
-            raise ValueError("Magnitude keys cannot equal 'c' or 's'.")
-
         if isinstance(z_lim, (float, int)):
             self.z_lim = np.array([float(z_lim)])
         else:
