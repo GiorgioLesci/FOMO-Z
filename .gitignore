@@ -43,3 +43,4 @@ coverage.xml
 .venv
 env/
 venv/
+.ipynb_checkpoints/
