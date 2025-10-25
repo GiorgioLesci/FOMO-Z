@@ -2,7 +2,7 @@
 AUXILIARY FUNCTIONS.
 
 This module provides auxiliary functions for metrics computation,
-data visualization, and data conversion.
+interpolations, data visualization, and data conversion.
 
 :Author: Giorgio Francesco Lesci <giorgio.lesci2 [at] unibo [dot] it>
 """
@@ -144,6 +144,151 @@ def compute_for_cross(args):
     ]
 
     return [compute_metrics(mask, redshift, z_l) for mask in cuts]
+
+
+def build_nested_dict(cut_list):
+    """
+    Build a nested dictionary from a list of color cuts.
+
+    This utility organizes a flat list of cuts into a two-level nested
+    dictionary structure based on their associated color pairs. Each
+    cut is grouped first by its `base_pair`, then by its `comp_pair`.
+
+    Parameters
+    ----------
+    cut_list : list of dict
+        List of cut definitions. Each element must be a dictionary
+        containing at least the keys:
+        - "base_pair" : tuple
+            The primary color pair (e.g., (g, r)).
+        - "comp_pair" : tuple
+            The secondary or comparison color pair (e.g., (r, i)).
+        - other keys may be present (e.g., slope, intercept, metrics).
+
+    Returns
+    -------
+    dict
+        A nested dictionary of the form:
+        {
+            base_pair1: {
+                comp_pair1: [cut1, cut2, ...],
+                comp_pair2: [...],
+                ...
+            },
+            base_pair2: {
+                ...
+            },
+            ...
+        }
+    """
+    nested = {}
+    for cut in cut_list:
+        base_pair = cut["base_pair"]
+        comp_pair = cut["comp_pair"]
+        nested.setdefault(base_pair, {}).setdefault(comp_pair, []).append(cut)
+    return nested
+
+
+def restructure_dict(input_dict, bands, colors, z_lim):
+    """
+    Restructure the nested dictionary of color conditions.
+
+    This method converts the input dictionary of cuts (organized by
+    redshift bins, base pairs, and comparison pairs) into a flatter
+    representation keyed by human-readable string expressions of the
+    color conditions.
+
+    Parameters
+    ----------
+    input_dict : dict
+        Nested dictionary of the form::
+            {
+                z_l: {
+                    color1: {
+                        color2: [list of cut dictionaries]
+                    }
+                }
+            }
+
+        Each cut dictionary must include:
+        - "condition_index" : int
+            Index specifying which inequality is applied (0–3).
+        - "c" : float
+            Intercept of the cut.
+        - "s" : float, optional
+            Slope of the cut (present only for cross-color cuts).
+
+    Returns
+    -------
+    dict
+        Restructured dictionary keyed by string expressions of the cuts,
+        e.g. ``"g-r > s*(r-i) + c"``. Each entry stores:
+        - "z_l" : list of float
+            Redshift thresholds associated with the cut.
+        - "c" : list of float
+            Intercepts of the cut across redshifts.
+        - "s" : list of float, optional
+            Slopes of the cut (if applicable).
+    """
+    dict_restructured = {}
+    dict_restructured["metadata"] = {}
+    dict_restructured["metadata"]["bands"] = bands
+
+    for i in range(len(colors)):
+        for j in range(i, len(colors)):
+            mag1, mag2 = colors[i][0], colors[i][1]
+            mag3, mag4 = colors[j][0], colors[j][1]
+            color1 = (mag1, mag2)
+            color2 = (mag3, mag4)
+            for z_l in z_lim:
+
+                if color1 in input_dict[z_l]:
+
+                    if color2 in input_dict[z_l][color1]:
+
+                        dic = input_dict[z_l][color1][color2]
+                        for k in range(len(dic)):
+
+                            if color1 == color2 and dic[k]["condition_index"] == 0:
+                                expr = f"{mag1}-{mag2}>c"
+                            elif (
+                                color1 == color2 and dic[k]["condition_index"] == 1
+                            ):
+                                expr = f"{mag1}-{mag2}<c"
+                            elif (
+                                color1 != color2 and dic[k]["condition_index"] == 0
+                            ):
+                                expr = f"{mag1}-{mag2}>s*({mag3}-{mag4})+c"
+                            elif (
+                                color1 != color2 and dic[k]["condition_index"] == 1
+                            ):
+                                expr = f"{mag1}-{mag2}>-s*({mag3}-{mag4})+c"
+                            elif (
+                                color1 != color2 and dic[k]["condition_index"] == 2
+                            ):
+                                expr = f"{mag1}-{mag2}<s*({mag3}-{mag4})+c"
+                            elif (
+                                color1 != color2 and dic[k]["condition_index"] == 3
+                            ):
+                                expr = f"{mag1}-{mag2}<-s*({mag3}-{mag4})+c"
+
+                            if expr not in dict_restructured:
+                                dict_restructured[expr] = {}
+
+                            if "z_l" not in dict_restructured[expr]:
+                                dict_restructured[expr]["z_l"] = []
+                            dict_restructured[expr]["z_l"].append(float(z_l))
+
+                            if "c" not in dict_restructured[expr]:
+                                dict_restructured[expr]["c"] = []
+                            dict_restructured[expr]["c"].append(dic[k]["c"])
+
+                            if "s" in expr:
+                                if "s" not in dict_restructured[expr]:
+                                    dict_restructured[expr]["s"] = []
+                                dict_restructured[expr]["s"].append(dic[k]["s"])
+    input_dict.clear()
+    input_dict.update(dict_restructured)
 
 
 def interpolate_parameters(input_dict, smoothing=0.0, k=3):

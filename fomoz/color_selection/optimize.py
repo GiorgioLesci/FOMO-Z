@@ -21,6 +21,8 @@ from .auxiliary import (
     set_plot,
     make_yaml_serializable,
     float_representer,
+    build_nested_dict,
+    restructure_dict,
     interpolate_parameters,
 )
 
@@ -288,139 +290,6 @@ class Optimize:
                                     best_low
                                 )
 
-    def _combine_optimal_cuts(self, dictionary, C_tot, P_tot, F_tot):
-        """
-        Combine multiple optimal color cuts and compute
-        aggregate performance metrics.
-
-        This method aggregates purity, completeness, and foreground
-        failure rates across a set of optimal cuts stored in
-        `dictionary`. The combined results are accumulated into the
-        provided arrays `C_tot`, `P_tot`, and `F_tot`.
-
-        Parameters
-        ----------
-        dictionary : dict
-            Dictionary of selected optimal cuts (e.g., `self.dict_single`
-            or `self.dict_iterative`), where each entry contains the metrics
-            for a cut.
-        C_tot : numpy.ndarray
-            Array that accumulates total completeness values across cuts.
-        P_tot : numpy.ndarray
-            Array that accumulates total purity values across cuts.
-        F_tot : numpy.ndarray
-            Array that accumulates total foreground failure rate values
-            across cuts.
-
-        Returns
-        -------
-        None
-            Updates the input arrays (`C_tot`, `P_tot`, `F_tot`) in place
-            but does not return a value.
-        """
-        redshift = self.dataset["redshift"].values.astype(np.float32)
-
-        for z_l in self.z_lim:
-            if z_l not in dictionary:
-                continue
-            mask_total = np.zeros_like(redshift, dtype=bool)
-
-            for base_pair, comp_cuts in dictionary.get(z_l, {}).items():
-                for comp_pair, conditions in comp_cuts.items():
-                    for cond in conditions:
-                        mag1, mag2 = base_pair
-                        if comp_pair == base_pair:
-                            # Simple cut
-                            color = self.dataset[mag1].values.astype(
-                                np.float32
-                            ) - self.dataset[mag2].values.astype(np.float32)
-                            if cond["condition_index"] == 0:  # color > c
-                                mask = color > cond["c"]
-                            else:  # color < c
-                                mask = color < cond["c"]
-                        else:
-                            # Cross cut
-                            mag3, mag4 = comp_pair
-                            color1 = self.dataset[mag1].values.astype(
-                                np.float32
-                            ) - self.dataset[mag2].values.astype(np.float32)
-                            color2 = self.dataset[mag3].values.astype(
-                                np.float32
-                            ) - self.dataset[mag4].values.astype(np.float32)
-                            s = cond["s"]
-                            c = cond["c"]
-                            idx = cond["condition_index"]
-
-                            if idx == 0:
-                                mask = color1 > s * color2 + c
-                            elif idx == 1:
-                                mask = color1 > -s * color2 + c
-                            elif idx == 2:
-                                mask = color1 < s * color2 + c
-                            elif idx == 3:
-                                mask = color1 < -s * color2 + c
-                            else:
-                                continue
-
-                        mask_total |= mask  # OR logic
-
-            # Compute metrics
-            selected = mask_total
-            redshift_sel = redshift[selected]
-            redshift_unsel = redshift[~selected]
-
-            TP = np.sum(redshift_sel > z_l)
-            FP = np.sum(redshift_sel < z_l)
-            FN = np.sum(redshift_unsel > z_l)
-            TN = np.sum(redshift_unsel < z_l)
-
-            idx = np.where(self.z_lim == z_l)[0][0]
-            C_tot[idx] = TP / (TP + FN) if TP + FN > 0 else 0.0
-            P_tot[idx] = TP / (TP + FP) if TP + FP > 0 else 0.0
-            F_tot[idx] = FP / (FP + TN) if FP + TN > 0 else 0.0
-
-    def _build_nested_dict(self, cut_list):
-        """
-        Build a nested dictionary from a list of color cuts.
-
-        This utility organizes a flat list of cuts into a two-level nested
-        dictionary structure based on their associated color pairs. Each
-        cut is grouped first by its `base_pair`, then by its `comp_pair`.
-
-        Parameters
-        ----------
-        cut_list : list of dict
-            List of cut definitions. Each element must be a dictionary
-            containing at least the keys:
-            - "base_pair" : tuple
-                The primary color pair (e.g., (g, r)).
-            - "comp_pair" : tuple
-                The secondary or comparison color pair (e.g., (r, i)).
-            - other keys may be present (e.g., slope, intercept, metrics).
-
-        Returns
-        -------
-        dict
-            A nested dictionary of the form:
-            {
-                base_pair1: {
-                    comp_pair1: [cut1, cut2, ...],
-                    comp_pair2: [...],
-                    ...
-                },
-                base_pair2: {
-                    ...
-                },
-                ...
-            }
-        """
-        nested = {}
-        for cut in cut_list:
-            base_pair = cut["base_pair"]
-            comp_pair = cut["comp_pair"]
-            nested.setdefault(base_pair, {}).setdefault(comp_pair, []).append(cut)
-        return nested
-
     def _process_iterative_for_one_z(self, args):
         """
         Optimize the color cut selection for a single redshift threshold `z_l`.
@@ -566,7 +435,7 @@ class Optimize:
                     new_best_by_key[key] = cut
 
             selection = list(new_best_by_key.values())
-            nested = self._build_nested_dict(selection)
+            nested = build_nested_dict(selection)
             self._combine_optimal_cuts({z_l: nested}, C_tot_new, P_tot_new, F_tot_new)
 
             if P_tot_new[idx] >= purity_tot_min:
@@ -587,106 +456,96 @@ class Optimize:
 
         return z_l, list(best_by_key.values()), dict_iterative_steps
 
-    def _restructure_dict(self, input_dict):
+    def _combine_optimal_cuts(self, dictionary, C_tot, P_tot, F_tot):
         """
-        Restructure the nested dictionary of color conditions.
+        Combine multiple optimal color cuts and compute
+        aggregate performance metrics.
 
-        This method converts the input dictionary of cuts (organized by
-        redshift bins, base pairs, and comparison pairs) into a flatter
-        representation keyed by human-readable string expressions of the
-        color conditions.
+        This method aggregates purity, completeness, and foreground
+        failure rates across a set of optimal cuts stored in
+        `dictionary`. The combined results are accumulated into the
+        provided arrays `C_tot`, `P_tot`, and `F_tot`.
 
         Parameters
         ----------
-        input_dict : dict
-            Nested dictionary of the form::
-                {
-                    z_l: {
-                        color1: {
-                            color2: [list of cut dictionaries]
-                        }
-                    }
-                }
-
-            Each cut dictionary must include:
-            - "condition_index" : int
-                Index specifying which inequality is applied (0–3).
-            - "c" : float
-                Intercept of the cut.
-            - "s" : float, optional
-                Slope of the cut (present only for cross-color cuts).
+        dictionary : dict
+            Dictionary of selected optimal cuts (e.g., `self.dict_single`
+            or `self.dict_iterative`), where each entry contains the metrics
+            for a cut.
+        C_tot : numpy.ndarray
+            Array that accumulates total completeness values across cuts.
+        P_tot : numpy.ndarray
+            Array that accumulates total purity values across cuts.
+        F_tot : numpy.ndarray
+            Array that accumulates total foreground failure rate values
+            across cuts.
 
         Returns
         -------
-        dict
-            Restructured dictionary keyed by string expressions of the cuts,
-            e.g. ``"g-r > s*(r-i) + c"``. Each entry stores:
-            - "z_l" : list of float
-                Redshift thresholds associated with the cut.
-            - "c" : list of float
-                Intercepts of the cut across redshifts.
-            - "s" : list of float, optional
-                Slopes of the cut (if applicable).
+        None
+            Updates the input arrays (`C_tot`, `P_tot`, `F_tot`) in place
+            but does not return a value.
         """
-        dict_restructured = {}
-        dict_restructured["metadata"] = {}
-        dict_restructured["metadata"]["bands"] = self.bands
+        redshift = self.dataset["redshift"].values.astype(np.float32)
 
-        for i in range(len(self.colors)):
-            for j in range(i, len(self.colors)):
-                mag1, mag2 = self.colors[i][0], self.colors[i][1]
-                mag3, mag4 = self.colors[j][0], self.colors[j][1]
-                color1 = (mag1, mag2)
-                color2 = (mag3, mag4)
-                for z_l in self.z_lim:
+        for z_l in self.z_lim:
+            if z_l not in dictionary:
+                continue
+            mask_total = np.zeros_like(redshift, dtype=bool)
 
-                    if color1 in input_dict[z_l]:
+            for base_pair, comp_cuts in dictionary.get(z_l, {}).items():
+                for comp_pair, conditions in comp_cuts.items():
+                    for cond in conditions:
+                        mag1, mag2 = base_pair
+                        if comp_pair == base_pair:
+                            # Simple cut
+                            color = self.dataset[mag1].values.astype(
+                                np.float32
+                            ) - self.dataset[mag2].values.astype(np.float32)
+                            if cond["condition_index"] == 0:  # color > c
+                                mask = color > cond["c"]
+                            else:  # color < c
+                                mask = color < cond["c"]
+                        else:
+                            # Cross cut
+                            mag3, mag4 = comp_pair
+                            color1 = self.dataset[mag1].values.astype(
+                                np.float32
+                            ) - self.dataset[mag2].values.astype(np.float32)
+                            color2 = self.dataset[mag3].values.astype(
+                                np.float32
+                            ) - self.dataset[mag4].values.astype(np.float32)
+                            s = cond["s"]
+                            c = cond["c"]
+                            idx = cond["condition_index"]
 
-                        if color2 in input_dict[z_l][color1]:
+                            if idx == 0:
+                                mask = color1 > s * color2 + c
+                            elif idx == 1:
+                                mask = color1 > -s * color2 + c
+                            elif idx == 2:
+                                mask = color1 < s * color2 + c
+                            elif idx == 3:
+                                mask = color1 < -s * color2 + c
+                            else:
+                                continue
 
-                            dic = input_dict[z_l][color1][color2]
-                            for k in range(len(dic)):
+                        mask_total |= mask  # OR logic
 
-                                if color1 == color2 and dic[k]["condition_index"] == 0:
-                                    expr = f"{mag1}-{mag2}>c"
-                                elif (
-                                    color1 == color2 and dic[k]["condition_index"] == 1
-                                ):
-                                    expr = f"{mag1}-{mag2}<c"
-                                elif (
-                                    color1 != color2 and dic[k]["condition_index"] == 0
-                                ):
-                                    expr = f"{mag1}-{mag2}>s*({mag3}-{mag4})+c"
-                                elif (
-                                    color1 != color2 and dic[k]["condition_index"] == 1
-                                ):
-                                    expr = f"{mag1}-{mag2}>-s*({mag3}-{mag4})+c"
-                                elif (
-                                    color1 != color2 and dic[k]["condition_index"] == 2
-                                ):
-                                    expr = f"{mag1}-{mag2}<s*({mag3}-{mag4})+c"
-                                elif (
-                                    color1 != color2 and dic[k]["condition_index"] == 3
-                                ):
-                                    expr = f"{mag1}-{mag2}<-s*({mag3}-{mag4})+c"
+            # Compute metrics
+            selected = mask_total
+            redshift_sel = redshift[selected]
+            redshift_unsel = redshift[~selected]
 
-                                if expr not in dict_restructured:
-                                    dict_restructured[expr] = {}
+            TP = np.sum(redshift_sel > z_l)
+            FP = np.sum(redshift_sel < z_l)
+            FN = np.sum(redshift_unsel > z_l)
+            TN = np.sum(redshift_unsel < z_l)
 
-                                if "z_l" not in dict_restructured[expr]:
-                                    dict_restructured[expr]["z_l"] = []
-                                dict_restructured[expr]["z_l"].append(float(z_l))
-
-                                if "c" not in dict_restructured[expr]:
-                                    dict_restructured[expr]["c"] = []
-                                dict_restructured[expr]["c"].append(dic[k]["c"])
-
-                                if "s" in expr:
-                                    if "s" not in dict_restructured[expr]:
-                                        dict_restructured[expr]["s"] = []
-                                    dict_restructured[expr]["s"].append(dic[k]["s"])
-        input_dict.clear()
-        input_dict.update(dict_restructured)
+            idx = np.where(self.z_lim == z_l)[0][0]
+            C_tot[idx] = TP / (TP + FN) if TP + FN > 0 else 0.0
+            P_tot[idx] = TP / (TP + FP) if TP + FP > 0 else 0.0
+            F_tot[idx] = FP / (FP + TN) if FP + TN > 0 else 0.0
 
     def process_L24(self, purity_min, completeness_min=0.0, smoothing=0.0, k=3):
         """
@@ -758,7 +617,7 @@ class Optimize:
         print("Purity:", self.P_single_tot)
         print("Foreground failure rate:", self.F_single_tot)
 
-        self._restructure_dict(self.dict_single)
+        restructure_dict(self.dict_single, self.bands, self.colors, self.z_lim)
         interpolate_parameters(self.dict_single, smoothing=smoothing, k=k)
 
     def process(
@@ -876,7 +735,7 @@ class Optimize:
 
         for result in results:
             z_l, cut_list, steps = result
-            self.dict_iterative[z_l] = self._build_nested_dict(cut_list)
+            self.dict_iterative[z_l] = build_nested_dict(cut_list)
             self.dict_iterative_steps[z_l] = steps
 
         print("\nCombining the final optimal cuts across redshift bins...")
@@ -896,7 +755,7 @@ class Optimize:
         print("Purity:", self.P_iterative_tot)
         print("Foreground failure rate:", self.F_iterative_tot)
 
-        self._restructure_dict(self.dict_iterative)
+        restructure_dict(self.dict_iterative, self.bands, self.colors, self.z_lim)
         interpolate_parameters(self.dict_iterative, smoothing=smoothing, k=k)
 
     def write_optimal_selection(
