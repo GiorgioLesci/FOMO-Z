@@ -9,7 +9,7 @@ interpolations, data visualization, and data conversion.
 
 import numpy as np
 import matplotlib.pyplot as plt
-
+from scipy.interpolate import UnivariateSpline
 
 def compute_metrics(mask, redshift, z_l):
     """

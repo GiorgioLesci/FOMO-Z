@@ -8,9 +8,10 @@ applying a calibrated color selection for any redshift threshold.
 """
 
 import os
+import re
+
 import numpy as np
 import numexpr as ne
-import re
 from scipy.interpolate import BSpline
 import yaml
 import copy

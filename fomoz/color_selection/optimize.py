@@ -7,13 +7,13 @@ optimal parameters, given any lower limit in redshift.
 :Author: Giorgio Francesco Lesci <giorgio.lesci2 [at] unibo [dot] it>
 """
 
-import numpy as np
 import os
+
+import numpy as np
 import multiprocessing as mp
 import copy
 from tqdm import tqdm
 import time
-from scipy.interpolate import UnivariateSpline
 import yaml
 import matplotlib.pyplot as plt
 
