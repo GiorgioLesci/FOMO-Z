@@ -2,7 +2,7 @@
 OBJECT SELECTION CLASS.
 
 This class selects objects in an input photometric sample,
-applying a calibrated color selection and for any redshift threshold.
+applying a calibrated color selection for any redshift threshold.
 
 :Author: Giorgio Francesco Lesci <giorgio.lesci2 [at] unibo [dot] it>
 """
@@ -73,9 +73,7 @@ class SelectBackground:
                 continue
 
             # reconstruct c interpolator
-            if all(
-                k in entry for k in ("knots", "order", "c_coefficients")
-            ):
+            if all(k in entry for k in ("knots", "order", "c_coefficients")):
                 knots = np.array(entry["knots"], dtype=float)
                 knots[0] -= tol
                 knots[-1] += tol
@@ -88,9 +86,7 @@ class SelectBackground:
                 )
 
                 # reconstruct s interpolator if present
-                if all(
-                    k in entry for k in ("knots", "order", "s_coefficients")
-                ):
+                if all(k in entry for k in ("knots", "order", "s_coefficients")):
                     self.dict[key]["s_interp"] = BSpline(
                         knots,
                         entry["s_coefficients"],
@@ -132,11 +128,7 @@ class SelectBackground:
             if expr == "metadata":
                 continue
 
-            if (
-                min(self.dict[expr]["knots"]) - 1e-6
-                <= z_l
-                <= max(self.dict[expr]["knots"]) + 1e-6
-            ):
+            if min(self.dict[expr]["knots"]) <= z_l <= max(self.dict[expr]["knots"]):
                 # set c
                 if "c_interp" in self.dict[expr]:
                     local_dict["c"] = self.dict[expr]["c_interp"](z_l)
@@ -180,19 +172,17 @@ class SelectBackground:
         """
         if not self.dict:
             raise ValueError(
-                "A color cut dictionary must be set "
-                "before the call of this function"
+                "A color cut dictionary must be set " "before the call of this function"
             )
 
         if isinstance(z_lim, (float, int)):
             self.z_lim = np.array([float(z_lim)])
         else:
             self.z_lim = z_lim
-        
+
         # Magnitude mapping
         mags = {
-            band: dataset[band].to_numpy()
-            for band in self.dict['metadata']['bands']
+            band: dataset[band].to_numpy() for band in self.dict["metadata"]["bands"]
         }
 
         self.mask = []
@@ -218,12 +208,11 @@ class SelectBackground:
             reconstructed interpolator objects.
         """
         if optimization_type not in ["single", "iterative"]:
-            raise ValueError(
-                f"Optimization type '{optimization_type}' is not allowed."
-            )
+            raise ValueError(f"Optimization type '{optimization_type}' is not allowed.")
 
         dictionary = (
-            optimize.dict_single if optimization_type == "single"
+            optimize.dict_single
+            if optimization_type == "single"
             else optimize.dict_iterative
         )
 

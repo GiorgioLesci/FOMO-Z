@@ -17,7 +17,12 @@ from scipy.interpolate import UnivariateSpline
 import yaml
 import matplotlib.pyplot as plt
 
-from .auxiliary import set_plot, make_yaml_serializable, float_representer
+from .auxiliary import (
+    set_plot,
+    make_yaml_serializable,
+    float_representer,
+    interpolate_parameters,
+)
 
 # Register the custom float representer for both default and safe dumpers
 yaml.add_representer(float, float_representer)
@@ -556,17 +561,13 @@ class Optimize:
                 )
                 if (
                     key not in new_best_by_key
-                    or cut[
-                        "completeness"
-                    ] > new_best_by_key[key]["completeness"]
+                    or cut["completeness"] > new_best_by_key[key]["completeness"]
                 ):
                     new_best_by_key[key] = cut
 
             selection = list(new_best_by_key.values())
             nested = self._build_nested_dict(selection)
-            self._combine_optimal_cuts(
-                {z_l: nested}, C_tot_new, P_tot_new, F_tot_new
-            )
+            self._combine_optimal_cuts({z_l: nested}, C_tot_new, P_tot_new, F_tot_new)
 
             if P_tot_new[idx] >= purity_tot_min:
 
@@ -687,96 +688,7 @@ class Optimize:
         input_dict.clear()
         input_dict.update(dict_restructured)
 
-    def _interpolate(self, input_dict, smoothing=0.0, k=3):
-        """
-        Interpolate the cut parameters across redshift bins using splines.
-
-        For each color cut expression in the input dictionary, fits a
-        `scipy.interpolate.UnivariateSpline` to the intercepts (``c``)
-        and, if present, the slopes (``s``), as functions of the redshift
-        thresholds (``z_l``). The fitted spline parameters (knots,
-        coefficients, and order) are stored back into the dictionary.
-
-        Parameters
-        ----------
-        input_dict : dict
-            Dictionary of cuts, typically ``self.dict_iterative`` or
-            ``self.dict_single``. Each entry must contain:
-            - ``"z_l"`` : list of float
-                Redshift thresholds.
-            - ``"c"`` : list of float
-                Intercepts at each redshift.
-            - ``"s"`` : list of float, optional
-                Slopes at each redshift (for cross-color cuts).
-        smoothing : float, optional
-            Smoothing factor passed to `UnivariateSpline`. Default is 0.0
-            (interpolating spline).
-        k : int, optional
-            Requested degree of the smoothing spline. Default is 3 (cubic). 
-            The actual degree is adjusted per case:
-            - If there are fewer than ``k+1`` points, the effective degree 
-              is reduced to ``n_points-1``.
-            - If there is only one point, interpolation is skipped.
-
-        Returns
-        -------
-        None
-            Updates ``input_dict`` in place by renaming ``"c"``
-            as ``"c_optimal"`` and ``"s"`` as ``"s_optimal"``,
-            and adding:
-            - ``"knots"``, ``"order"``, ``"c_coefficients"``
-            - ``"s_coefficients"`` (if ``s`` is present)
-        """
-        for key in input_dict.keys():
-
-            # skip metadata
-            if key == 'metadata':
-                continue
-
-            # rename c and s keys
-            input_dict[key]["c_optimal"] = input_dict[key].pop("c")
-            if "s" in input_dict[key]:
-                input_dict[key]["s_optimal"] = input_dict[key].pop("s")
-
-            # skip if there's only 1 point
-            n_points = len(input_dict[key]["c_optimal"])
-            if n_points <= 1:
-                continue
-
-            # adjust spline degree per case
-            k_eff = min(k, n_points - 1)
-
-            # Interpolate c
-            c_spline = UnivariateSpline(
-                input_dict[key]["z_l"],
-                input_dict[key]["c_optimal"],
-                s=smoothing,
-                k=k_eff,
-                ext=2,
-            )
-            t, c, order = c_spline._eval_args
-            input_dict[key]["knots"] = list(t)
-            input_dict[key]["order"] = int(order)
-            input_dict[key]["c_coefficients"] = list(c)
-
-            # Interpolate s (if present)
-            if "s_optimal" in input_dict[key]:
-                s_spline = UnivariateSpline(
-                    input_dict[key]["z_l"],
-                    input_dict[key]["s_optimal"],
-                    s=smoothing,
-                    k=k_eff,
-                    ext=2,
-                )
-                t, c, order = s_spline._eval_args
-                input_dict[key]["s_coefficients"] = c
-
-            # After all the interpolation is done, remove z_l
-            del input_dict[key]["z_l"]
-
-    def process_L24(
-            self, purity_min, completeness_min=0.0, smoothing=0.0, k=3
-        ):
+    def process_L24(self, purity_min, completeness_min=0.0, smoothing=0.0, k=3):
         """
         Derives the optimal color conditions based on a single purity threshold.
         Implements the methods detailed in Lesci et al. (2024, A&A, 684, A139),
@@ -799,7 +711,7 @@ class Optimize:
             Minimum purity threshold applied to each color cut. If float, the
             same threshold is applied at any limiting redshift point.
             If array-like, a different threshold is used at each limiting
-            redshift.            
+            redshift.
         completeness_min : float, optional
             Minimum completeness threshold applied to each color cut.
             Default is 0.
@@ -809,7 +721,7 @@ class Optimize:
         k : int, optional
             Requested degree of the spline interpolation. Default is 3 (cubic).
             The actual degree is adjusted case by case:
-            - If there are fewer than ``k+1`` points, the degree is reduced 
+            - If there are fewer than ``k+1`` points, the degree is reduced
               to ``n_points - 1``.
             - If there is only one point, interpolation is skipped.
 
@@ -832,9 +744,7 @@ class Optimize:
         )
         if isinstance(purity_min, float):
             self.purity_min = [purity_min] * len(self.z_lim)
-        self._get_optimal_single_threshold_cuts(
-            self.purity_min, completeness_min
-        )
+        self._get_optimal_single_threshold_cuts(self.purity_min, completeness_min)
 
         print("Combining the optimal cuts...")
         self._combine_optimal_cuts(
@@ -849,11 +759,17 @@ class Optimize:
         print("Foreground failure rate:", self.F_single_tot)
 
         self._restructure_dict(self.dict_single)
-        self._interpolate(self.dict_single, smoothing=smoothing, k=k)
+        interpolate_parameters(self.dict_single, smoothing=smoothing, k=k)
 
     def process(
-        self, purity_tot_min, start_purity=0.999, step=0.001, cpu_number=None,
-        smoothing=0.0, k=3, store_iterations=False
+        self,
+        purity_tot_min,
+        start_purity=0.999,
+        step=0.001,
+        cpu_number=None,
+        smoothing=0.0,
+        k=3,
+        store_iterations=False,
     ):
         """
         Iterative search for optimal color conditions.
@@ -912,7 +828,7 @@ class Optimize:
         k : int, optional
             Requested degree of the spline interpolation. Default is 3 (cubic).
             The actual degree is adjusted case by case:
-            - If there are fewer than ``k+1`` points, the degree is reduced 
+            - If there are fewer than ``k+1`` points, the degree is reduced
               to ``n_points - 1``.
             - If there is only one point, interpolation is skipped.
         store_iterations : bool, optional
@@ -951,8 +867,9 @@ class Optimize:
                 self.purity_tot_min[np.where(self.z_lim == z_l)[0][0]],
                 start_purity,
                 step,
-                store_iterations
-            ) for z_l in self.z_lim
+                store_iterations,
+            )
+            for z_l in self.z_lim
         ]
         with mp.Pool(processes=N_cpu) as pool:
             results = pool.map(self._process_iterative_for_one_z, args_list)
@@ -980,12 +897,16 @@ class Optimize:
         print("Foreground failure rate:", self.F_iterative_tot)
 
         self._restructure_dict(self.dict_iterative)
-        self._interpolate(self.dict_iterative, smoothing=smoothing, k=k)
+        interpolate_parameters(self.dict_iterative, smoothing=smoothing, k=k)
 
     def write_optimal_selection(
-            self, output_dir, file_name, optimization_type="iterative",
-            reference_sample_name="", notes=""
-        ):
+        self,
+        output_dir,
+        file_name,
+        optimization_type="iterative",
+        reference_sample_name="",
+        notes="",
+    ):
         """
         Save the optimal color selection to a YAML file.
 
@@ -1016,9 +937,7 @@ class Optimize:
             The selected dictionary is saved as a ``.yaml`` file.
         """
         if optimization_type not in ["single", "iterative"]:
-            raise ValueError(
-                f"Optimization type '{optimization_type}' is not allowed."
-            )
+            raise ValueError(f"Optimization type '{optimization_type}' is not allowed.")
 
         if optimization_type == "single":
             dictionary = self.dict_single
@@ -1043,9 +962,7 @@ class Optimize:
         file_path = os.path.join(output_dir, f"{file_name}.yaml")
 
         with open(file_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(
-                dictionary, f, sort_keys=False, allow_unicode=True
-            )
+            yaml.safe_dump(dictionary, f, sort_keys=False, allow_unicode=True)
 
     def plot(self, loclegend="upper right"):
         """

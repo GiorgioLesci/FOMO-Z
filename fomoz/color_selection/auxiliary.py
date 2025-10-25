@@ -53,6 +53,7 @@ def compute_metrics(mask, redshift, z_l):
 
     return TP, FP, FN, TN
 
+
 def compute_for_simple(args):
     """
     Compute classification metrics for a simple threshold on a single color.
@@ -94,6 +95,7 @@ def compute_for_simple(args):
         *compute_metrics(mask_up, redshift, z_l),
         *compute_metrics(mask_low, redshift, z_l),
     ]
+
 
 def compute_for_cross(args):
     """
@@ -143,6 +145,94 @@ def compute_for_cross(args):
 
     return [compute_metrics(mask, redshift, z_l) for mask in cuts]
 
+
+def interpolate_parameters(input_dict, smoothing=0.0, k=3):
+    """
+    Interpolate the color cut parameters across redshift bins using splines.
+
+    For each color cut expression in the input dictionary, fits a
+    `scipy.interpolate.UnivariateSpline` to the intercepts (``c``)
+    and, if present, the slopes (``s``), as functions of the redshift
+    thresholds (``z_l``). The fitted spline parameters (knots,
+    coefficients, and order) are stored back into the dictionary.
+
+    Parameters
+    ----------
+    input_dict : dict
+        Dictionary of color cuts. Each entry must contain:
+        - ``"z_l"`` : list of float
+            Redshift thresholds.
+        - ``"c"`` : list of float
+            Intercepts at each redshift.
+        - ``"s"`` : list of float, optional
+            Slopes at each redshift (for cross-color cuts).
+    smoothing : float, optional
+        Smoothing factor passed to `UnivariateSpline`. Default is 0.0
+        (interpolating spline).
+    k : int, optional
+        Requested degree of the smoothing spline. Default is 3 (cubic).
+        The actual degree is adjusted per case:
+        - If there are fewer than ``k+1`` points, the effective degree
+          is reduced to ``n_points-1``.
+        - If there is only one point, interpolation is skipped.
+
+    Returns
+    -------
+    None
+        Updates ``input_dict`` in place by renaming ``"c"``
+        as ``"c_optimal"`` and ``"s"`` as ``"s_optimal"``,
+        and adding:
+        - ``"knots"``, ``"order"``, ``"c_coefficients"``
+        - ``"s_coefficients"`` (if ``s`` is present)
+    """
+    for key in input_dict.keys():
+
+        # skip metadata
+        if key == "metadata":
+            continue
+
+        # rename c and s keys
+        input_dict[key]["c_optimal"] = input_dict[key].pop("c")
+        if "s" in input_dict[key]:
+            input_dict[key]["s_optimal"] = input_dict[key].pop("s")
+
+        # skip if there's only 1 point
+        n_points = len(input_dict[key]["c_optimal"])
+        if n_points <= 1:
+            continue
+
+        # adjust spline degree per case
+        k_eff = min(k, n_points - 1)
+
+        # Interpolate c
+        c_spline = UnivariateSpline(
+            input_dict[key]["z_l"],
+            input_dict[key]["c_optimal"],
+            s=smoothing,
+            k=k_eff,
+            ext=2,
+        )
+        t, c, order = c_spline._eval_args
+        input_dict[key]["knots"] = list(t)
+        input_dict[key]["order"] = int(order)
+        input_dict[key]["c_coefficients"] = list(c)
+
+        # Interpolate s (if present)
+        if "s_optimal" in input_dict[key]:
+            s_spline = UnivariateSpline(
+                input_dict[key]["z_l"],
+                input_dict[key]["s_optimal"],
+                s=smoothing,
+                k=k_eff,
+                ext=2,
+            )
+            t, c, order = s_spline._eval_args
+            input_dict[key]["s_coefficients"] = c
+
+        # After all the interpolation is done, remove z_l
+        del input_dict[key]["z_l"]
+
+
 def set_plot():
     """
     Create and configure a figure with three side-by-side subplots for
@@ -173,6 +263,7 @@ def set_plot():
     ax[2].set_ylabel(r"Foreground failure rate [%]", fontsize=15)
 
     return ax
+
 
 def make_yaml_serializable(obj):
     """
@@ -217,6 +308,7 @@ def make_yaml_serializable(obj):
         return obj.item()
     else:
         return obj
+
 
 def float_representer(dumper, value):
     """

@@ -161,9 +161,7 @@ class Measure:
             mag2
         ].values.astype(np.float32)
         redshift = self.dataset["redshift"].values.astype(np.float32)
-        test_colors = np.linspace(
-            color.min(), color.max(), 300, dtype=np.float32
-        )[1:-1]
+        test_colors = np.linspace(color.min(), color.max(), 300, dtype=np.float32)[1:-1]
 
         # Create pool once
         with mp.Pool(N_cpu) as pool:
@@ -183,9 +181,7 @@ class Measure:
                 mask_bad = redshift < z_l
 
                 # One-color cuts
-                color_cut_args = [
-                    (tc, color, redshift, z_l) for tc in test_colors
-                ]
+                color_cut_args = [(tc, color, redshift, z_l) for tc in test_colors]
                 results = pool.map(compute_for_simple, color_cut_args)
 
                 results_up = [res[:4] for res in results]
@@ -223,11 +219,7 @@ class Measure:
                         # Transpose result list for each metric
                         tp_all, fp_all, fn_all, tn_all = [], [], [], []
 
-                        for (
-                            res
-                        ) in (
-                            results
-                        ):  # each res has 4 entries: one per condition
+                        for res in results:  # each res has 4 entries: one per condition
                             tp_c, fp_c, fn_c, tn_c = zip(*res)
                             tp_all.append(list(tp_c))
                             fp_all.append(list(fp_c))
@@ -266,9 +258,7 @@ class Measure:
             This method updates the internal class attribute `self.dict_all`
             and does not return any value.
         """
-        print(
-            "Computing color cuts given the following set of bands:", self.bands
-        )
+        print("Computing color cuts given the following set of bands:", self.bands)
 
         for i in range(len(self.colors)):
             self._apply_cuts(
