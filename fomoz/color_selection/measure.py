@@ -109,8 +109,11 @@ class Measure:
 
         if isinstance(z_lim, (float, int)):
             self.z_lim = np.array([float(z_lim)])
+        elif isinstance(z_lim, list):
+            self.z_lim = np.array(z_lim)
         else:
             self.z_lim = z_lim
+
         for z_l in self.z_lim:
             if z_l < 0:
                 raise ValueError("z_lim values cannot be negative")

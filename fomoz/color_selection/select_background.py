@@ -120,6 +120,7 @@ class SelectBackground:
             Boolean mask array of shape (n_objects,), where True indicates
             that the object satisfies at least one of the color conditions.
         """
+        z_l_points = self.dict["metadata"]["z_l"]
         mask = np.full(len(mags[list(mags.keys())[0]]), False)
         local_dict = dict(mags)
         local_dict["c"] = None
@@ -129,7 +130,7 @@ class SelectBackground:
             if expr == "metadata":
                 continue
 
-            if min(self.dict[expr]["knots"]) <= z_l <= max(self.dict[expr]["knots"]):
+            if min(z_l_points) - 1.e-6 <= z_l <= max(z_l_points) + 1.e-6:
                 # set c
                 if "c_interp" in self.dict[expr]:
                     local_dict["c"] = self.dict[expr]["c_interp"](z_l)

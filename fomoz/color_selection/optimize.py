@@ -602,8 +602,8 @@ class Optimize:
             "(single purity threshold case)...",
         )
         if isinstance(purity_min, float):
-            self.purity_min = [purity_min] * len(self.z_lim)
-        self._get_optimal_single_threshold_cuts(self.purity_min, completeness_min)
+            purity_min = [purity_min] * len(self.z_lim)
+        self._get_optimal_single_threshold_cuts(purity_min, completeness_min)
 
         print("Combining the optimal cuts...")
         self._combine_optimal_cuts(
@@ -617,7 +617,9 @@ class Optimize:
         print("Purity:", self.P_single_tot)
         print("Foreground failure rate:", self.F_single_tot)
 
-        restructure_dict(self.dict_single, self.bands, self.colors, self.z_lim)
+        restructure_dict(
+            self.dict_single, self.bands, self.colors, self.z_lim, purity_min
+        )
         interpolate_parameters(self.dict_single, smoothing=smoothing, k=k)
 
     def process(
@@ -709,7 +711,7 @@ class Optimize:
                 Total foreground failure rate across all bins.
         """
         if isinstance(purity_tot_min, float):
-            self.purity_tot_min = [purity_tot_min] * len(self.z_lim)
+            purity_tot_min = [purity_tot_min] * len(self.z_lim)
 
         print("\nRunning iterative purity threshold search...")
         start_time = time.time()
@@ -723,7 +725,7 @@ class Optimize:
         args_list = [
             (
                 z_l,
-                self.purity_tot_min[np.where(self.z_lim == z_l)[0][0]],
+                purity_tot_min[np.where(self.z_lim == z_l)[0][0]],
                 start_purity,
                 step,
                 store_iterations,
@@ -749,13 +751,15 @@ class Optimize:
         total_time = time.time() - start_time
         print(
             "Iterative thresholding complete.",
-            f"Total time: {total_time / 60.:.2f} minutes.",
+            f"Total time: {total_time:.2f} seconds.",
         )
         print("\nCompleteness:", self.C_iterative_tot)
         print("Purity:", self.P_iterative_tot)
         print("Foreground failure rate:", self.F_iterative_tot)
 
-        restructure_dict(self.dict_iterative, self.bands, self.colors, self.z_lim)
+        restructure_dict(
+            self.dict_iterative, self.bands, self.colors, self.z_lim, purity_tot_min
+        )
         interpolate_parameters(self.dict_iterative, smoothing=smoothing, k=k)
 
     def write_optimal_selection(
@@ -800,17 +804,13 @@ class Optimize:
 
         if optimization_type == "single":
             dictionary = self.dict_single
-            purity_min = self.purity_min
         else:
             dictionary = self.dict_iterative
-            purity_min = self.purity_tot_min
 
         # Make the dictionary yaml-serializable
         dictionary = make_yaml_serializable(dictionary)
 
         # Additional metadata
-        dictionary["metadata"]["z_l"] = [float(z) for z in self.z_lim]
-        dictionary["metadata"]["purity_min"] = [float(P) for P in purity_min]
         dictionary["metadata"]["reference_sample"] = reference_sample_name
         dictionary["metadata"]["notes"] = (
             "Produced with the FOMO-Z Python code. " + notes

@@ -189,7 +189,7 @@ def build_nested_dict(cut_list):
     return nested
 
 
-def restructure_dict(input_dict, bands, colors, z_lim):
+def restructure_dict(input_dict, bands, colors, z_lim, purity_min):
     """
     Restructure the nested dictionary of color conditions.
 
@@ -233,6 +233,8 @@ def restructure_dict(input_dict, bands, colors, z_lim):
     dict_restructured = {}
     dict_restructured["metadata"] = {}
     dict_restructured["metadata"]["bands"] = bands
+    dict_restructured["metadata"]["z_l"] = [float(z) for z in z_lim]
+    dict_restructured["metadata"]["purity_min"] = [float(P) for P in purity_min]
 
     for i in range(len(colors)):
         for j in range(i, len(colors)):
