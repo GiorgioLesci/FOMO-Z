@@ -4,7 +4,7 @@ OPTIMIZE COLOR CUT COMBINATION.
 This module selects the optimal color conditions and the corresponding
 optimal parameters, given any lower limit in redshift.
 
-:Author: Giorgio Francesco Lesci <giorgio.lesci2 [at] unibo [dot] it>
+:Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
 import os

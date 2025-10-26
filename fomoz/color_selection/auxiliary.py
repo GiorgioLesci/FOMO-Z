@@ -4,7 +4,7 @@ AUXILIARY FUNCTIONS.
 This module provides auxiliary functions for metrics computation,
 interpolations, data visualization, and data conversion.
 
-:Author: Giorgio Francesco Lesci <giorgio.lesci2 [at] unibo [dot] it>
+:Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
 import numpy as np
@@ -346,6 +346,7 @@ def interpolate_parameters(input_dict, smoothing=0.0, k=3):
         # skip if there's only 1 point
         n_points = len(input_dict[key]["c_optimal"])
         if n_points <= 1:
+            del input_dict[key]["z_l"]
             continue
 
         # adjust spline degree per case

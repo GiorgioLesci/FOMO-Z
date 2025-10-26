@@ -4,7 +4,7 @@ MEASURE COLOR CUT PERFORMANCE.
 This module provides the computation of color condition metrics,
 given any lower limit in redshift and condition parameter values.
 
-:Author: Giorgio Francesco Lesci <giorgio.lesci2 [at] unibo [dot] it>
+:Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
 import numpy as np

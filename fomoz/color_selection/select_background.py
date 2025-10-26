@@ -4,7 +4,7 @@ OBJECT SELECTION CLASS.
 This class selects objects in an input photometric sample,
 applying a calibrated color selection for any redshift threshold.
 
-:Author: Giorgio Francesco Lesci <giorgio.lesci2 [at] unibo [dot] it>
+:Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
 import os
