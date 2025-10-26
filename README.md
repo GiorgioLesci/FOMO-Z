@@ -13,10 +13,12 @@ FOMO-Z provides tools for creating and optimizing color selections of galaxies u
 git clone https://github.com/GiorgioLesci/FOMO-Z.git
 cd FOMO-Z
 pip install .
+```
 
 ### Development installation
 ```bash
 pip install -e .[dev]
+```
 
 ## Documentation
 
