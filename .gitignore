@@ -44,3 +44,4 @@ coverage.xml
 env/
 venv/
 .ipynb_checkpoints/
+.Rhistory
