@@ -1,4 +1,4 @@
-# `FOMO-Z`
+# FOMO-Z
 
 A Python package for optimized galaxy color selections and photometric redshift estimation.
 
@@ -29,7 +29,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 If you use `FOMO-Z` in your research, please cite:
 
 ## Contributing
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please feel free to submit a Pull Request.\
 Run tests and `black` before committing:
 ```bash
 pytest tests/ -v
