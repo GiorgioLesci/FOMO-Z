@@ -7,14 +7,14 @@ applying a calibrated color selection for any redshift threshold.
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
+import copy
 import os
 import re
 
-import numpy as np
 import numexpr as ne
-from scipy.interpolate import BSpline
+import numpy as np
 import yaml
-import copy
+from scipy.interpolate import BSpline
 
 
 class SelectBackground:

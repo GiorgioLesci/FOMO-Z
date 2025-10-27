@@ -7,8 +7,8 @@ interpolations, data visualization, and data conversion.
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.interpolate import UnivariateSpline
 
 

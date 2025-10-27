@@ -7,24 +7,19 @@ optimal parameters, given any lower limit in redshift.
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
-import os
-
-import numpy as np
-import multiprocessing as mp
 import copy
-from tqdm import tqdm
+import multiprocessing as mp
+import os
 import time
-import yaml
-import matplotlib.pyplot as plt
 
-from .auxiliary import (
-    set_plot,
-    make_yaml_serializable,
-    float_representer,
-    build_nested_dict,
-    restructure_dict,
-    interpolate_parameters,
-)
+import matplotlib.pyplot as plt
+import numpy as np
+import yaml
+from tqdm import tqdm
+
+from .auxiliary import (build_nested_dict, float_representer,
+                        interpolate_parameters, make_yaml_serializable,
+                        restructure_dict, set_plot)
 
 # Register the custom float representer for both default and safe dumpers
 yaml.add_representer(float, float_representer)

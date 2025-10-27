@@ -7,13 +7,14 @@ given any lower limit in redshift and condition parameter values.
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
-import numpy as np
-import pandas as pd
 import multiprocessing as mp
-from tqdm import tqdm
 from itertools import combinations
 
-from .auxiliary import compute_for_simple, compute_for_cross
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+
+from .auxiliary import compute_for_cross, compute_for_simple
 
 
 class Measure:
