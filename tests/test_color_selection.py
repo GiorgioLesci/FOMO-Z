@@ -381,13 +381,13 @@ class TestMeasureProcess:
 ### optimize.py ###
 ###################
 
-class TestOptimizeProcessWithReference:
+class TestOptimizeProcess:
     """Test cases for Optimize.process_L24() and process() methods with reference.csv."""
     
-    def test_process_L24_with_reference_data(self, reference_optimize_instance):
-        """Test process_L24 method with reference data and check C/P values."""
+    def test_process_L24(self, reference_optimize_instance):
+        """Test process_L24 method with reference data and check C, P, F values."""
         optimize = reference_optimize_instance
-        
+
         # Run process_L24
         purity_min = 0.9
         optimize.process_L24(
@@ -396,29 +396,29 @@ class TestOptimizeProcessWithReference:
             smoothing=0.0,
             k=3
         )
-        
+
         # Check that C_tot and P_tot arrays are populated correctly
         assert len(optimize.C_single_tot) == len(optimize.z_lim)
         assert len(optimize.P_single_tot) == len(optimize.z_lim)
-        
+
         # Check against known expected values
         expected_C = [0.96249414, 0.94920795]
         expected_P = [0.86606201, 0.86681975]
         expected_F = [0.65871369, 0.46288907]
 
-        assert np.allclose(optimize.C_single_tot, expected_C, atol=0.05), \
+        assert np.allclose(optimize.C_single_tot, expected_C), \
             f"Completeness mismatch: expected {expected_C}, got {optimize.C_single_tot}"
 
-        assert np.allclose(optimize.P_single_tot, expected_P, atol=0.05), \
+        assert np.allclose(optimize.P_single_tot, expected_P), \
             f"Purity mismatch: expected {expected_P}, got {optimize.P_single_tot}"
 
-        assert np.allclose(optimize.F_single_tot, expected_F, atol=0.05), \
+        assert np.allclose(optimize.F_single_tot, expected_F), \
             f"Failure rate mismatch: expected {expected_F}, got {optimize.F_single_tot}"
     
-    def test_process_with_reference_data(self, reference_optimize_instance):
-        """Test process method with reference data and check C/P values."""
+    def test_process(self, reference_optimize_instance):
+        """Test process method with reference data and check C, P, F values."""
         optimize = reference_optimize_instance
-        
+
         # Run process (iterative method)
         purity_tot_min = 0.9
         optimize.process(
@@ -429,24 +429,63 @@ class TestOptimizeProcessWithReference:
             smoothing=0.0,
             k=3
         )
-        
+
         # Check that C_tot and P_tot arrays are populated correctly
         assert len(optimize.C_iterative_tot) == len(optimize.z_lim)
         assert len(optimize.P_iterative_tot) == len(optimize.z_lim)
-        
+
         # Check against known expected values
-        expected_C = [0.93084857, 0.92884083]
+        expected_C = [0.93131739, 0.92884083]
         expected_P = [0.90172492, 0.90561412]
         expected_F = [0.44917012, 0.30726257]
 
-        assert np.allclose(optimize.C_iterative_tot, expected_C, atol=0.05), \
+        assert np.allclose(optimize.C_iterative_tot, expected_C), \
             f"Completeness mismatch: expected {expected_C}, got {optimize.C_iterative_tot}"
 
-        assert np.allclose(optimize.P_iterative_tot, expected_P, atol=0.05), \
+        assert np.allclose(optimize.P_iterative_tot, expected_P), \
             f"Purity mismatch: expected {expected_P}, got {optimize.P_iterative_tot}"
 
-        assert np.allclose(optimize.F_iterative_tot, expected_F, atol=0.05), \
+        assert np.allclose(optimize.F_iterative_tot, expected_F), \
             f"Failure rate mismatch: expected {expected_F}, got {optimize.F_iterative_tot}"
+
+
+############################
+### select_background.py ###
+############################
+
+class TestSelectBackground:
+    """Test cases for SelectBackground.process() method with reference.csv."""
+    
+    def test_process(self, reference_dataset, reference_optimize_instance):
+        """Test process method with reference data and check the number of selected objects."""
+        optimize = reference_optimize_instance
+        purity_tot_min = 0.9
+        optimize.process(
+            purity_tot_min=purity_tot_min,
+            start_purity=0.999,
+            step=0.0001,
+            cpu_number=1,
+            smoothing=0.0,
+            k=3
+        )
+
+        # "Test" sample and test z_l points
+        test_sample = reference_dataset
+        zl_new = np.arange(min(optimize.z_lim), max(optimize.z_lim), 0.01)
+
+        # Select
+        sel = SelectBackground()
+        sel.load_parameters(optimize)
+        sel.process(zl_new, test_sample)
+        mask = sel.mask
+        
+        # Check the number of selected objects
+        expected_N = np.zeros(len(mask))
+        expected_N = [4406, 4363, 4331, 4307, 4272, 4247, 4206, 4182, 4135, 4106]
+
+        for i in range(len(zl_new)):
+            assert np.allclose(np.sum(mask[i]), expected_N[i]), \
+                f"Number of selected galaxies mismatch for the {i}-th test z_l: expected {expected_N[i]}, got {np.sum(mask[i])}"
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
