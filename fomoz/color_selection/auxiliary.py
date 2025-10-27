@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import UnivariateSpline
 
+
 def compute_metrics(mask, redshift, z_l):
     """
     Compute classification metrics (TP, FP, FN, TN) based on a boolean mask
@@ -253,25 +254,15 @@ def restructure_dict(input_dict, bands, colors, z_lim, purity_min):
 
                             if color1 == color2 and dic[k]["condition_index"] == 0:
                                 expr = f"{mag1}-{mag2}>c"
-                            elif (
-                                color1 == color2 and dic[k]["condition_index"] == 1
-                            ):
+                            elif color1 == color2 and dic[k]["condition_index"] == 1:
                                 expr = f"{mag1}-{mag2}<c"
-                            elif (
-                                color1 != color2 and dic[k]["condition_index"] == 0
-                            ):
+                            elif color1 != color2 and dic[k]["condition_index"] == 0:
                                 expr = f"{mag1}-{mag2}>s*({mag3}-{mag4})+c"
-                            elif (
-                                color1 != color2 and dic[k]["condition_index"] == 1
-                            ):
+                            elif color1 != color2 and dic[k]["condition_index"] == 1:
                                 expr = f"{mag1}-{mag2}>-s*({mag3}-{mag4})+c"
-                            elif (
-                                color1 != color2 and dic[k]["condition_index"] == 2
-                            ):
+                            elif color1 != color2 and dic[k]["condition_index"] == 2:
                                 expr = f"{mag1}-{mag2}<s*({mag3}-{mag4})+c"
-                            elif (
-                                color1 != color2 and dic[k]["condition_index"] == 3
-                            ):
+                            elif color1 != color2 and dic[k]["condition_index"] == 3:
                                 expr = f"{mag1}-{mag2}<-s*({mag3}-{mag4})+c"
 
                             if expr not in dict_restructured:

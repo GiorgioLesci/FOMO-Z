@@ -130,7 +130,7 @@ class SelectBackground:
             if expr == "metadata":
                 continue
 
-            if min(z_l_points) - 1.e-6 <= z_l <= max(z_l_points) + 1.e-6:
+            if min(z_l_points) - 1.0e-6 <= z_l <= max(z_l_points) + 1.0e-6:
                 # set c
                 if "c_interp" in self.dict[expr]:
                     local_dict["c"] = self.dict[expr]["c_interp"](z_l)
