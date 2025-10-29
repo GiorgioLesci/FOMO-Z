@@ -6,6 +6,10 @@ A Python package for optimized galaxy color selections and photometric redshift 
 
 `FOMO-Z` provides tools for creating and optimizing color selections of galaxies using photometric data. It implements methods for finding optimal color cuts that maximize completeness and purity for target redshift ranges.
 
+![DEMO GIF](https://github.com/user-attachments/assets/c74c0906-a86d-4627-90bd-3852c6cef932)
+
+In the figure above, an example of the optimization process implemented in the `color_selection` subpackage is shown. The assumed limiting redshift is 0.3.
+
 ## Installation
 
 ### From source
