@@ -61,6 +61,7 @@ class Measure:
         with NaN for consistency.
     s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
         Array of slope values for generating linear cuts in color–color space.
+        These samples must be strictly positive.
     c_samples : array-like, default=np.linspace(-5, 5, 100)
         Array of intercept values for generating linear cuts in color–color
         space.
@@ -119,6 +120,11 @@ class Measure:
             if z_l < 0:
                 raise ValueError("z_lim values cannot be negative")
 
+        if np.any(s_samples <= 0):
+            raise ValueError(
+                "All slope values in s_samples must be strictly positive. "
+                f"Found non-positive values: {s_samples[s_samples <= 0]}"
+            )
         s_samples = s_samples.astype(np.float32)
         c_samples = c_samples.astype(np.float32)
         self.sc_grid = [(s, c) for s in s_samples for c in c_samples]
