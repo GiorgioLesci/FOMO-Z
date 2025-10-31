@@ -546,7 +546,7 @@ class Optimize:
             P_tot[idx] = TP / (TP + FP) if TP + FP > 0 else 0.0
             F_tot[idx] = FP / (FP + TN) if FP + TN > 0 else 0.0
 
-    def process_L24(self, purity_min, completeness_min=0.0, smoothing=0.0, k=3):
+    def process_L24(self, purity_min, completeness_min=0.0, k=1):
         """
         Derives the optimal color conditions based on a single purity threshold.
         Implements the methods detailed in Lesci et al. (2024, A&A, 684, A139),
@@ -573,11 +573,8 @@ class Optimize:
         completeness_min : float, optional
             Minimum completeness threshold applied to each color cut.
             Default is 0.
-        smoothing : float, optional
-            Smoothing factor passed to `UnivariateSpline` during interpolation.
-            Default is 0.0 (interpolating spline).
         k : int, optional
-            Requested degree of the spline interpolation. Default is 3 (cubic).
+            Requested degree of the spline interpolation. Default is 1 (linear).
             The actual degree is adjusted case by case:
             - If there are fewer than ``k+1`` points, the degree is reduced
               to ``n_points - 1``.
@@ -619,7 +616,7 @@ class Optimize:
         restructure_dict(
             self.dict_single, self.bands, self.colors, self.z_lim, purity_min
         )
-        interpolate_parameters(self.dict_single, smoothing=smoothing, k=k)
+        interpolate_parameters(self.dict_single, k=k)
 
     def process(
         self,
@@ -627,8 +624,7 @@ class Optimize:
         start_purity=0.999,
         step=0.001,
         cpu_number=None,
-        smoothing=0.0,
-        k=3,
+        k=1,
         store_iterations=False,
     ):
         """
@@ -682,11 +678,8 @@ class Optimize:
         cpu_number : int or None, optional
             Number of CPU cores to use for parallel processing. If None,
             defaults to using all available cores minus two.
-        smoothing : float, optional
-            Smoothing factor passed to `UnivariateSpline` during interpolation.
-            Default is 0.0 (interpolating spline).
         k : int, optional
-            Requested degree of the spline interpolation. Default is 3 (cubic).
+            Requested degree of the spline interpolation. Default is 1 (linear).
             The actual degree is adjusted case by case:
             - If there are fewer than ``k+1`` points, the degree is reduced
               to ``n_points - 1``.
@@ -759,7 +752,7 @@ class Optimize:
         restructure_dict(
             self.dict_iterative, self.bands, self.colors, self.z_lim, purity_tot_min
         )
-        interpolate_parameters(self.dict_iterative, smoothing=smoothing, k=k)
+        interpolate_parameters(self.dict_iterative, k=k)
 
     def write_optimal_selection(
         self,

@@ -284,7 +284,7 @@ def restructure_dict(input_dict, bands, colors, z_lim, purity_min):
     input_dict.update(dict_restructured)
 
 
-def interpolate_parameters(input_dict, smoothing=0.0, k=3):
+def interpolate_parameters(input_dict, k=1):
     """
     Interpolate the color cut parameters across redshift bins using splines.
 
@@ -304,11 +304,8 @@ def interpolate_parameters(input_dict, smoothing=0.0, k=3):
             Intercepts at each redshift.
         - ``"s"`` : list of float, optional
             Slopes at each redshift (for cross-color cuts).
-    smoothing : float, optional
-        Smoothing factor passed to `UnivariateSpline`. Default is 0.0
-        (interpolating spline).
     k : int, optional
-        Requested degree of the smoothing spline. Default is 3 (cubic).
+        Requested degree of the spline. Default is 1 (linear).
         The actual degree is adjusted per case:
         - If there are fewer than ``k+1`` points, the effective degree
           is reduced to ``n_points-1``.
@@ -347,7 +344,7 @@ def interpolate_parameters(input_dict, smoothing=0.0, k=3):
         c_spline = UnivariateSpline(
             input_dict[key]["z_l"],
             input_dict[key]["c_optimal"],
-            s=smoothing,
+            s=0.0,
             k=k_eff,
             ext=2,
         )
@@ -361,7 +358,7 @@ def interpolate_parameters(input_dict, smoothing=0.0, k=3):
             s_spline = UnivariateSpline(
                 input_dict[key]["z_l"],
                 input_dict[key]["s_optimal"],
-                s=smoothing,
+                s=0.0,
                 k=k_eff,
                 ext=2,
             )
