@@ -31,9 +31,6 @@ jobs:
           pip install -e .
           pip install mkdocs mkdocs-material mkdocstrings[python] mkdocs-autorefs
 
-      - name: Sort imports with isort
-        run: isort --check-only fomoz/
-
       - name: Check code style with black
         run: |
           black --diff fomoz/

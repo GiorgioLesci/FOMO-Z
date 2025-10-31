@@ -34,9 +34,8 @@ If you use `FOMO-Z` in your research, please cite:
 
 ## Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.\
-Run `isort`, `black`, and tests before committing:
+Run `black` and tests before committing:
 ```bash
-isort fomoz/
 black fomoz/
 pytest tests/ -v
 ```
