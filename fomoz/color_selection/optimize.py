@@ -149,7 +149,7 @@ class Optimize:
                         best_conditions = [None] * 4
                         max_completeness = [-np.inf] * 4
 
-                        for j in range(len(metrics["TP"])):  # j = index in (s, c) grid
+                        for j in range(len(metrics["TP"])):  # j = index in (s, c)
                             for i in range(4):  # i = condition index (0 to 3)
                                 purity = (
                                     metrics["TP"][j][i]
@@ -439,7 +439,8 @@ class Optimize:
             self._combine_optimal_cuts({z_l: nested}, C_tot_new, P_tot_new, F_tot_new)
 
             if C_tot_new[idx] == F_tot_new[idx] == 1.0:
-                err_msg = f"No effective selection found: entire reference sample selected at z_l={z_l}."
+                err_msg = "No effective selection found:"
+                err_msg += f" entire reference sample selected at z_l={z_l}."
                 raise ValueError(err_msg)
 
             if P_tot_new[idx] >= purity_tot_min:
@@ -565,7 +566,7 @@ class Optimize:
            that maximize the individual cut completeness,
         3. combines these optimal single cuts into an overall set of conditions,
            computing the resulting total purity, completeness, and failure rate,
-        4. restructures the resulting dictionary of cuts into expression-based keys, and
+        4. restructures the resulting dictionary of cuts into expression-based keys,
         5. interpolates the cut parameters across redshift bins.
 
         Parameters
