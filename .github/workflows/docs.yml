@@ -35,7 +35,9 @@ jobs:
         run: isort fomoz/
 
       - name: Check code style with black
-        run: black --check fomoz/
+        run: |
+          black --diff fomoz/
+          black --check fomoz/
 
       - name: Run tests
         run: pytest tests/ -v
