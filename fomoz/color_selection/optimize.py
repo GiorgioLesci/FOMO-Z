@@ -433,6 +433,10 @@ class Optimize:
             nested = build_nested_dict(selection)
             self._combine_optimal_cuts({z_l: nested}, C_tot_new, P_tot_new, F_tot_new)
 
+            if C_tot_new[idx] == F_tot_new[idx] == 1.0:
+                err_msg = f'No effective selection found: entire reference sample selected at z_l={z_l}.'
+                raise ValueError(err_msg)
+
             if P_tot_new[idx] >= purity_tot_min:
 
                 best_by_key = new_best_by_key
