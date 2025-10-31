@@ -17,9 +17,14 @@ import numpy as np
 import yaml
 from tqdm import tqdm
 
-from .auxiliary import (build_nested_dict, float_representer,
-                        interpolate_parameters, make_yaml_serializable,
-                        restructure_dict, set_plot)
+from .auxiliary import (
+    build_nested_dict,
+    float_representer,
+    interpolate_parameters,
+    make_yaml_serializable,
+    restructure_dict,
+    set_plot,
+)
 
 # Register the custom float representer for both default and safe dumpers
 yaml.add_representer(float, float_representer)
@@ -434,7 +439,7 @@ class Optimize:
             self._combine_optimal_cuts({z_l: nested}, C_tot_new, P_tot_new, F_tot_new)
 
             if C_tot_new[idx] == F_tot_new[idx] == 1.0:
-                err_msg = f'No effective selection found: entire reference sample selected at z_l={z_l}.'
+                err_msg = f"No effective selection found: entire reference sample selected at z_l={z_l}."
                 raise ValueError(err_msg)
 
             if P_tot_new[idx] >= purity_tot_min:
