@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install pytest black isort
+          pip install -r requirements-dev.txt
           pip install mkdocs mkdocs-material mkdocstrings[python] mkdocs-autorefs
 
       - name: Sort imports with isort
