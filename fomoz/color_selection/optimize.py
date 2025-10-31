@@ -720,6 +720,8 @@ class Optimize:
             if cpu_number
             else max(mp.cpu_count() - 2, 1)
         )
+        N_cpu = max(1, N_cpu)  # Ensure at least 1 process
+
         args_list = [
             (
                 z_l,

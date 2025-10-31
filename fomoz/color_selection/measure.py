@@ -165,6 +165,7 @@ class Measure:
             if cpu_number
             else max(mp.cpu_count() - 2, 1)
         )
+        N_cpu = max(1, N_cpu)  # Ensure at least 1 process
 
         # Precompute base arrays
         color = self.dataset[mag1].values.astype(np.float32) - self.dataset[
