@@ -1,5 +1,6 @@
 site_name: FOMO-Z
 repo_url: https://github.com/GiorgioLesci/FOMO-Z
+
 theme:
   name: material
   features:
@@ -17,5 +18,5 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
-          import:
-            - path: fomoz
+          inventories: []
+          paths: ["fomoz"]
