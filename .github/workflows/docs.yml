@@ -1,4 +1,4 @@
-name: Build and Deploy MkDocs
+name: Test, Format, and Deploy Docs
 
 on:
   push:
@@ -27,8 +27,18 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install mkdocs mkdocs-material mkdocstrings[python] mkdocs-autorefs
           pip install -e .
+          pip install pytest black isort
+          pip install mkdocs mkdocs-material mkdocstrings[python] mkdocs-autorefs
+
+      - name: Sort imports with isort
+        run: isort fomoz/
+
+      - name: Check code style with black
+        run: black --check fomoz/
+
+      - name: Run tests
+        run: pytest tests/ -v
 
       - name: Build MkDocs site
         run: mkdocs build
