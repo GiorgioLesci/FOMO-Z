@@ -393,7 +393,6 @@ class TestOptimizeProcess:
         optimize.process_L24(
             purity_min=purity_min,
             completeness_min=0.0,
-            smoothing=0.0,
             k=3
         )
 
@@ -426,7 +425,6 @@ class TestOptimizeProcess:
             start_purity=0.999,
             step=0.0001,
             cpu_number=1,
-            smoothing=0.0,
             k=3
         )
 
@@ -465,7 +463,6 @@ class TestSelectBackground:
             start_purity=0.999,
             step=0.0001,
             cpu_number=1,
-            smoothing=0.0,
             k=3
         )
 
