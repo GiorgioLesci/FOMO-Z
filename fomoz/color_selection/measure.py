@@ -174,7 +174,6 @@ class Measure:
         redshift = self.dataset["redshift"].values.astype(np.float32)
         test_colors = np.linspace(color.min(), color.max(), 300, dtype=np.float32)[1:-1]
 
-        # Create pool once
         with mp.Pool(N_cpu) as pool:
 
             for z_l in tqdm(

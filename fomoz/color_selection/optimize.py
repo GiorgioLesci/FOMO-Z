@@ -353,55 +353,7 @@ class Optimize:
         idx = np.where(self.z_lim == z_l)[0][0]
         redshift = self.dataset["redshift"].values.astype(np.float32)
 
-        # -- STEP 1: Build a container of all canidate color cuts
-        candidate_pool = []
-        for base_pair, comp_cuts in all_cuts.items():
-            for comp_pair, metrics in comp_cuts.items():
-                if comp_pair == base_pair:  # simple
-                    for i, c_val in enumerate(metrics["c"]):
-                        for cond_index in (0, 1):
-                            TP = metrics["TP"][i][cond_index]
-                            FP = metrics["FP"][i][cond_index]
-                            FN = metrics["FN"][i][cond_index]
-                            TN = metrics["TN"][i][cond_index]
-                            purity = TP / (TP + FP) if TP + FP > 0 else 0.0
-                            compl = TP / (TP + FN) if TP + FN > 0 else 0.0
-                            f_low = FP / (FP + TN) if FP + TN > 0 else 0.0
-                            candidate_pool.append(
-                                {
-                                    "base_pair": base_pair,
-                                    "comp_pair": comp_pair,
-                                    "c": float(c_val),
-                                    "condition_index": cond_index,
-                                    "purity": purity,
-                                    "completeness": compl,
-                                    "f_low": f_low,
-                                }
-                            )
-                else:  # cross
-                    for i in range(len(metrics["s"])):
-                        for cond_index in range(4):
-                            TP = metrics["TP"][i][cond_index]
-                            FP = metrics["FP"][i][cond_index]
-                            FN = metrics["FN"][i][cond_index]
-                            TN = metrics["TN"][i][cond_index]
-                            purity = TP / (TP + FP) if TP + FP > 0 else 0.0
-                            compl = TP / (TP + FN) if TP + FN > 0 else 0.0
-                            f_low = FP / (FP + TN) if FP + TN > 0 else 0.0
-                            candidate_pool.append(
-                                {
-                                    "base_pair": base_pair,
-                                    "comp_pair": comp_pair,
-                                    "s": float(metrics["s"][i]),
-                                    "c": float(metrics["c"][i]),
-                                    "condition_index": cond_index,
-                                    "purity": purity,
-                                    "completeness": compl,
-                                    "f_low": f_low,
-                                }
-                            )
-
-        # -- STEP 2: Iterative process
+        # Start the iterative process
         current_thresh = start_purity
         best_by_key = {}
         dict_iterative_steps = {}
@@ -412,27 +364,66 @@ class Optimize:
 
         iteration = 0
         while current_thresh > 0:
-            # Get the colour conditions that satisfy the
-            # P, C, and F conditions and select the parameters
-            # of such conditions that maximize C
+
             new_best_by_key = {}
+
+            for base_pair, comp_cuts in all_cuts.items():
+                for comp_pair, metrics in comp_cuts.items():
+                    if comp_pair == base_pair:  # simple
+                        for i, c_val in enumerate(metrics["c"]):
+                            for cond_index in (0, 1):
+                                TP = metrics["TP"][i][cond_index]
+                                FP = metrics["FP"][i][cond_index]
+                                FN = metrics["FN"][i][cond_index]
+                                TN = metrics["TN"][i][cond_index]
+                                purity = TP / (TP + FP) if TP + FP > 0 else 0.0
+                                compl = TP / (TP + FN) if TP + FN > 0 else 0.0
+                                f_low = FP / (FP + TN) if FP + TN > 0 else 0.0
+
+                                if purity >= current_thresh and f_low < 1.0:
+                                    key = (base_pair, comp_pair, cond_index)
+                                    cut = {
+                                        "base_pair": base_pair,
+                                        "comp_pair": comp_pair,
+                                        "c": float(c_val),
+                                        "condition_index": cond_index,
+                                        "purity": purity,
+                                        "completeness": compl,
+                                        "f_low": f_low,
+                                    }
+                                    if (key not in new_best_by_key or 
+                                        compl > new_best_by_key[key]["completeness"]):
+                                        new_best_by_key[key] = cut
+                    else:  # cross
+                        for i in range(len(metrics["s"])):
+                            for cond_index in range(4):
+                                TP = metrics["TP"][i][cond_index]
+                                FP = metrics["FP"][i][cond_index]
+                                FN = metrics["FN"][i][cond_index]
+                                TN = metrics["TN"][i][cond_index]
+                                purity = TP / (TP + FP) if TP + FP > 0 else 0.0
+                                compl = TP / (TP + FN) if TP + FN > 0 else 0.0
+                                f_low = FP / (FP + TN) if FP + TN > 0 else 0.0
+
+                                if purity >= current_thresh and f_low < 1.0:
+                                    key = (base_pair, comp_pair, cond_index)
+                                    cut = {
+                                        "base_pair": base_pair,
+                                        "comp_pair": comp_pair,
+                                        "s": float(metrics["s"][i]),
+                                        "c": float(metrics["c"][i]),
+                                        "condition_index": cond_index,
+                                        "purity": purity,
+                                        "completeness": compl,
+                                        "f_low": f_low,
+                                    }
+                                    if (key not in new_best_by_key or 
+                                        compl > new_best_by_key[key]["completeness"]):
+                                        new_best_by_key[key] = cut
+
             C_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
             P_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
             F_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
-
-            for cut in candidate_pool:
-                if cut["purity"] < current_thresh or cut["f_low"] >= 1.0:
-                    continue  # skip this cut
-                key = (
-                    cut["base_pair"],
-                    cut["comp_pair"],
-                    cut["condition_index"],
-                )
-                if (
-                    key not in new_best_by_key
-                    or cut["completeness"] > new_best_by_key[key]["completeness"]
-                ):
-                    new_best_by_key[key] = cut
 
             selection = list(new_best_by_key.values())
             nested = build_nested_dict(selection)
@@ -444,7 +435,6 @@ class Optimize:
                 raise ValueError(err_msg)
 
             if P_tot_new[idx] >= purity_tot_min:
-
                 best_by_key = new_best_by_key
                 C_tot = C_tot_new
                 P_tot = P_tot_new
@@ -453,7 +443,6 @@ class Optimize:
 
                 if store_iterations:
                     dict_iterative_steps[iteration] = nested
-
             else:
                 break  # below the threshold
 
@@ -615,9 +604,9 @@ class Optimize:
             self.F_single_tot,
         )
         print("Done!")
-        print("\nCompleteness:", self.C_single_tot)
-        print("Purity:", self.P_single_tot)
-        print("Foreground failure rate:", self.F_single_tot)
+        #print("\nCompleteness:", self.C_single_tot)
+        #print("Purity:", self.P_single_tot)
+        #print("Foreground failure rate:", self.F_single_tot)
 
         restructure_dict(
             self.dict_single, self.bands, self.colors, self.z_lim, purity_min
@@ -740,7 +729,7 @@ class Optimize:
             self.dict_iterative[z_l] = build_nested_dict(cut_list)
             self.dict_iterative_steps[z_l] = steps
 
-        print("\nCombining the final optimal cuts across redshift bins...")
+        print("Combining the optimal cuts...")
         self._combine_optimal_cuts(
             self.dict_iterative,
             self.C_iterative_tot,
@@ -753,9 +742,9 @@ class Optimize:
             "Iterative thresholding complete.",
             f"Total time: {total_time:.2f} seconds.",
         )
-        print("\nCompleteness:", self.C_iterative_tot)
-        print("Purity:", self.P_iterative_tot)
-        print("Foreground failure rate:", self.F_iterative_tot)
+        #print("\nCompleteness:", self.C_iterative_tot)
+        #print("Purity:", self.P_iterative_tot)
+        #print("Foreground failure rate:", self.F_iterative_tot)
 
         restructure_dict(
             self.dict_iterative, self.bands, self.colors, self.z_lim, purity_tot_min
