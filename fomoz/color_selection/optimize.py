@@ -391,8 +391,10 @@ class Optimize:
                                         "completeness": compl,
                                         "f_low": f_low,
                                     }
-                                    if (key not in new_best_by_key or 
-                                        compl > new_best_by_key[key]["completeness"]):
+                                    if (
+                                        key not in new_best_by_key
+                                        or compl > new_best_by_key[key]["completeness"]
+                                    ):
                                         new_best_by_key[key] = cut
                     else:  # cross
                         for i in range(len(metrics["s"])):
@@ -417,8 +419,10 @@ class Optimize:
                                         "completeness": compl,
                                         "f_low": f_low,
                                     }
-                                    if (key not in new_best_by_key or 
-                                        compl > new_best_by_key[key]["completeness"]):
+                                    if (
+                                        key not in new_best_by_key
+                                        or compl > new_best_by_key[key]["completeness"]
+                                    ):
                                         new_best_by_key[key] = cut
 
             C_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
@@ -604,9 +608,9 @@ class Optimize:
             self.F_single_tot,
         )
         print("Done!")
-        #print("\nCompleteness:", self.C_single_tot)
-        #print("Purity:", self.P_single_tot)
-        #print("Foreground failure rate:", self.F_single_tot)
+        # print("\nCompleteness:", self.C_single_tot)
+        # print("Purity:", self.P_single_tot)
+        # print("Foreground failure rate:", self.F_single_tot)
 
         restructure_dict(
             self.dict_single, self.bands, self.colors, self.z_lim, purity_min
@@ -742,9 +746,9 @@ class Optimize:
             "Iterative thresholding complete.",
             f"Total time: {total_time:.2f} seconds.",
         )
-        #print("\nCompleteness:", self.C_iterative_tot)
-        #print("Purity:", self.P_iterative_tot)
-        #print("Foreground failure rate:", self.F_iterative_tot)
+        # print("\nCompleteness:", self.C_iterative_tot)
+        # print("Purity:", self.P_iterative_tot)
+        # print("Foreground failure rate:", self.F_iterative_tot)
 
         restructure_dict(
             self.dict_iterative, self.bands, self.colors, self.z_lim, purity_tot_min
