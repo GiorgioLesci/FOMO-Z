@@ -76,11 +76,6 @@ class Optimize:
     measure : Measure
         A `Measure` object containing the dataset, band information,
         redshift thresholds, and precomputed cut metrics.
-
-    Notes
-    -----
-    - Color conditions with foreground failure rate equal to 1 AND completeness
-      equal to 1 are discarded.
     """
 
     def __init__(self, measure):
