@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from .auxiliary import compute_for_cross, compute_for_simple
+from .auxiliary import compute_for_cross, compute_for_simple, c_domain_given_s
 
 
 class Measure:
@@ -27,23 +27,6 @@ class Measure:
     constructs color arrays from provided bands, and computes color selection
     metrics. These selections are defined as linear relations between
     colors and are evaluated over a grid of slope–intercept combinations.
-
-    Attributes
-    ----------
-    dataset : pandas.DataFrame
-        The input dataset with standardized band magnitudes and redshift column.
-    bands : list of str
-        List of photometric band names to be used.
-    colors : list of tuple
-        All unique 2-band combinations generated from `bands`, used to form
-        color indices (e.g., g-r, r-i).
-    z_lim : numpy.ndarray of float32
-        Array of redshift lower limits.
-    sc_grid : list of tuple
-        Grid of slope–intercept pairs (s, c) used for defining linear
-        color–color cuts.
-    dict_all : dict
-        Dictionary for storing computed metrics across color cuts.
 
     Parameters
     ----------
@@ -62,9 +45,8 @@ class Measure:
     s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
         Array of slope values for generating linear cuts in color–color space.
         These samples must be strictly positive.
-    c_samples : array-like, default=np.linspace(-5, 5, 100)
-        Array of intercept values for generating linear cuts in color–color
-        space.
+    c_precision : float, default=0.01
+        Precision of the c parameter sampling.
     """
 
     def __init__(
@@ -75,7 +57,7 @@ class Measure:
         z_gal_string="redshift",
         missing_data=-99,
         s_samples=np.linspace(0.3, 1.7, 30),
-        c_samples=np.linspace(-5, 5, 100),
+        c_precision=0.01,
     ):
         """ """
         assert isinstance(
@@ -126,8 +108,8 @@ class Measure:
                 f"Found non-positive values: {s_samples[s_samples <= 0]}"
             )
         s_samples = s_samples.astype(np.float32)
-        c_samples = c_samples.astype(np.float32)
-        self.sc_grid = [(s, c) for s in s_samples for c in c_samples]
+        self.c_precision = float(c_precision)
+        self.sc_grid = [(s, c) for s in s_samples for c in np.linspace(-5, 5, 100)]
         self.dict_all = {}
 
     def _apply_cuts(self, mag1, mag2, cross_colors=[], cpu_number=None):
@@ -172,7 +154,10 @@ class Measure:
             mag2
         ].values.astype(np.float32)
         redshift = self.dataset["redshift"].values.astype(np.float32)
-        test_colors = np.linspace(color.min(), color.max(), 300, dtype=np.float32)[1:-1]
+
+        vmin, vmax = np.quantile(color[np.isfinite(color)], [0.01, 0.99])
+        n_steps = int((vmax - vmin) / self.c_precision) + 1
+        test_colors = np.linspace(vmin, vmax, n_steps, dtype=np.float32)
 
         with mp.Pool(N_cpu) as pool:
 
@@ -218,6 +203,20 @@ class Measure:
                         color2 = self.dataset[mag3].values.astype(
                             np.float32
                         ) - self.dataset[mag4].values.astype(np.float32)
+
+                        """
+                        sc_args = []
+                        for s in self.s_samples:
+                            c_min, c_max = c_domain_given_s(color1, color2, s)
+
+                            # Number of samples driven by resolution
+                            n_c = int((c_max - c_min) / self.c_precision)) + 1
+
+                            c_grid = np.linspace(c_min, c_max, n_c, dtype=np.float32)
+
+                            for c in c_grid:
+                                sc_args.append((s, c, color1, color2, redshift, z_l))
+                        """
 
                         sc_args = [
                             (s, c, color1, color2, redshift, z_l)

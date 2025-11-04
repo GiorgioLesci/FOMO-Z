@@ -375,8 +375,10 @@ class Optimize:
                                 compl = TP / (TP + FN) if TP + FN > 0 else 0.0
                                 f_low = FP / (FP + TN) if FP + TN > 0 else 0.0
 
-                                if purity >= current_thresh and not (
-                                    f_low == compl == 1.0
+                                if (
+                                    purity >= current_thresh
+                                    and not (f_low == compl == 1.0)
+                                    and compl > 0.0
                                 ):
                                     key = (base_pair, comp_pair, cond_index)
                                     cut = {
@@ -384,9 +386,7 @@ class Optimize:
                                         "comp_pair": comp_pair,
                                         "c": float(c_val),
                                         "condition_index": cond_index,
-                                        "purity": purity,
                                         "completeness": compl,
-                                        "f_low": f_low,
                                     }
                                     if (
                                         key not in new_best_by_key
@@ -404,8 +404,10 @@ class Optimize:
                                 compl = TP / (TP + FN) if TP + FN > 0 else 0.0
                                 f_low = FP / (FP + TN) if FP + TN > 0 else 0.0
 
-                                if purity >= current_thresh and not (
-                                    f_low == compl == 1.0
+                                if (
+                                    purity >= current_thresh
+                                    and not (f_low == compl == 1.0)
+                                    and compl > 0.0
                                 ):
                                     key = (base_pair, comp_pair, cond_index)
                                     cut = {
@@ -414,9 +416,7 @@ class Optimize:
                                         "s": float(metrics["s"][i]),
                                         "c": float(metrics["c"][i]),
                                         "condition_index": cond_index,
-                                        "purity": purity,
                                         "completeness": compl,
-                                        "f_low": f_low,
                                     }
                                     if (
                                         key not in new_best_by_key
