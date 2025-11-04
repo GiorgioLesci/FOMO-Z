@@ -190,49 +190,15 @@ class Measure:
                 mask_good = redshift > z_l
                 mask_bad = redshift < z_l
 
-                # ---------------------------
                 # One-color cuts
-                # ---------------------------
                 color_cut_args = [(tc, color, redshift, z_l) for tc in test_colors]
                 results = pool.map(compute_for_simple, color_cut_args)
 
                 results_up = [res[:4] for res in results]
                 results_low = [res[4:] for res in results]
 
-                filtered = []
-                for i, (up, low) in enumerate(zip(results_up, results_low)):
-                    tp_up, fp_up, fn_up, tn_up = up
-                    tp_low, fp_low, fn_low, tn_low = low
-
-                    # Compute completeness & foreground failure
-                    compl_up = tp_up / (tp_up + fn_up) if (tp_up + fn_up) > 0 else 0.0
-                    f_low_up = fp_up / (fp_up + tn_up) if (fp_up + tn_up) > 0 else 0.0
-
-                    compl_low = (
-                        tp_low / (tp_low + fn_low) if (tp_low + fn_low) > 0 else 0.0
-                    )
-                    f_low_low = (
-                        fp_low / (fp_low + tn_low) if (fp_low + tn_low) > 0 else 0.0
-                    )
-
-                    # Skip if ANY mask side produces the useless condition
-                    if not (
-                        (compl_up == 1 and f_low_up == 1)
-                        or (compl_low == 1 and f_low_low == 1)
-                    ):
-                        filtered.append(i)
-
-                # Keep only the valid ones
-                results_up = [results_up[i] for i in filtered]
-                results_low = [results_low[i] for i in filtered]
-                test_colors = [test_colors[i] for i in filtered]
-
-                tp_up, fp_up, fn_up, tn_up = (
-                    map(list, zip(*results_up)) if results_up else ([], [], [], [])
-                )
-                tp_low, fp_low, fn_low, tn_low = (
-                    map(list, zip(*results_low)) if results_low else ([], [], [], [])
-                )
+                tp_up, fp_up, fn_up, tn_up = map(list, zip(*results_up))
+                tp_low, fp_low, fn_low, tn_low = map(list, zip(*results_low))
 
                 self.dict_all[z_l][(mag1, mag2)][(mag1, mag2)] = {
                     "c": [np.float32(tc) for tc in test_colors],
@@ -242,9 +208,7 @@ class Measure:
                     "TN": list(zip(tn_up, tn_low)),
                 }
 
-                # ---------------------------
                 # Two-color cuts
-                # ---------------------------
                 if cross_colors:
 
                     for mag3, mag4 in cross_colors:
@@ -262,25 +226,10 @@ class Measure:
 
                         results = pool.map(compute_for_cross, sc_args)
 
-                        valid_results = []
-                        valid_sc = []
-
-                        for (s, c), res in zip(self.sc_grid, results):
-                            keep = True
-                            for tp, fp, fn, tn in res:
-                                compl = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                                f_low = fp / (fp + tn) if (fp + tn) > 0 else 0.0
-                                if compl == 1 and f_low == 1:
-                                    keep = False
-                                    break
-
-                            if keep:
-                                valid_results.append(res)
-                                valid_sc.append((s, c))
-
-                        # Unpack only accepted results
+                        # Transpose result list for each metric
                         tp_all, fp_all, fn_all, tn_all = [], [], [], []
-                        for res in valid_results:
+
+                        for res in results:  # each res has 4 entries: one per condition
                             tp_c, fp_c, fn_c, tn_c = zip(*res)
                             tp_all.append(list(tp_c))
                             fp_all.append(list(fp_c))
@@ -288,8 +237,8 @@ class Measure:
                             tn_all.append(list(tn_c))
 
                         self.dict_all[z_l][(mag1, mag2)][(mag3, mag4)] = {
-                            "s": [s for s, _ in valid_sc],
-                            "c": [c for _, c in valid_sc],
+                            "s": [s for s, _ in self.sc_grid],
+                            "c": [c for _, c in self.sc_grid],
                             "TP": tp_all,
                             "FP": fp_all,
                             "FN": fn_all,

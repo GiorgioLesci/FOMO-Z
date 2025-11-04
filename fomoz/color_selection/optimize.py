@@ -79,8 +79,8 @@ class Optimize:
 
     Notes
     -----
-    - The condition *F < 1* is an additional requirement applied in the
-      optimization logic (see methods of this class).
+    - Color conditions with foreground failure rate equal to 1 AND completeness
+      equal to 1 are discarded.
     """
 
     def __init__(self, measure):
@@ -380,7 +380,9 @@ class Optimize:
                                 compl = TP / (TP + FN) if TP + FN > 0 else 0.0
                                 f_low = FP / (FP + TN) if FP + TN > 0 else 0.0
 
-                                if purity >= current_thresh and f_low < 1.0:
+                                if purity >= current_thresh and not (
+                                    f_low == compl == 1.0
+                                ):
                                     key = (base_pair, comp_pair, cond_index)
                                     cut = {
                                         "base_pair": base_pair,
@@ -407,7 +409,9 @@ class Optimize:
                                 compl = TP / (TP + FN) if TP + FN > 0 else 0.0
                                 f_low = FP / (FP + TN) if FP + TN > 0 else 0.0
 
-                                if purity >= current_thresh and f_low < 1.0:
+                                if purity >= current_thresh and not (
+                                    f_low == compl == 1.0
+                                ):
                                     key = (base_pair, comp_pair, cond_index)
                                     cut = {
                                         "base_pair": base_pair,
@@ -634,6 +638,8 @@ class Optimize:
         still satisfying the global purity constraint. The algorithm proceeds
         iteratively, starting from a strict initial purity threshold and reducing
         it by `step` until the total purity remains above `purity_tot_min`.
+        Color conditions with foreground failure rate equal to 1 AND completeness
+        equal to 1 are discarded.
 
         Constraints
         -----------
