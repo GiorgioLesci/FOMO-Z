@@ -359,15 +359,13 @@ class TestMeasureProcess:
                         assert isinstance(cond_metrics, dict)
 
                         # required keys exist
-                        for key in ("c", "TP", "FP", "FN", "TN"):
+                        for key in ("c", "purity", "completeness"):
                             assert key in cond_metrics
 
                         # array lengths consistent
                         n = len(cond_metrics["c"])
-                        assert len(cond_metrics["TP"]) == n
-                        assert len(cond_metrics["FP"]) == n
-                        assert len(cond_metrics["FN"]) == n
-                        assert len(cond_metrics["TN"]) == n
+                        assert len(cond_metrics["purity"]) == n
+                        assert len(cond_metrics["completeness"]) == n
 
                 # Cross-color cuts exist if defined
                 for comp_pair, comp_data in base_data.items():
@@ -380,15 +378,13 @@ class TestMeasureProcess:
                         assert isinstance(cond_index, int)
                         assert 0 <= cond_index <= 3  # 4 possible orientation cuts
 
-                        for key in ("s", "c", "TP", "FP", "FN", "TN"):
+                        for key in ("s", "c", "purity", "completeness"):
                             assert key in cond_metrics
 
                         n = len(cond_metrics["c"])
                         assert n == len(cond_metrics["s"])  # matching lengths
-                        assert n == len(cond_metrics["TP"])
-                        assert n == len(cond_metrics["FP"])
-                        assert n == len(cond_metrics["FN"])
-                        assert n == len(cond_metrics["TN"])
+                        assert n == len(cond_metrics["purity"])
+                        assert n == len(cond_metrics["completeness"])
 
     def test_process_with_single_z_limit(self, reference_dataset):
         """Test process() with single redshift limit."""

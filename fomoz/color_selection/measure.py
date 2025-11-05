@@ -277,17 +277,13 @@ class Measure:
             sub_dict = {}
             sub_dict[0] = {
                 "c": test_colors[mask_up].tolist(),
-                "TP": tp_up[mask_up].astype(np.int64).tolist(),
-                "FP": fp_up[mask_up].astype(np.int64).tolist(),
-                "FN": fn_up[mask_up].astype(np.int64).tolist(),
-                "TN": tn_up[mask_up].astype(np.int64).tolist(),
+                "purity": purity_up[mask_up].astype(np.float32).tolist(),
+                "completeness": compl_up[mask_up].astype(np.float32).tolist(),
             }
             sub_dict[1] = {
                 "c": test_colors[mask_low].astype(np.float32).tolist(),
-                "TP": tp_low[mask_low].astype(np.int64).tolist(),
-                "FP": fp_low[mask_low].astype(np.int64).tolist(),
-                "FN": fn_low[mask_low].astype(np.int64).tolist(),
-                "TN": tn_low[mask_low].astype(np.int64).tolist(),
+                "purity": purity_low[mask_low].astype(np.float32).tolist(),
+                "completeness": compl_low[mask_low].astype(np.float32).tolist(),
             }
 
             self.dict_all[z_l][(mag1, mag2)][(mag1, mag2)] = sub_dict
@@ -356,17 +352,11 @@ class Measure:
                             sub_dict[cond_index] = {
                                 "s": sc_grid[mask, 0].tolist(),
                                 "c": sc_grid[mask, 1].tolist(),
-                                "TP": tp_all[mask, cond_index]
-                                .astype(np.int64)
+                                "purity": purity[mask, cond_index]
+                                .astype(np.float32)
                                 .tolist(),
-                                "FP": fp_all[mask, cond_index]
-                                .astype(np.int64)
-                                .tolist(),
-                                "FN": fn_all[mask, cond_index]
-                                .astype(np.int64)
-                                .tolist(),
-                                "TN": tn_all[mask, cond_index]
-                                .astype(np.int64)
+                                "completeness": compl[mask, cond_index]
+                                .astype(np.float32)
                                 .tolist(),
                             }
 

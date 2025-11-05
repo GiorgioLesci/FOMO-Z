@@ -153,24 +153,17 @@ class Optimize:
 
                             s_vals = m.get("s", [])
                             c_vals = m.get("c", [])
-                            tp_vals = m.get("TP", [])
-                            fp_vals = m.get("FP", [])
-                            fn_vals = m.get("FN", [])
-                            tn_vals = m.get("TN", [])
+                            P_vals = m.get("purity", [])
+                            C_vals = m.get("completeness", [])
 
                             best_comp = -np.inf
                             best_cut = None
 
                             for j in range(len(c_vals)):
-                                TP, FP, FN, TN = (
-                                    tp_vals[j],
-                                    fp_vals[j],
-                                    fn_vals[j],
-                                    tn_vals[j],
+                                purity, completeness = (
+                                    P_vals[j],
+                                    C_vals[j],
                                 )
-
-                                purity = TP / (TP + FP) if (TP + FP) > 0 else 0.0
-                                completeness = TP / (TP + FN) if (TP + FN) > 0 else 0.0
 
                                 if (
                                     purity > P_min
@@ -200,24 +193,17 @@ class Optimize:
                         for cond_index, m in metrics.items():
 
                             c_vals = m.get("c", [])
-                            tp_vals = m.get("TP", [])
-                            fp_vals = m.get("FP", [])
-                            fn_vals = m.get("FN", [])
-                            tn_vals = m.get("TN", [])
+                            P_vals = m.get("purity", [])
+                            C_vals = m.get("completeness", [])
 
                             best_comp = -np.inf
                             best_cut = None
 
                             for j in range(len(c_vals)):
-                                TP, FP, FN, TN = (
-                                    tp_vals[j],
-                                    fp_vals[j],
-                                    fn_vals[j],
-                                    tn_vals[j],
+                                purity, completeness = (
+                                    P_vals[j],
+                                    C_vals[j],
                                 )
-
-                                purity = TP / (TP + FP) if (TP + FP) > 0 else 0.0
-                                completeness = TP / (TP + FN) if (TP + FN) > 0 else 0.0
 
                                 if (
                                     purity > P_min
@@ -334,18 +320,12 @@ class Optimize:
                             cond_dict = metrics[cond_index]
 
                             c_vals = cond_dict.get("c", [])
-                            tp_vals = cond_dict.get("TP", [])
-                            fp_vals = cond_dict.get("FP", [])
-                            fn_vals = cond_dict.get("FN", [])
-                            tn_vals = cond_dict.get("TN", [])
+                            P_vals = cond_dict.get("purity", [])
+                            C_vals = cond_dict.get("completeness", [])
 
                             for i, c_val in enumerate(c_vals):
-                                TP = tp_vals[i]
-                                FP = fp_vals[i]
-                                FN = fn_vals[i]
-                                TN = tn_vals[i]
-                                purity = TP / (TP + FP) if TP + FP > 0 else 0.0
-                                compl = TP / (TP + FN) if TP + FN > 0 else 0.0
+                                purity = P_vals[i]
+                                compl = C_vals[i]
 
                                 if purity >= current_thresh and compl > 0.0:
                                     key = (base_pair, comp_pair, cond_index)
@@ -368,19 +348,12 @@ class Optimize:
                         for cond_index, cond_dict in metrics.items():
                             s_vals = cond_dict.get("s", [])
                             c_vals = cond_dict.get("c", [])
-                            tp_vals = cond_dict.get("TP", [])
-                            fp_vals = cond_dict.get("FP", [])
-                            fn_vals = cond_dict.get("FN", [])
-                            tn_vals = cond_dict.get("TN", [])
+                            P_vals = cond_dict.get("purity", [])
+                            C_vals = cond_dict.get("completeness", [])
 
                             for i in range(len(c_vals)):
-                                TP = tp_vals[i]
-                                FP = fp_vals[i]
-                                FN = fn_vals[i]
-                                TN = tn_vals[i]
-
-                                purity = TP / (TP + FP) if (TP + FP) > 0 else 0.0
-                                compl = TP / (TP + FN) if (TP + FN) > 0 else 0.0
+                                purity = P_vals[i]
+                                compl = C_vals[i]
 
                                 if purity >= current_thresh and compl > 0.0:
                                     key = (base_pair, comp_pair, cond_index)
