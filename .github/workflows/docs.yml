@@ -36,6 +36,9 @@ jobs:
           black --diff fomoz/
           black --check fomoz/
 
+      - name: Check docstring style with pydocstyle
+        run: pydocstyle fomoz/
+
       - name: Run tests
         run: pytest tests/ -v
 

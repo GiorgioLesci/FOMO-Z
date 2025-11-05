@@ -18,27 +18,28 @@ from scipy.interpolate import BSpline
 
 
 class SelectBackground:
-    """
-    Class to apply precomputed optimal color selections to datasets.
-
-    This class manages dictionaries of optimal cut parameters (either loaded
-    directly or from file), reconstructs their interpolators,
-    and applies the cuts to input datasets across a redshift thresholds.
-    The output is a set of boolean masks marking which objects satisfy the cuts
-    at each redshift threshold.
-
-    Attributes
-    ----------
-    dict : dict
-        Dictionary containing the optimal cut parameters and their associated
-        interpolators. Keys are expressions (strings) to be evaluated via
-        `numexpr`. The ``"metadata"`` key stores the metadata.
-    mask : list of numpy.ndarray
-        Boolean masks for each redshift in the grid, computed after calling
-        ``process``.
-    """
+    """Apply precomputed optimal color selections to datasets."""
 
     def __init__(self):
+        """
+        Class to apply precomputed optimal color selections to datasets.
+
+        This class manages dictionaries of optimal cut parameters (either loaded
+        directly or from file), reconstructs their interpolators,
+        and applies the cuts to input datasets across a redshift thresholds.
+        The output is a set of boolean masks marking which objects satisfy the cuts
+        at each redshift threshold.
+
+        Attributes
+        ----------
+        dict : dict
+            Dictionary containing the optimal cut parameters and their associated
+            interpolators. Keys are expressions (strings) to be evaluated via
+            `numexpr`. The ``"metadata"`` key stores the metadata.
+        mask : list of numpy.ndarray
+            Boolean masks for each redshift in the grid, computed after calling
+            ``process``.
+        """
         self.dict = {}
         self.mask = []
 
@@ -193,6 +194,8 @@ class SelectBackground:
 
     def load_parameters(self, optimize, optimization_type="iterative"):
         """
+        Load selection parameters from an ``Optimize`` instance.
+
         Load precomputed optimal color cut parameters
         and reconstruct interpolator objects.
 
@@ -223,6 +226,8 @@ class SelectBackground:
 
     def load_parameters_from_file(self, input_dir, file_name):
         """
+        Load selection parameters from file.
+
         Load precomputed optimal color cut parameters from a YAML file
         and reconstruct interpolator objects.
 

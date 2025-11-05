@@ -34,8 +34,9 @@ If you use `FOMO-Z` in your research, please cite:
 
 ## Contributing
 Contributions are welcome! Please feel free to submit a Pull Request.\
-Run `black` and tests before committing:
+Run `pydocstyle`, `black`, and tests before committing:
 ```bash
+pydocstyle fomoz/
 black fomoz/
 pytest tests/ -v
 ```

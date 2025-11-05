@@ -32,54 +32,55 @@ yaml.add_representer(float, float_representer, Dumper=yaml.SafeDumper)
 
 
 class Optimize:
-    """
-    Class for optimizing color cuts based on metrics computed by `Measure`.
-
-    This class takes the results from a `Measure` instance (which stores
-    metrics for a grid of color cuts) and provides structures for ranking,
-    aggregating, and optimizing those cuts. Single color conditions having
-    foreground failure rate equal to 1 are always excluded.
-
-    Attributes
-    ----------
-    bands : list of str
-        Photometric bands used in the analysis, copied from the input
-        `Measure` object.
-    colors : list of tuple
-        List of 2-band combinations used to form colors, copied from
-        the `Measure` object.
-    dataset : pandas.DataFrame
-        The photometric dataset containing magnitude and redshift values.
-    z_lim : numpy.ndarray
-        Array of redshift thresholds.
-    dict_all : dict
-        Dictionary of metrics for all tested color–color cuts, inherited from
-        the `Measure` object.
-    dict_single : dict
-        Container for storing results based on a single purity threshold.
-    dict_iterative : dict
-        Container for storing results based on an iterative purity threshold.
-    P_single_tot : numpy.ndarray
-        Total purity values as a function of `z_lim` (single threshold).
-    C_single_tot : numpy.ndarray
-        Total completeness values as a function of `z_lim` (single threshold).
-    F_single_tot : numpy.ndarray
-        Total failure rates (single threshold).
-    P_iterative_tot : numpy.ndarray
-        Total purity values (iterative threshold).
-    C_iterative_tot : numpy.ndarray
-        Total completeness values (iterative threshold).
-    F_iterative_tot : numpy.ndarray
-        Total failure rates (iterative threshold).
-
-    Parameters
-    ----------
-    measure : Measure
-        A `Measure` object containing the dataset, band information,
-        redshift thresholds, and precomputed cut metrics.
-    """
+    """Optimize color selections."""
 
     def __init__(self, measure):
+        """
+        Class for optimizing color cuts based on metrics computed by `Measure`.
+
+        This class takes the results from a `Measure` instance (which stores
+        metrics for a grid of color cuts) and provides structures for ranking,
+        aggregating, and optimizing those cuts. Single color conditions having
+        foreground failure rate equal to 1 are always excluded.
+
+        Attributes
+        ----------
+        bands : list of str
+            Photometric bands used in the analysis, copied from the input
+            `Measure` object.
+        colors : list of tuple
+            List of 2-band combinations used to form colors, copied from
+            the `Measure` object.
+        dataset : pandas.DataFrame
+            The photometric dataset containing magnitude and redshift values.
+        z_lim : numpy.ndarray
+            Array of redshift thresholds.
+        dict_all : dict
+            Dictionary of metrics for all tested color–color cuts, inherited from
+            the `Measure` object.
+        dict_single : dict
+            Container for storing results based on a single purity threshold.
+        dict_iterative : dict
+            Container for storing results based on an iterative purity threshold.
+        P_single_tot : numpy.ndarray
+            Total purity values as a function of `z_lim` (single threshold).
+        C_single_tot : numpy.ndarray
+            Total completeness values as a function of `z_lim` (single threshold).
+        F_single_tot : numpy.ndarray
+            Total failure rates (single threshold).
+        P_iterative_tot : numpy.ndarray
+            Total purity values (iterative threshold).
+        C_iterative_tot : numpy.ndarray
+            Total completeness values (iterative threshold).
+        F_iterative_tot : numpy.ndarray
+            Total failure rates (iterative threshold).
+
+        Parameters
+        ----------
+        measure : Measure
+            A `Measure` object containing the dataset, band information,
+            redshift thresholds, and precomputed cut metrics.
+        """
         self.bands = measure.bands
         self.colors = measure.colors
         self.dataset = measure.dataset
@@ -99,8 +100,7 @@ class Optimize:
 
     def _get_optimal_single_threshold_cuts(self, purity_min, completeness_min):
         """
-        Identify and store the optimal single-purity-threshold cuts that
-        maximize single cut completeness.
+        Identify the optimal single-purity-threshold cuts.
 
         This method analyzes all color cuts stored in `self.dict_all`
         and selects those whose purity exceeds `purity_min`. For each
@@ -347,10 +347,7 @@ class Optimize:
                                 purity = TP / (TP + FP) if TP + FP > 0 else 0.0
                                 compl = TP / (TP + FN) if TP + FN > 0 else 0.0
 
-                                if (
-                                    purity >= current_thresh
-                                    and compl > 0.0
-                                ):
+                                if purity >= current_thresh and compl > 0.0:
                                     key = (base_pair, comp_pair, cond_index)
                                     cut = {
                                         "base_pair": base_pair,
@@ -385,10 +382,7 @@ class Optimize:
                                 purity = TP / (TP + FP) if (TP + FP) > 0 else 0.0
                                 compl = TP / (TP + FN) if (TP + FN) > 0 else 0.0
 
-                                if (
-                                    purity >= current_thresh
-                                    and compl > 0.0
-                                ):
+                                if purity >= current_thresh and compl > 0.0:
                                     key = (base_pair, comp_pair, cond_index)
                                     cut = {
                                         "base_pair": base_pair,
@@ -435,8 +429,7 @@ class Optimize:
 
     def _combine_optimal_cuts(self, dictionary, C_tot, P_tot, F_tot):
         """
-        Combine multiple optimal color cuts and compute
-        aggregate performance metrics.
+        Combine optimal color cuts and compute global metrics.
 
         This method aggregates purity, completeness, and foreground
         failure rates across a set of optimal cuts stored in
@@ -526,6 +519,8 @@ class Optimize:
 
     def process_L24(self, purity_min, completeness_min=0.0, k=1):
         """
+        Optimization algorithm by Lesci et al. (2024).
+
         Derives the optimal color conditions based on a single purity threshold.
         Implements the methods detailed in Lesci et al. (2024, A&A, 684, A139),
         available at:
@@ -606,7 +601,7 @@ class Optimize:
         store_iterations=False,
     ):
         r"""
-        Iterative search for optimal color conditions.
+        Perform the iterative search for optimal color conditions.
 
         This method incrementally relaxes the single cut purity threshold in
         order to identify a set of cuts that maximize total completeness while

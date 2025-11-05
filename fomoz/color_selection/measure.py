@@ -24,6 +24,18 @@ GLOBAL_redshift = None
 
 
 def init_worker(c1, c2, redshift):
+    """
+    Initialize global data shared across worker processes.
+
+    Parameters
+    ----------
+    c1 : numpy.ndarray or None
+        First color array.
+    c2 : numpy.ndarray or None
+        Second color array.
+    redshift : numpy.ndarray
+        Array of galaxy redshift values.
+    """
     global GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift
     GLOBAL_color1 = c1
     GLOBAL_color2 = c2
@@ -31,50 +43,29 @@ def init_worker(c1, c2, redshift):
 
 
 def compute_for_simple_worker(args):
+    """
+    Wrap `compute_for_simple` using global data set by `init_worker`.
+
+    Parameters are passed via `args` to remain compatible with `pool.map`.
+    See `compute_for_simple` for full documentation.
+    """
     c, z_l = args
     return compute_for_simple((c, GLOBAL_color1, GLOBAL_redshift, z_l))
 
 
 def compute_for_cross_worker(args):
+    """
+    Wrap `compute_for_cross` using global data set by `init_worker`.
+
+    Parameters are passed via `args` to remain compatible with `pool.map`.
+    See `compute_for_cross` for full documentation.
+    """
     s, c, z_l = args
     return compute_for_cross((s, c, GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift, z_l))
 
 
 class Measure:
-    """
-    Class defining color selection completeness, purity, and
-    foreground failure rate for all color conditions, given any
-    lower redshift limit values and color condition parameters.
-
-    This class standardizes input photometric data, handles missing values,
-    constructs color arrays from provided bands, and computes color selection
-    metrics. These selections are defined as linear relations between
-    colors and are evaluated over a grid of slope–intercept combinations.
-
-    Parameters
-    ----------
-    dataset : pandas.DataFrame
-        Input photometric dataset containing magnitude measurements and a
-        redshift column.
-    bands : list of str
-        Names of the photometric bands to include in the analysis.
-    z_lim : array-like
-        Array of redshift limits/thresholds to be used in selection tests.
-    z_gal_string : str, default='redshift'
-        Column name in `dataset` that contains the galaxy redshift values.
-    missing_data : int or float, default=-99
-        Value used in the dataset to denote missing entries. These are replaced
-        with NaN for consistency.
-    s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
-        Array of slope values for generating linear cuts in color–color space.
-        These samples must be strictly positive.
-    c_precision : float, default=0.05
-        Precision of the c parameter sampling.
-    purity_initial_threshold : float, default=0.9
-        Initial threshold on purity. Color conditions with purity lower than
-        this value are not stored. This is useful to avoid filling memory
-        with unused information.
-    """
+    """Measure the metrics of color conditions."""
 
     def __init__(
         self,
@@ -87,7 +78,42 @@ class Measure:
         c_precision=0.05,
         purity_initial_threshold=0.9,
     ):
-        """ """
+        """
+        Measure the metrics of color conditions.
+
+        Class defining color selection completeness, purity, and
+        foreground failure rate for all color conditions, given any
+        lower redshift limit values and color condition parameters.
+
+        This class standardizes input photometric data, handles missing values,
+        constructs color arrays from provided bands, and computes color selection
+        metrics. These selections are defined as linear relations between
+        colors and are evaluated over a grid of slope–intercept combinations.
+
+        Parameters
+        ----------
+        dataset : pandas.DataFrame
+            Input photometric dataset containing magnitude measurements and a
+            redshift column.
+        bands : list of str
+            Names of the photometric bands to include in the analysis.
+        z_lim : array-like
+            Array of redshift limits/thresholds to be used in selection tests.
+        z_gal_string : str, default='redshift'
+            Column name in `dataset` that contains the galaxy redshift values.
+        missing_data : int or float, default=-99
+            Value used in the dataset to denote missing entries. These are replaced
+            with NaN for consistency.
+        s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
+            Array of slope values for generating linear cuts in color–color space.
+            These samples must be strictly positive.
+        c_precision : float, default=0.05
+            Precision of the c parameter sampling.
+        purity_initial_threshold : float, default=0.9
+            Initial threshold on purity. Color conditions with purity lower than
+            this value are not stored. This is useful to avoid filling memory
+            with unused information.
+        """
         assert isinstance(
             dataset, pd.DataFrame
         ), "Input dataset must be a pandas DataFrame"
@@ -348,8 +374,7 @@ class Measure:
 
     def process(self, cpu_number=None):
         """
-        Apply all color–color cuts across the dataset and compute
-        summary statistics.
+        Apply all color cuts and compute summary statistics.
 
         This method iterates over all unique color combinations, applying linear
         and cross cuts using `_apply_cuts`. Results are accumulated internally

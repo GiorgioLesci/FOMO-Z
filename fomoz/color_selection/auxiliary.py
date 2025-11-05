@@ -14,8 +14,7 @@ from scipy.interpolate import UnivariateSpline
 
 def compute_metrics(mask, redshift, z_l):
     """
-    Compute classification metrics (TP, FP, FN, TN) based on a boolean mask
-    and a redshift threshold.
+    Compute classification metrics (TP, FP, FN, TN).
 
     The function evaluates how well a given mask separates objects above and
     below a specified limiting redshift `z_l`. It compares the selected and
@@ -149,6 +148,8 @@ def compute_for_cross(args):
 
 def c_domain_given_s(color1, color2, s, q_low=0.01, q_high=0.99):
     """
+    Get the domain of `c`.
+
     Estimate the domain for the intercept parameter `c` in
     color-color conditions of the form:
 
@@ -433,8 +434,7 @@ def interpolate_parameters(input_dict, k=1):
 
 def set_plot():
     """
-    Create and configure a figure with three side-by-side subplots for
-    classification performance metrics.
+    Create a figure with three side-by-side subplots.
 
     The function generates a 1x3 grid of subplots intended for plotting:
     - Completeness (left panel)
@@ -465,8 +465,7 @@ def set_plot():
 
 def make_yaml_serializable(obj):
     """
-    Recursively convert complex or NumPy-based data types into
-    plain Python types that can be safely serialized to YAML.
+    Convert complex or NumPy-based data types into YAML serializables.
 
     This function traverses nested data structures (dictionaries,
     lists, tuples) and converts objects that are not natively
@@ -510,7 +509,7 @@ def make_yaml_serializable(obj):
 
 def float_representer(dumper, value):
     """
-    Custom YAML representer for floating-point numbers.
+    Get custom YAML representer for floating-point numbers.
 
     This function defines how floating-point values are converted to text
     when dumping data to a YAML file using ``yaml.safe_dump``.
