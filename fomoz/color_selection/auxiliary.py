@@ -449,7 +449,7 @@ def set_plot():
         foreground failure rate, respectively.
     """
     fig, ax = plt.subplots(
-        1, 3, figsize=(15, 4.5), sharex="row", gridspec_kw={"wspace": 0.3}
+        1, 3, figsize=(15, 4.5), sharex="row", gridspec_kw={"wspace": 0.35}
     )
     for i in range(len(ax)):
         ax[i].xaxis.set_tick_params(direction="in", which="both", labelsize=13)
