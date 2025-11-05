@@ -207,8 +207,14 @@ class Measure:
 
                 purity_up = tp_up / np.maximum(tp_up + fp_up, 1e-12)
                 purity_low = tp_low / np.maximum(tp_low + fp_low, 1e-12)
-                mask_up = purity_up > self.purity_initial_threshold
-                mask_low = purity_low > self.purity_initial_threshold
+                compl_up = tp_up / np.maximum(tp_up + fn_up, 1e-12)
+                compl_low = tp_low / np.maximum(tp_low + fn_low, 1e-12)
+                mask_up = (
+                    purity_up > self.purity_initial_threshold
+                ) & (compl_up > 0.0)
+                mask_low = (
+                    purity_low > self.purity_initial_threshold
+                ) & (compl_low > 0.0)
 
                 sub_dict = {}
                 sub_dict[0] = {
@@ -270,7 +276,10 @@ class Measure:
                         sc_grid = np.asarray(sc_grid, dtype=np.float32)
 
                         purity = tp_all / np.maximum(tp_all + fp_all, 1e-12)
-                        mask_per_condition = purity > self.purity_initial_threshold
+                        compl = tp_all / np.maximum(tp_all + fn_all, 1e-12)
+                        mask_per_condition = (
+                            purity > self.purity_initial_threshold
+                        ) & (compl > 0.0)
 
                         # Save structure per condition index (0, 1, 2, 3)
                         sub_dict = {}
