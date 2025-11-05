@@ -84,6 +84,7 @@ class Optimize:
         self.dataset = measure.dataset
         self.z_lim = measure.z_lim
         self.dict_all = measure.dict_all
+        self.purity_initial_threshold = measure.purity_initial_threshold
 
         self.dict_single = {}
         self.dict_iterative = {}
@@ -130,6 +131,10 @@ class Optimize:
             P_min = purity_min[np.where(self.z_lim == z_l)[0][0]]
             if P_min > 1.0 or P_min < 0.0:
                 raise ValueError("The minimum purity must range within [0,1]")
+            if P_min <= self.purity_initial_threshold:
+                errMsg = "P_min is lower than or equal to the initial"
+                errMsg += " purity threshold set in the Measure class!"
+                raise ValueError(errMsg)
 
             self.dict_single[z_l] = {}
 
@@ -139,151 +144,110 @@ class Optimize:
                 for comp_pair, metrics in sub_cuts.items():
 
                     # ----- Cross-color cuts -----
-                    if "s" in metrics and "c" in metrics:
+                    if any("s" in v for v in metrics.values()):
 
-                        best_conditions = [None] * 4
-                        max_completeness = [-np.inf] * 4
+                        best_by_cond = {}
 
-                        for j in range(len(metrics["TP"])):  # j = index in (s, c)
-                            for i in range(4):  # i = condition index (0 to 3)
-                                purity = (
-                                    metrics["TP"][j][i]
-                                    / (metrics["TP"][j][i] + metrics["FP"][j][i])
-                                    if metrics["TP"][j][i] > 0
-                                    else 0.0
+                        for cond_index, m in metrics.items():
+
+                            s_vals = m.get("s", [])
+                            c_vals = m.get("c", [])
+                            tp_vals = m.get("TP", [])
+                            fp_vals = m.get("FP", [])
+                            fn_vals = m.get("FN", [])
+                            tn_vals = m.get("TN", [])
+
+                            best_comp = -np.inf
+                            best_cut = None
+
+                            for j in range(len(c_vals)):
+                                TP, FP, FN, TN = (
+                                    tp_vals[j],
+                                    fp_vals[j],
+                                    fn_vals[j],
+                                    tn_vals[j],
                                 )
-                                completeness = (
-                                    metrics["TP"][j][i]
-                                    / (metrics["TP"][j][i] + metrics["FN"][j][i])
-                                    if metrics["TP"][j][i] > 0
-                                    else 0.0
-                                )
-                                f_low = (
-                                    metrics["FP"][j][i]
-                                    / (metrics["FP"][j][i] + metrics["TN"][j][i])
-                                    if metrics["FP"][j][i] > 0
-                                    else 0.0
-                                )
+
+                                purity = TP / (TP + FP) if (TP + FP) > 0 else 0.0
+                                completeness = TP / (TP + FN) if (TP + FN) > 0 else 0.0
+                                f_low = FP / (FP + TN) if (FP + TN) > 0 else 0.0
 
                                 if (
                                     purity > P_min
                                     and completeness > completeness_min
                                     and f_low < 1.0
+                                    and completeness > best_comp
                                 ):
-                                    if completeness > max_completeness[i]:
-                                        max_completeness[i] = completeness
-                                        best_conditions[i] = {
-                                            "s": float(metrics["s"][j]),
-                                            "c": float(metrics["c"][j]),
-                                            "condition_index": i,
-                                            "TP": metrics["TP"][j][i],
-                                            "FP": metrics["FP"][j][i],
-                                            "FN": metrics["FN"][j][i],
-                                            "TN": metrics["TN"][j][i],
-                                        }
+                                    best_comp = completeness
+                                    best_cut = {
+                                        "s": float(s_vals[j]),
+                                        "c": float(c_vals[j]),
+                                        "condition_index": cond_index,
+                                        "TP": TP,
+                                        "FP": FP,
+                                        "FN": FN,
+                                        "TN": TN,
+                                    }
 
-                        # Remove None entries
-                        # (in case some conditions didn't pass the threshold)
-                        best_conditions = [
-                            cond for cond in best_conditions if cond is not None
-                        ]
+                            if best_cut:
+                                best_by_cond[cond_index] = best_cut
 
-                        if best_conditions:
-                            self.dict_single[z_l][base_pair][
-                                comp_pair
-                            ] = best_conditions
+                        if best_by_cond:
+                            self.dict_single[z_l][base_pair][comp_pair] = list(
+                                best_by_cond.values()
+                            )
 
                     # ----- Simple (1-color) cuts -----
                     else:
 
-                        best_conditions = []
-                        max_comp_up = -np.inf
-                        max_comp_low = -np.inf
-                        best_up = None
-                        best_low = None
+                        best_by_cond = {}
 
-                        for i, c in enumerate(metrics["c"]):
-                            purity_up = (
-                                metrics["TP"][i][0]
-                                / (metrics["TP"][i][0] + metrics["FP"][i][0])
-                                if metrics["TP"][i][0] > 0
-                                else 0.0
-                            )
-                            purity_low = (
-                                metrics["TP"][i][1]
-                                / (metrics["TP"][i][1] + metrics["FP"][i][1])
-                                if metrics["TP"][i][1] > 0
-                                else 0.0
-                            )
-                            comp_up = (
-                                metrics["TP"][i][0]
-                                / (metrics["TP"][i][0] + metrics["FN"][i][0])
-                                if metrics["TP"][i][0] > 0
-                                else 0
-                            )
-                            comp_low = (
-                                metrics["TP"][i][1]
-                                / (metrics["TP"][i][1] + metrics["FN"][i][1])
-                                if metrics["TP"][i][1] > 0
-                                else 0
-                            )
-                            f_low_up = (
-                                metrics["FP"][i][0]
-                                / (metrics["FP"][i][0] + metrics["TN"][i][0])
-                                if metrics["FP"][i][0] > 0
-                                else 0
-                            )
-                            f_low_low = (
-                                metrics["FP"][i][1]
-                                / (metrics["FP"][i][1] + metrics["TN"][i][1])
-                                if metrics["FP"][i][1] > 0
-                                else 0
-                            )
+                        for cond_index, m in metrics.items():
 
-                            # Upper cut (color > c)
-                            if (
-                                purity_up > P_min
-                                and comp_up > completeness_min
-                                and f_low_up < 1.0
-                            ):
-                                if comp_up > max_comp_up:
-                                    max_comp_up = comp_up
-                                    best_up = {
-                                        "c": float(c),
-                                        "condition_index": 0,
-                                        "TP": metrics["TP"][i][0],
-                                        "FP": metrics["FP"][i][0],
-                                        "FN": metrics["FN"][i][0],
-                                        "TN": metrics["TN"][i][0],
+                            c_vals = m.get("c", [])
+                            tp_vals = m.get("TP", [])
+                            fp_vals = m.get("FP", [])
+                            fn_vals = m.get("FN", [])
+                            tn_vals = m.get("TN", [])
+
+                            best_comp = -np.inf
+                            best_cut = None
+
+                            for j in range(len(c_vals)):
+                                TP, FP, FN, TN = (
+                                    tp_vals[j],
+                                    fp_vals[j],
+                                    fn_vals[j],
+                                    tn_vals[j],
+                                )
+
+                                purity = TP / (TP + FP) if (TP + FP) > 0 else 0.0
+                                completeness = TP / (TP + FN) if (TP + FN) > 0 else 0.0
+                                f_low = FP / (FP + TN) if (FP + TN) > 0 else 0.0
+
+                                if (
+                                    purity > P_min
+                                    and completeness > completeness_min
+                                    and f_low < 1.0
+                                    and completeness > best_comp
+                                ):
+                                    best_comp = completeness
+                                    best_cut = {
+                                        "c": float(c_vals[j]),
+                                        "condition_index": cond_index,
+                                        "TP": TP,
+                                        "FP": FP,
+                                        "FN": FN,
+                                        "TN": TN,
                                     }
 
-                            # Lower cut (color < c)
-                            if (
-                                purity_low > P_min
-                                and comp_low > completeness_min
-                                and f_low_low < 1.0
-                            ):
-                                if comp_low > max_comp_low:
-                                    max_comp_low = comp_low
-                                    best_low = {
-                                        "c": float(c),
-                                        "condition_index": 1,
-                                        "TP": metrics["TP"][i][1],
-                                        "FP": metrics["FP"][i][1],
-                                        "FN": metrics["FN"][i][1],
-                                        "TN": metrics["TN"][i][1],
-                                    }
+                            if best_cut:
+                                best_by_cond[cond_index] = best_cut
 
-                        if best_up or best_low:
-                            self.dict_single[z_l][base_pair][comp_pair] = []
-                            if best_up:
-                                self.dict_single[z_l][base_pair][comp_pair].append(
-                                    best_up
-                                )
-                            if best_low:
-                                self.dict_single[z_l][base_pair][comp_pair].append(
-                                    best_low
-                                )
+                        if best_by_cond:
+                            self.dict_single[z_l][base_pair][comp_pair] = list(
+                                best_by_cond.values()
+                            )
 
     def _process_iterative_for_one_z(self, args):
         """
@@ -360,17 +324,37 @@ class Optimize:
         iteration = 0
         while current_thresh > 0:
 
+            if current_thresh <= self.purity_initial_threshold:
+                errMsg = "The current threshold in the iterative process"
+                errMsg += " is lower than or equal to the initial purity"
+                errMsg += " threshold set in the Measure class! Lower the latter."
+                raise ValueError(errMsg)
+
             new_best_by_key = {}
 
             for base_pair, comp_cuts in all_cuts.items():
                 for comp_pair, metrics in comp_cuts.items():
-                    if comp_pair == base_pair:  # simple
-                        for i, c_val in enumerate(metrics["c"]):
-                            for cond_index in (0, 1):
-                                TP = metrics["TP"][i][cond_index]
-                                FP = metrics["FP"][i][cond_index]
-                                FN = metrics["FN"][i][cond_index]
-                                TN = metrics["TN"][i][cond_index]
+
+                    # simple cuts
+                    if comp_pair == base_pair:
+                        for cond_index in (0, 1):
+
+                            if cond_index not in metrics:
+                                continue
+
+                            cond_dict = metrics[cond_index]
+
+                            c_vals = cond_dict.get("c", [])
+                            tp_vals = cond_dict.get("TP", [])
+                            fp_vals = cond_dict.get("FP", [])
+                            fn_vals = cond_dict.get("FN", [])
+                            tn_vals = cond_dict.get("TN", [])
+
+                            for i, c_val in enumerate(c_vals):
+                                TP = tp_vals[i]
+                                FP = fp_vals[i]
+                                FN = fn_vals[i]
+                                TN = tn_vals[i]
                                 purity = TP / (TP + FP) if TP + FP > 0 else 0.0
                                 compl = TP / (TP + FN) if TP + FN > 0 else 0.0
                                 f_low = FP / (FP + TN) if FP + TN > 0 else 0.0
@@ -393,16 +377,27 @@ class Optimize:
                                         or compl > new_best_by_key[key]["completeness"]
                                     ):
                                         new_best_by_key[key] = cut
-                    else:  # cross
-                        for i in range(len(metrics["s"])):
-                            for cond_index in range(4):
-                                TP = metrics["TP"][i][cond_index]
-                                FP = metrics["FP"][i][cond_index]
-                                FN = metrics["FN"][i][cond_index]
-                                TN = metrics["TN"][i][cond_index]
-                                purity = TP / (TP + FP) if TP + FP > 0 else 0.0
-                                compl = TP / (TP + FN) if TP + FN > 0 else 0.0
-                                f_low = FP / (FP + TN) if FP + TN > 0 else 0.0
+
+                    # cross cuts
+                    else:
+
+                        for cond_index, cond_dict in metrics.items():
+                            s_vals = cond_dict.get("s", [])
+                            c_vals = cond_dict.get("c", [])
+                            tp_vals = cond_dict.get("TP", [])
+                            fp_vals = cond_dict.get("FP", [])
+                            fn_vals = cond_dict.get("FN", [])
+                            tn_vals = cond_dict.get("TN", [])
+
+                            for i in range(len(c_vals)):
+                                TP = tp_vals[i]
+                                FP = fp_vals[i]
+                                FN = fn_vals[i]
+                                TN = tn_vals[i]
+
+                                purity = TP / (TP + FP) if (TP + FP) > 0 else 0.0
+                                compl = TP / (TP + FN) if (TP + FN) > 0 else 0.0
+                                f_low = FP / (FP + TN) if (FP + TN) > 0 else 0.0
 
                                 if (
                                     purity >= current_thresh
@@ -413,8 +408,8 @@ class Optimize:
                                     cut = {
                                         "base_pair": base_pair,
                                         "comp_pair": comp_pair,
-                                        "s": float(metrics["s"][i]),
-                                        "c": float(metrics["c"][i]),
+                                        "s": float(s_vals[i]),
+                                        "c": float(c_vals[i]),
                                         "condition_index": cond_index,
                                         "completeness": compl,
                                     }

@@ -47,7 +47,7 @@ def reference_measure_instance(reference_dataset):
     bands = ['g', 'r', 'i']
     z_lim = [0.5, 0.6]
     
-    measure = Measure(reference_dataset, bands, z_lim)
+    measure = Measure(reference_dataset, bands, z_lim, purity_initial_threshold=0.8)
     measure.process(cpu_number=1)
     
     return measure
@@ -326,44 +326,70 @@ class TestFloatRepresenter:
 
 class TestMeasureProcess:
     """Test cases for Measure.process() method with reference.csv data."""
-    
+
     def test_process_with_reference_data(self, reference_measure_instance):
         """Test process() method with actual reference data."""
-        # Initialize Measure with reference data
+        
         measure = reference_measure_instance
         z_lim = measure.z_lim
-        
-        # Verify the results structure
+
+        # Top-level structure: one dict entry per z_l
         assert len(measure.dict_all) == len(z_lim)
-        
+
+        expected_pairs = [('g', 'r'), ('g', 'i'), ('r', 'i')]  # mag1-mag2 tested pairs
+
         for z_l in z_lim:
             assert z_l in measure.dict_all
             assert isinstance(measure.dict_all[z_l], dict)
-            
-            # Check that all color combinations are present
-            expected_colors = [('g', 'r'), ('g', 'i'), ('r', 'i')]
-            
-            for color_pair in expected_colors:
-                assert color_pair in measure.dict_all[z_l]
-                
-                # Check that each color pair has results
-                color_data = measure.dict_all[z_l][color_pair]
-                assert isinstance(color_data, dict)
-                
-                # Check self-comparison (simple cuts)
-                assert color_pair in color_data
-                simple_cut_data = color_data[color_pair]
-                assert 'c' in simple_cut_data
-                assert 'TP' in simple_cut_data
-                assert 'FP' in simple_cut_data
-                assert 'FN' in simple_cut_data
-                assert 'TN' in simple_cut_data
-                
-                # Verify data types and non-empty results
-                assert len(simple_cut_data['c']) > 0
-                assert len(simple_cut_data['TP']) == len(simple_cut_data['c'])
-                assert len(simple_cut_data['FP']) == len(simple_cut_data['c'])
-    
+
+            for base_pair in expected_pairs:
+                assert base_pair in measure.dict_all[z_l]
+                base_data = measure.dict_all[z_l][base_pair]
+                assert isinstance(base_data, dict)
+
+                # Simple cuts (base_pair compared with itself)
+                assert base_pair in base_data
+                simple_data = base_data[base_pair]
+                assert isinstance(simple_data, dict)
+
+                # loop both condition_index: 0 (>c) and 1 (<c)
+                for cond_index in (0, 1):
+                    if cond_index in simple_data:
+                        cond_metrics = simple_data[cond_index]
+                        assert isinstance(cond_metrics, dict)
+
+                        # required keys exist
+                        for key in ("c", "TP", "FP", "FN", "TN"):
+                            assert key in cond_metrics
+
+                        # array lengths consistent
+                        n = len(cond_metrics["c"])
+                        assert len(cond_metrics["TP"]) == n
+                        assert len(cond_metrics["FP"]) == n
+                        assert len(cond_metrics["FN"]) == n
+                        assert len(cond_metrics["TN"]) == n
+
+                # Cross-color cuts exist if defined
+                for comp_pair, comp_data in base_data.items():
+                    if comp_pair == base_pair:
+                        continue  # already checked simple case
+
+                    # this is a cross-color structure: dict indexed by cond_index
+                    assert isinstance(comp_data, dict)
+                    for cond_index, cond_metrics in comp_data.items():
+                        assert isinstance(cond_index, int)
+                        assert 0 <= cond_index <= 3  # 4 possible orientation cuts
+
+                        for key in ("s", "c", "TP", "FP", "FN", "TN"):
+                            assert key in cond_metrics
+
+                        n = len(cond_metrics["c"])
+                        assert n == len(cond_metrics["s"])  # matching lengths
+                        assert n == len(cond_metrics["TP"])
+                        assert n == len(cond_metrics["FP"])
+                        assert n == len(cond_metrics["FN"])
+                        assert n == len(cond_metrics["TN"])
+
     def test_process_with_single_z_limit(self, reference_dataset):
         """Test process() with single redshift limit."""
         bands = ['g', 'r', 'i']
@@ -401,9 +427,9 @@ class TestOptimizeProcess:
         assert len(optimize.P_single_tot) == len(optimize.z_lim)
 
         # Check against known expected values
-        expected_C = [0.96249414, 0.94920795]
-        expected_P = [0.86606201, 0.86681975]
-        expected_F = [0.65871369, 0.46288907]
+        expected_C = [0.96390061, 0.94845361]
+        expected_P = [0.86277801, 0.87254222]
+        expected_F = [0.67842324, 0.43974461]
 
         assert np.allclose(optimize.C_single_tot, expected_C), \
             f"Completeness mismatch: expected {expected_C}, got {optimize.C_single_tot}"
@@ -433,9 +459,9 @@ class TestOptimizeProcess:
         assert len(optimize.P_iterative_tot) == len(optimize.z_lim)
 
         # Check against known expected values
-        expected_C = [0.93131739, 0.92884083]
-        expected_P = [0.90172492, 0.90561412]
-        expected_F = [0.44917012, 0.30726257]
+        expected_C = [0.9294421,  0.93034951]
+        expected_P = [0.90339485, 0.90398241]
+        expected_F = [0.43983402, 0.31364725]
 
         assert np.allclose(optimize.C_iterative_tot, expected_C), \
             f"Completeness mismatch: expected {expected_C}, got {optimize.C_iterative_tot}"
@@ -478,7 +504,7 @@ class TestSelectBackground:
         
         # Check the number of selected objects
         expected_N = np.zeros(len(mask))
-        expected_N = [4406, 4363, 4331, 4307, 4272, 4247, 4206, 4182, 4135, 4106]
+        expected_N = [4389, 4353, 4327, 4302, 4277, 4246, 4213, 4186, 4155, 4122]
 
         for i in range(len(zl_new)):
             assert np.allclose(np.sum(mask[i]), expected_N[i]), \

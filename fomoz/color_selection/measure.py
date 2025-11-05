@@ -45,8 +45,12 @@ class Measure:
     s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
         Array of slope values for generating linear cuts in color–color space.
         These samples must be strictly positive.
-    c_precision : float, default=0.01
+    c_precision : float, default=0.05
         Precision of the c parameter sampling.
+    purity_initial_threshold : float, default=0.9
+        Initial threshold on purity. Color conditions with purity lower than
+        this value are not stored. This is useful to avoid filling memory
+        with unused information.
     """
 
     def __init__(
@@ -57,7 +61,8 @@ class Measure:
         z_gal_string="redshift",
         missing_data=-99,
         s_samples=np.linspace(0.3, 1.7, 30),
-        c_precision=0.01,
+        c_precision=0.05,
+        purity_initial_threshold=0.9,
     ):
         """ """
         assert isinstance(
@@ -107,10 +112,10 @@ class Measure:
                 "All slope values in s_samples must be strictly positive. "
                 f"Found non-positive values: {s_samples[s_samples <= 0]}"
             )
-        s_samples = s_samples.astype(np.float32)
+        self.s_samples = s_samples.astype(np.float32)
         self.c_precision = float(c_precision)
-        self.sc_grid = [(s, c) for s in s_samples for c in np.linspace(-5, 5, 100)]
         self.dict_all = {}
+        self.purity_initial_threshold = purity_initial_threshold
 
     def _apply_cuts(self, mag1, mag2, cross_colors=[], cpu_number=None):
         """
@@ -159,6 +164,12 @@ class Measure:
         n_steps = int((vmax - vmin) / self.c_precision) + 1
         test_colors = np.linspace(vmin, vmax, n_steps, dtype=np.float32)
 
+        def purity_mask(tp, fp, threshold):
+            tp = np.asarray(tp, dtype=np.float64)
+            fp = np.asarray(fp, dtype=np.float64)
+            purity = tp / np.maximum(tp + fp, 1e-6)
+            return purity > threshold
+
         with mp.Pool(N_cpu) as pool:
 
             for z_l in tqdm(
@@ -185,13 +196,37 @@ class Measure:
                 tp_up, fp_up, fn_up, tn_up = map(list, zip(*results_up))
                 tp_low, fp_low, fn_low, tn_low = map(list, zip(*results_low))
 
-                self.dict_all[z_l][(mag1, mag2)][(mag1, mag2)] = {
-                    "c": [np.float32(tc) for tc in test_colors],
-                    "TP": list(zip(tp_up, tp_low)),
-                    "FP": list(zip(fp_up, fp_low)),
-                    "FN": list(zip(fn_up, fn_low)),
-                    "TN": list(zip(tn_up, tn_low)),
+                tp_up = np.asarray(tp_up, dtype=np.float32)
+                fp_up = np.asarray(fp_up, dtype=np.float32)
+                fn_up = np.asarray(fn_up, dtype=np.float32)
+                tn_up = np.asarray(tn_up, dtype=np.float32)
+                tp_low = np.asarray(tp_low, dtype=np.float32)
+                fp_low = np.asarray(fp_low, dtype=np.float32)
+                fn_low = np.asarray(fn_low, dtype=np.float32)
+                tn_low = np.asarray(tn_low, dtype=np.float32)
+
+                purity_up = tp_up / np.maximum(tp_up + fp_up, 1e-12)
+                purity_low = tp_low / np.maximum(tp_low + fp_low, 1e-12)
+                mask_up = purity_up > self.purity_initial_threshold
+                mask_low = purity_low > self.purity_initial_threshold
+
+                sub_dict = {}
+                sub_dict[0] = {
+                    "c": test_colors[mask_up].tolist(),
+                    "TP": tp_up[mask_up].astype(np.int64).tolist(),
+                    "FP": fp_up[mask_up].astype(np.int64).tolist(),
+                    "FN": fn_up[mask_up].astype(np.int64).tolist(),
+                    "TN": tn_up[mask_up].astype(np.int64).tolist(),
                 }
+                sub_dict[1] = {
+                    "c": test_colors[mask_low].astype(np.float32).tolist(),
+                    "TP": tp_low[mask_low].astype(np.int64).tolist(),
+                    "FP": fp_low[mask_low].astype(np.int64).tolist(),
+                    "FN": fn_low[mask_low].astype(np.int64).tolist(),
+                    "TN": tn_low[mask_low].astype(np.int64).tolist(),
+                }
+
+                self.dict_all[z_l][(mag1, mag2)][(mag1, mag2)] = sub_dict
 
                 # Two-color cuts
                 if cross_colors:
@@ -204,24 +239,16 @@ class Measure:
                             np.float32
                         ) - self.dataset[mag4].values.astype(np.float32)
 
-                        """
                         sc_args = []
+                        sc_grid = []
                         for s in self.s_samples:
                             c_min, c_max = c_domain_given_s(color1, color2, s)
-
-                            # Number of samples driven by resolution
-                            n_c = int((c_max - c_min) / self.c_precision)) + 1
-
+                            n_c = int((c_max - c_min) / self.c_precision) + 1
                             c_grid = np.linspace(c_min, c_max, n_c, dtype=np.float32)
 
                             for c in c_grid:
                                 sc_args.append((s, c, color1, color2, redshift, z_l))
-                        """
-
-                        sc_args = [
-                            (s, c, color1, color2, redshift, z_l)
-                            for s, c in self.sc_grid
-                        ]
+                                sc_grid.append((s, c))
 
                         results = pool.map(compute_for_cross, sc_args)
 
@@ -235,14 +262,41 @@ class Measure:
                             fn_all.append(list(fn_c))
                             tn_all.append(list(tn_c))
 
-                        self.dict_all[z_l][(mag1, mag2)][(mag3, mag4)] = {
-                            "s": [s for s, _ in self.sc_grid],
-                            "c": [c for _, c in self.sc_grid],
-                            "TP": tp_all,
-                            "FP": fp_all,
-                            "FN": fn_all,
-                            "TN": tn_all,
-                        }
+                        tp_all = np.asarray(tp_all, dtype=np.float32)
+                        fp_all = np.asarray(fp_all, dtype=np.float32)
+                        fn_all = np.asarray(fn_all, dtype=np.float32)
+                        tn_all = np.asarray(tn_all, dtype=np.float32)
+
+                        sc_grid = np.asarray(sc_grid, dtype=np.float32)
+
+                        purity = tp_all / np.maximum(tp_all + fp_all, 1e-12)
+                        mask_per_condition = purity > self.purity_initial_threshold
+
+                        # Save structure per condition index (0, 1, 2, 3)
+                        sub_dict = {}
+
+                        for cond_index in range(4):
+                            mask = mask_per_condition[:, cond_index]
+
+                            if np.any(mask):
+                                sub_dict[cond_index] = {
+                                    "s": sc_grid[mask, 0].tolist(),
+                                    "c": sc_grid[mask, 1].tolist(),
+                                    "TP": tp_all[mask, cond_index]
+                                    .astype(np.int64)
+                                    .tolist(),
+                                    "FP": fp_all[mask, cond_index]
+                                    .astype(np.int64)
+                                    .tolist(),
+                                    "FN": fn_all[mask, cond_index]
+                                    .astype(np.int64)
+                                    .tolist(),
+                                    "TN": tn_all[mask, cond_index]
+                                    .astype(np.int64)
+                                    .tolist(),
+                                }
+
+                        self.dict_all[z_l][(mag1, mag2)][(mag3, mag4)] = sub_dict
 
     def process(self, cpu_number=None):
         """

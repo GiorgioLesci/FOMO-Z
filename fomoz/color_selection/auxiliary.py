@@ -147,70 +147,66 @@ def compute_for_cross(args):
     return [compute_metrics(mask, redshift, z_l) for mask in cuts]
 
 
-def c_domain_given_s(
-    color1,
-    color2,
-    s,
-    q_low=0.01,
-    q_high=0.99,
-    margin_abs=0.05,
-    margin_rel=0.05,
-):
+def c_domain_given_s(color1, color2, s, q_low=0.01, q_high=0.99):
     """
-    Compute a robust, data-driven domain for the intercept `c` used in
-    linear cuts like `color1 > s*color2 + c` (or the other three variants).
+    Estimate the domain for the intercept parameter `c` in
+    color-color conditions of the form:
+
+        color1 >  +s * color2 + c
+        color1 <  +s * color2 + c
+        color1 >  -s * color2 + c
+        color1 <  -s * color2 + c
+
+    The input slope values `s` are always positive.
+
+    The inequality can be rewritten as:
+        c <  color1 - s' * color2,
+    Consequently, all meaningful values of `c` lie
+    within the empirical range of the transformed variables:
+        X(+s) = color1 - s * color2
+        X(-s) = color1 + s * color2
+
+    This function combines both transformations and computes lower and
+    upper quantile bounds to exclude extreme outliers while retaining the
+    full range of relevant `c` values.
 
     Parameters
     ----------
     color1, color2 : ndarray (1D)
-        Input color arrays (may contain NaNs). Must be broadcastable to same shape.
+        Input color arrays (may contain NaNs). Must have matching shape.
     s : float
-        Base slope magnitude (positive in your design).
-    s_sign : {+1, -1}, optional
-        Sign to apply to `s` when building X(s). Use +1 for `s` and -1 for `-s`.
+        Positive slope magnitude used to evaluate both +s and -s conditions.
     q_low, q_high : float
-        Quantiles to trim outliers (0 < q_low < q_high < 1). Defaults: 0.01, 0.99.
-    margin_abs : float
-        Absolute margin in magnitudes to extend at least this far. Default 0.05.
-    margin_rel : float
-        Relative margin fraction of the dynamic range (hi - lo). Default 0.05.
+        Lower and upper quantiles for robust domain estimation
+        (0 < q_low < q_high < 1). Default: [0.01, 0.99].
 
     Returns
     -------
-    c_min, c_max : floats
-        Lower and upper bounds for the c domain (float32-compatible).
+    c_min, c_max : float
+        Lower and upper bounds for the valid c domain.
     """
-    # ensure inputs are numpy arrays
     color1 = np.asarray(color1, dtype=np.float64)
     color2 = np.asarray(color2, dtype=np.float64)
 
     if color1.shape != color2.shape:
         raise ValueError("color1 and color2 must have the same shape")
 
-    # Build the transformed variable X(s) = color1 - s'*color2
-    s_signed = float(s_sign) * float(s)
-    vals = color1 - s_signed * color2
+    # Values relevant for +s and -s conditions
+    vals = np.concatenate(
+        [
+            color1 - s * color2,  # +s
+            color1 + s * color2,  # -s
+        ]
+    )
 
-    # Remove NaNs and infinities
     vals = vals[np.isfinite(vals)]
     if vals.size == 0:
-        # fallback to a sensible default domain
         return -5.0, 5.0
 
-    # Robust quantiles
     lo = float(np.quantile(vals, q_low))
     hi = float(np.quantile(vals, q_high))
 
-    # dynamic range protection
-    dyn = max(hi - lo, 0.0)
-
-    # margin: the larger between an absolute floor and a small fraction of the range
-    margin = max(margin_abs, margin_rel * max(dyn, 1e-6))
-
-    c_min = lo - margin
-    c_max = hi + margin
-
-    return float(c_min), float(c_max)
+    return lo, hi
 
 
 def build_nested_dict(cut_list):
