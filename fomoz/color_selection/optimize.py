@@ -37,7 +37,8 @@ class Optimize:
 
     This class takes the results from a `Measure` instance (which stores
     metrics for a grid of color cuts) and provides structures for ranking,
-    aggregating, and optimizing those cuts.
+    aggregating, and optimizing those cuts. Single color conditions having
+    foreground failure rate equal to 1 are always excluded.
 
     Attributes
     ----------
@@ -183,10 +184,6 @@ class Optimize:
                                         "s": float(s_vals[j]),
                                         "c": float(c_vals[j]),
                                         "condition_index": cond_index,
-                                        "TP": TP,
-                                        "FP": FP,
-                                        "FN": FN,
-                                        "TN": TN,
                                     }
 
                             if best_cut:
@@ -235,10 +232,6 @@ class Optimize:
                                     best_cut = {
                                         "c": float(c_vals[j]),
                                         "condition_index": cond_index,
-                                        "TP": TP,
-                                        "FP": FP,
-                                        "FN": FN,
-                                        "TN": TN,
                                     }
 
                             if best_cut:
@@ -250,8 +243,8 @@ class Optimize:
                             )
 
     def _process_iterative_for_one_z(self, args):
-        """
-        Optimize the color cut selection for a single redshift threshold `z_l`.
+        r"""
+        Optimize the color cut selection for a singleredshift threshold `z_l`.
 
         For the given redshift value, this method searches for the set of
         cuts that ($\mathcal{P}_{\rm iter}^{\rm ini}$: `start_purity`,
@@ -361,7 +354,7 @@ class Optimize:
 
                                 if (
                                     purity >= current_thresh
-                                    and not (f_low == compl == 1.0)
+                                    and f_low < 1.0
                                     and compl > 0.0
                                 ):
                                     key = (base_pair, comp_pair, cond_index)
@@ -401,7 +394,7 @@ class Optimize:
 
                                 if (
                                     purity >= current_thresh
-                                    and not (f_low == compl == 1.0)
+                                    and f_low < 1.0
                                     and compl > 0.0
                                 ):
                                     key = (base_pair, comp_pair, cond_index)
@@ -427,9 +420,9 @@ class Optimize:
             nested = build_nested_dict(selection)
             self._combine_optimal_cuts({z_l: nested}, C_tot_new, P_tot_new, F_tot_new)
 
-            if C_tot_new[idx] == F_tot_new[idx] == 1.0:
+            if F_tot_new[idx] == 1.0:
                 err_msg = "No effective selection found:"
-                err_msg += f" entire reference sample selected at z_l={z_l}."
+                err_msg += f" entire foreground sample selected at z_l={z_l}."
                 raise ValueError(err_msg)
 
             if P_tot_new[idx] >= purity_tot_min:
@@ -620,7 +613,7 @@ class Optimize:
         k=1,
         store_iterations=False,
     ):
-        """
+        r"""
         Iterative search for optimal color conditions.
 
         This method incrementally relaxes the single cut purity threshold in
@@ -628,8 +621,6 @@ class Optimize:
         still satisfying the global purity constraint. The algorithm proceeds
         iteratively, starting from a strict initial purity threshold and reducing
         it by `step` until the total purity remains above `purity_tot_min`.
-        Color conditions with foreground failure rate equal to 1 AND completeness
-        equal to 1 are discarded.
 
         Constraints
         -----------

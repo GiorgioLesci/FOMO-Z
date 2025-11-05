@@ -22,20 +22,22 @@ GLOBAL_color1 = None
 GLOBAL_color2 = None
 GLOBAL_redshift = None
 
+
 def init_worker(c1, c2, redshift):
     global GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift
     GLOBAL_color1 = c1
     GLOBAL_color2 = c2
     GLOBAL_redshift = redshift
 
+
 def compute_for_simple_worker(args):
     c, z_l = args
     return compute_for_simple((c, GLOBAL_color1, GLOBAL_redshift, z_l))
 
+
 def compute_for_cross_worker(args):
     s, c, z_l = args
     return compute_for_cross((s, c, GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift, z_l))
-
 
 
 class Measure:
@@ -184,7 +186,9 @@ class Measure:
         GLOBAL_color2 = None
         GLOBAL_redshift = self.dataset["redshift"].values.astype(np.float32)
 
-        vmin, vmax = np.quantile(GLOBAL_color1[np.isfinite(GLOBAL_color1)], [0.01, 0.99])
+        vmin, vmax = np.quantile(
+            GLOBAL_color1[np.isfinite(GLOBAL_color1)], [0.01, 0.99]
+        )
         n_steps = int((vmax - vmin) / self.c_precision) + 1
         test_colors = np.linspace(vmin, vmax, n_steps, dtype=np.float32)
 
@@ -207,7 +211,7 @@ class Measure:
             with mp.Pool(
                 N_cpu,
                 initializer=init_worker,
-                initargs=(GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift)
+                initargs=(GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift),
             ) as pool:
                 results = pool.map(compute_for_simple_worker, color_cut_args)
 
@@ -226,16 +230,23 @@ class Measure:
             fn_low = np.asarray(fn_low, dtype=np.float32)
             tn_low = np.asarray(tn_low, dtype=np.float32)
 
+            # Mask
             purity_up = tp_up / np.maximum(tp_up + fp_up, 1e-12)
             purity_low = tp_low / np.maximum(tp_low + fp_low, 1e-12)
             compl_up = tp_up / np.maximum(tp_up + fn_up, 1e-12)
             compl_low = tp_low / np.maximum(tp_low + fn_low, 1e-12)
+            f_low_up = fp_up / np.maximum(fp_up + tn_up, 1e-12)
+            f_low_low = fp_low / np.maximum(fp_low + tn_low, 1e-12)
             mask_up = (
-                purity_up > self.purity_initial_threshold
-            ) & (compl_up > 0.0)
+                (purity_up > self.purity_initial_threshold)
+                & (compl_up > 0.0)
+                & (f_low_up < 1.0)
+            )
             mask_low = (
-                purity_low > self.purity_initial_threshold
-            ) & (compl_low > 0.0)
+                (purity_low > self.purity_initial_threshold)
+                & (compl_low > 0.0)
+                & (f_low_low < 1.0)
+            )
 
             sub_dict = {}
             sub_dict[0] = {
@@ -278,7 +289,7 @@ class Measure:
                     with mp.Pool(
                         N_cpu,
                         initializer=init_worker,
-                        initargs=(GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift)
+                        initargs=(GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift),
                     ) as pool:
                         results = pool.map(compute_for_cross_worker, sc_args)
 
@@ -299,11 +310,15 @@ class Measure:
 
                     sc_grid = np.asarray(sc_grid, dtype=np.float32)
 
+                    # Mask
                     purity = tp_all / np.maximum(tp_all + fp_all, 1e-12)
                     compl = tp_all / np.maximum(tp_all + fn_all, 1e-12)
+                    f_low = fp_all / np.maximum(fp_all + tn_all, 1e-12)
                     mask_per_condition = (
-                        purity > self.purity_initial_threshold
-                    ) & (compl > 0.0)
+                        (purity > self.purity_initial_threshold)
+                        & (compl > 0.0)
+                        & (f_low < 1.0)
+                    )
 
                     # Save structure per condition index (0, 1, 2, 3)
                     sub_dict = {}
