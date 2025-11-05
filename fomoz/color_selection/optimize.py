@@ -171,12 +171,10 @@ class Optimize:
 
                                 purity = TP / (TP + FP) if (TP + FP) > 0 else 0.0
                                 completeness = TP / (TP + FN) if (TP + FN) > 0 else 0.0
-                                f_low = FP / (FP + TN) if (FP + TN) > 0 else 0.0
 
                                 if (
                                     purity > P_min
                                     and completeness > completeness_min
-                                    and f_low < 1.0
                                     and completeness > best_comp
                                 ):
                                     best_comp = completeness
@@ -220,12 +218,10 @@ class Optimize:
 
                                 purity = TP / (TP + FP) if (TP + FP) > 0 else 0.0
                                 completeness = TP / (TP + FN) if (TP + FN) > 0 else 0.0
-                                f_low = FP / (FP + TN) if (FP + TN) > 0 else 0.0
 
                                 if (
                                     purity > P_min
                                     and completeness > completeness_min
-                                    and f_low < 1.0
                                     and completeness > best_comp
                                 ):
                                     best_comp = completeness
@@ -350,11 +346,9 @@ class Optimize:
                                 TN = tn_vals[i]
                                 purity = TP / (TP + FP) if TP + FP > 0 else 0.0
                                 compl = TP / (TP + FN) if TP + FN > 0 else 0.0
-                                f_low = FP / (FP + TN) if FP + TN > 0 else 0.0
 
                                 if (
                                     purity >= current_thresh
-                                    and f_low < 1.0
                                     and compl > 0.0
                                 ):
                                     key = (base_pair, comp_pair, cond_index)
@@ -390,11 +384,9 @@ class Optimize:
 
                                 purity = TP / (TP + FP) if (TP + FP) > 0 else 0.0
                                 compl = TP / (TP + FN) if (TP + FN) > 0 else 0.0
-                                f_low = FP / (FP + TN) if (FP + TN) > 0 else 0.0
 
                                 if (
                                     purity >= current_thresh
-                                    and f_low < 1.0
                                     and compl > 0.0
                                 ):
                                     key = (base_pair, comp_pair, cond_index)
