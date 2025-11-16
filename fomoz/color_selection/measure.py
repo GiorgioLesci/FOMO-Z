@@ -108,7 +108,9 @@ class Measure:
             Array of slope values for generating linear cuts in color–color space.
             These samples must be strictly positive.
         c_precision : float, default=0.05
-            Precision of the c parameter sampling.
+            Precision of the c parameter sampling. Smaller values increase accuracy
+            but significantly increase the number of operations. If you halve `c_precision`,
+            expect about 2 times more c steps per s (also runtime and RAM roughly double).
         purity_initial_threshold : float, default=0.9
             Initial threshold on purity. Color conditions with purity lower than
             this value are not stored. This is useful to avoid filling memory

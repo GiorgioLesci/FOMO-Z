@@ -192,7 +192,7 @@ class SelectBackground:
         for z_l in self.z_lim:
             self.mask.append(self._select_objects(float(z_l), mags))
 
-    def load_parameters(self, optimize, optimization_type="iterative"):
+    def load_parameters(self, optimize):
         """
         Load selection parameters from an ``Optimize`` instance.
 
@@ -203,8 +203,6 @@ class SelectBackground:
         ----------
         optimize : Optimize
             `Optimize` object.
-        optimization_type : {"single", "iterative"}, optional
-            Type of optimization results. Default is "iterative".
 
         Returns
         -------
@@ -212,15 +210,7 @@ class SelectBackground:
             Updates ``self.dict`` in place with the loaded dictionary and
             reconstructed interpolator objects.
         """
-        if optimization_type not in ["single", "iterative"]:
-            raise ValueError(f"Optimization type '{optimization_type}' is not allowed.")
-
-        dictionary = (
-            optimize.dict_single
-            if optimization_type == "single"
-            else optimize.dict_iterative
-        )
-
+        dictionary = optimize.dict_iterative
         self.dict = copy.deepcopy(dictionary)
         self._reconstruct_interpolators()
 

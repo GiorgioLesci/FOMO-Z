@@ -404,37 +404,7 @@ class TestMeasureProcess:
 ###################
 
 class TestOptimizeProcess:
-    """Test cases for Optimize.process_L24() and process() methods with reference.csv."""
-    
-    def test_process_L24(self, reference_optimize_instance):
-        """Test process_L24 method with reference data and check C, P, F values."""
-        optimize = reference_optimize_instance
-
-        # Run process_L24
-        purity_min = 0.9
-        optimize.process_L24(
-            purity_min=purity_min,
-            completeness_min=0.0,
-            k=3
-        )
-
-        # Check that C_tot and P_tot arrays are populated correctly
-        assert len(optimize.C_single_tot) == len(optimize.z_lim)
-        assert len(optimize.P_single_tot) == len(optimize.z_lim)
-
-        # Check against known expected values
-        expected_C = [0.96390061, 0.94845361]
-        expected_P = [0.86277801, 0.87254222]
-        expected_F = [0.67842324, 0.43974461]
-
-        assert np.allclose(optimize.C_single_tot, expected_C), \
-            f"Completeness mismatch: expected {expected_C}, got {optimize.C_single_tot}"
-
-        assert np.allclose(optimize.P_single_tot, expected_P), \
-            f"Purity mismatch: expected {expected_P}, got {optimize.P_single_tot}"
-
-        assert np.allclose(optimize.F_single_tot, expected_F), \
-            f"Failure rate mismatch: expected {expected_F}, got {optimize.F_single_tot}"
+    """Test cases for the process() method with reference.csv."""
     
     def test_process(self, reference_optimize_instance):
         """Test process method with reference data and check C, P, F values."""

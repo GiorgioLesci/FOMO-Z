@@ -58,16 +58,8 @@ class Optimize:
         dict_all : dict
             Dictionary of metrics for all tested color–color cuts, inherited from
             the `Measure` object.
-        dict_single : dict
-            Container for storing results based on a single purity threshold.
         dict_iterative : dict
             Container for storing results based on an iterative purity threshold.
-        P_single_tot : numpy.ndarray
-            Total purity values as a function of `z_lim` (single threshold).
-        C_single_tot : numpy.ndarray
-            Total completeness values as a function of `z_lim` (single threshold).
-        F_single_tot : numpy.ndarray
-            Total failure rates (single threshold).
         P_iterative_tot : numpy.ndarray
             Total purity values (iterative threshold).
         C_iterative_tot : numpy.ndarray
@@ -88,145 +80,15 @@ class Optimize:
         self.dict_all = measure.dict_all
         self.purity_initial_threshold = measure.purity_initial_threshold
 
-        self.dict_single = {}
         self.dict_iterative = {}
         self.dict_iterative_steps = {}
-        self.P_single_tot = np.zeros(len(self.z_lim))
-        self.C_single_tot = np.zeros(len(self.z_lim))
-        self.F_single_tot = np.zeros(len(self.z_lim))
         self.P_iterative_tot = np.zeros(len(self.z_lim))
         self.C_iterative_tot = np.zeros(len(self.z_lim))
         self.F_iterative_tot = np.zeros(len(self.z_lim))
 
-    def _get_optimal_single_threshold_cuts(self, purity_min, completeness_min):
-        """
-        Identify the optimal single-purity-threshold cuts.
-
-        This method analyzes all color cuts stored in `self.dict_all`
-        and selects those whose purity exceeds `purity_min`. For each
-        valid cut, only the parameter configuration that maximizes completeness
-        (subject to the purity constraint) is kept. The results are
-        stored in `self.dict_single`.
-
-        Parameters
-        ----------
-        purity_min : float or array-like
-            Minimum required purity. Only cuts with purity
-            greater than this value are considered.
-        completeness_min : float
-            Minimum required completeness threshold. Cuts below this
-            threshold are discarded even if they satisfy the purity
-            requirement.
-
-        Returns
-        -------
-        None
-            The method updates `self.dict_single` with the optimal cuts
-            but does not return a value.
-        """
-        if completeness_min > 1.0 or completeness_min < 0.0:
-            raise ValueError("completeness_min must range within [0,1]")
-
-        for z_l, cuts_by_magpair in self.dict_all.items():
-
-            P_min = purity_min[np.where(self.z_lim == z_l)[0][0]]
-            if P_min > 1.0 or P_min < 0.0:
-                raise ValueError("The minimum purity must range within [0,1]")
-            if P_min <= self.purity_initial_threshold:
-                errMsg = "P_min is lower than or equal to the initial"
-                errMsg += " purity threshold set in the Measure class!"
-                raise ValueError(errMsg)
-
-            self.dict_single[z_l] = {}
-
-            for base_pair, sub_cuts in cuts_by_magpair.items():
-                self.dict_single[z_l][base_pair] = {}
-
-                for comp_pair, metrics in sub_cuts.items():
-
-                    # ----- Cross-color cuts -----
-                    if any("s" in v for v in metrics.values()):
-
-                        best_by_cond = {}
-
-                        for cond_index, m in metrics.items():
-
-                            s_vals = m.get("s", [])
-                            c_vals = m.get("c", [])
-                            P_vals = m.get("purity", [])
-                            C_vals = m.get("completeness", [])
-
-                            best_comp = -np.inf
-                            best_cut = None
-
-                            for j in range(len(c_vals)):
-                                purity, completeness = (
-                                    P_vals[j],
-                                    C_vals[j],
-                                )
-
-                                if (
-                                    purity > P_min
-                                    and completeness > completeness_min
-                                    and completeness > best_comp
-                                ):
-                                    best_comp = completeness
-                                    best_cut = {
-                                        "s": float(s_vals[j]),
-                                        "c": float(c_vals[j]),
-                                        "condition_index": cond_index,
-                                    }
-
-                            if best_cut:
-                                best_by_cond[cond_index] = best_cut
-
-                        if best_by_cond:
-                            self.dict_single[z_l][base_pair][comp_pair] = list(
-                                best_by_cond.values()
-                            )
-
-                    # ----- Simple (1-color) cuts -----
-                    else:
-
-                        best_by_cond = {}
-
-                        for cond_index, m in metrics.items():
-
-                            c_vals = m.get("c", [])
-                            P_vals = m.get("purity", [])
-                            C_vals = m.get("completeness", [])
-
-                            best_comp = -np.inf
-                            best_cut = None
-
-                            for j in range(len(c_vals)):
-                                purity, completeness = (
-                                    P_vals[j],
-                                    C_vals[j],
-                                )
-
-                                if (
-                                    purity > P_min
-                                    and completeness > completeness_min
-                                    and completeness > best_comp
-                                ):
-                                    best_comp = completeness
-                                    best_cut = {
-                                        "c": float(c_vals[j]),
-                                        "condition_index": cond_index,
-                                    }
-
-                            if best_cut:
-                                best_by_cond[cond_index] = best_cut
-
-                        if best_by_cond:
-                            self.dict_single[z_l][base_pair][comp_pair] = list(
-                                best_by_cond.values()
-                            )
-
     def _process_iterative_for_one_z(self, args):
         r"""
-        Optimize the color cut selection for a singleredshift threshold `z_l`.
+        Optimize the color cut selection for a single redshift threshold `z_l`.
 
         For the given redshift value, this method searches for the set of
         cuts that ($\mathcal{P}_{\rm iter}^{\rm ini}$: `start_purity`,
@@ -412,9 +274,8 @@ class Optimize:
         Parameters
         ----------
         dictionary : dict
-            Dictionary of selected optimal cuts (e.g., `self.dict_single`
-            or `self.dict_iterative`), where each entry contains the metrics
-            for a cut.
+            Dictionary of selected optimal cuts (`self.dict_iterative`),
+            where each entry contains the metrics for a cut.
         C_tot : numpy.ndarray
             Array that accumulates total completeness values across cuts.
         P_tot : numpy.ndarray
@@ -489,80 +350,6 @@ class Optimize:
             C_tot[idx] = TP / (TP + FN) if TP + FN > 0 else 0.0
             P_tot[idx] = TP / (TP + FP) if TP + FP > 0 else 0.0
             F_tot[idx] = FP / (FP + TN) if FP + TN > 0 else 0.0
-
-    def process_L24(self, purity_min, completeness_min=0.0, k=1):
-        """
-        Optimization algorithm by Lesci et al. (2024).
-
-        Derives the optimal color conditions based on a single purity threshold.
-        Implements the methods detailed in Lesci et al. (2024, A&A, 684, A139),
-        available at:
-        https://ui.adsabs.harvard.edu/abs/2024A%26A...684A.139E/abstract
-
-        This method
-        1. identifies all color cuts that satisfy the given minimum purity and
-           completeness thresholds when evaluated individually,
-        2. selects optimal single cut, namely those with parameter values
-           that maximize the individual cut completeness,
-        3. combines these optimal single cuts into an overall set of conditions,
-           computing the resulting total purity, completeness, and failure rate,
-        4. restructures the resulting dictionary of cuts into expression-based keys,
-        5. interpolates the cut parameters across redshift bins.
-
-        Parameters
-        ----------
-        purity_min : float or array-like
-            Minimum purity threshold applied to each color cut. If float, the
-            same threshold is applied at any limiting redshift point.
-            If array-like, a different threshold is used at each limiting
-            redshift.
-        completeness_min : float, optional
-            Minimum completeness threshold applied to each color cut.
-            Default is 0.
-        k : int, optional
-            Requested degree of the spline interpolation. Default is 1 (linear).
-            The actual degree is adjusted case by case:
-            - If there are fewer than ``k+1`` points, the degree is reduced
-              to ``n_points - 1``.
-            - If there is only one point, interpolation is skipped.
-
-        Returns
-        -------
-        None
-            The method updates the following instance attributes in place:
-            - ``self.dict_single`` : dict
-                Dictionary storing the optimal single-threshold cuts.
-            - ``self.P_single_tot`` : numpy.ndarray
-                Total purity across all redshift bins.
-            - ``self.C_single_tot`` : numpy.ndarray
-                Total completeness across all redshift bins.
-            - ``self.F_single_tot`` : numpy.ndarray
-                Total foreground failure rate across all redshift bins.
-        """
-        print(
-            "\nDeriving the optimal cuts in all color-color spaces",
-            "(single purity threshold case)...",
-        )
-        if isinstance(purity_min, float):
-            purity_min = [purity_min] * len(self.z_lim)
-        self._get_optimal_single_threshold_cuts(purity_min, completeness_min)
-
-        print("Combining the optimal cuts...")
-        self._combine_optimal_cuts(
-            self.dict_single,
-            self.C_single_tot,
-            self.P_single_tot,
-            self.F_single_tot,
-        )
-        print("Done!")
-        # print("\nCompleteness:", self.C_single_tot)
-        # print("Purity:", self.P_single_tot)
-        # print("Foreground failure rate:", self.F_single_tot)
-
-        restructure_dict(
-            self.dict_single, self.bands, self.colors, self.z_lim, purity_min
-        )
-        interpolate_parameters(self.dict_single, k=k)
 
     def process(
         self,
@@ -706,16 +493,14 @@ class Optimize:
         self,
         output_dir,
         file_name,
-        optimization_type="iterative",
         reference_sample_name="",
         notes="",
     ):
         """
         Save the optimal color selection to a YAML file.
 
-        Depending on the chosen optimization type, either the dictionary
-        of single-threshold cuts or the dictionary of iterative-threshold
-        cuts is serialized and written to file.
+        The dictionary of iterative-threshold cuts is serialized
+        and written to file.
 
         Parameters
         ----------
@@ -723,11 +508,6 @@ class Optimize:
             Path to the directory where the file will be saved.
         file_name : str
             Base name of the output file (without extension).
-        optimization_type : {"single", "iterative"}, optional
-            Type of optimization results to save:
-            - "single": saves ``self.dict_single``
-            - "iterative": saves ``self.dict_iterative``
-            Default is "iterative".
         reference_sample_name : str, optional
             Name of the reference sample, stored in the
             ``reference_sample`` entry of the dictionary.
@@ -739,13 +519,7 @@ class Optimize:
         None
             The selected dictionary is saved as a ``.yaml`` file.
         """
-        if optimization_type not in ["single", "iterative"]:
-            raise ValueError(f"Optimization type '{optimization_type}' is not allowed.")
-
-        if optimization_type == "single":
-            dictionary = self.dict_single
-        else:
-            dictionary = self.dict_iterative
+        dictionary = self.dict_iterative
 
         # Make the dictionary yaml-serializable
         dictionary = make_yaml_serializable(dictionary)
@@ -773,9 +547,7 @@ class Optimize:
         3. Foreground failure rate as a function of redshift threshold.
 
         If results from both optimization methods are available, the curves are
-        plotted for:
-        - Single-threshold optimization (dashed red lines).
-        - Iterative-threshold optimization (solid black lines).
+        plotted for iterative-threshold optimization (solid black lines).
 
         Parameters
         ----------
@@ -788,17 +560,6 @@ class Optimize:
             Displays the matplotlib figure.
         """
         ax = set_plot()
-
-        if np.sum(self.C_single_tot) != 0.0:
-            ax[0].plot(
-                self.z_lim,
-                self.C_single_tot * 100.0,
-                color="r",
-                linestyle="--",
-                label="Single threshold",
-            )
-            ax[1].plot(self.z_lim, self.P_single_tot * 100.0, color="r", linestyle="--")
-            ax[2].plot(self.z_lim, self.F_single_tot * 100.0, color="r", linestyle="--")
 
         if np.sum(self.C_iterative_tot) != 0.0:
             ax[0].plot(
