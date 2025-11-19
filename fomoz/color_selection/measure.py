@@ -23,23 +23,26 @@ GLOBAL_color2 = None
 GLOBAL_redshift = None
 
 
-def init_worker(c1, c2, redshift):
+def init_worker(shared_c1, shared_c2, shared_redshift):
     """
-    Initialize global data shared across worker processes.
+    Initialize global data shared across worker processes using shared memory.
+
+    This function reconstructs numpy arrays from shared memory buffers
+    to avoid data copying between processes.
 
     Parameters
     ----------
-    c1 : numpy.ndarray or None
-        First color array.
-    c2 : numpy.ndarray or None
-        Second color array.
-    redshift : numpy.ndarray
-        Array of galaxy redshift values.
+    shared_c1 : multiprocessing.sharedctypes.SynchronizedArray or None
+        Shared memory array for the first color data. Use None if not available.
+    shared_c2 : multiprocessing.sharedctypes.SynchronizedArray or None  
+        Shared memory array for the second color data. Use None if not available.
+    shared_redshift : multiprocessing.sharedctypes.SynchronizedArray
+        Shared memory array for galaxy redshift values.
     """
     global GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift
-    GLOBAL_color1 = c1
-    GLOBAL_color2 = c2
-    GLOBAL_redshift = redshift
+    GLOBAL_color1 = np.frombuffer(shared_c1.get_obj(), dtype=np.float32) if shared_c1 else None
+    GLOBAL_color2 = np.frombuffer(shared_c2.get_obj(), dtype=np.float32) if shared_c2 else None  
+    GLOBAL_redshift = np.frombuffer(shared_redshift.get_obj(), dtype=np.float32)
 
 
 def compute_for_simple_worker(args):
@@ -49,6 +52,7 @@ def compute_for_simple_worker(args):
     Parameters are passed via `args` to remain compatible with `pool.map`.
     See `compute_for_simple` for full documentation.
     """
+    global GLOBAL_color1, GLOBAL_redshift
     c, z_l = args
     return compute_for_simple((c, GLOBAL_color1, GLOBAL_redshift, z_l))
 
@@ -60,6 +64,7 @@ def compute_for_cross_worker(args):
     Parameters are passed via `args` to remain compatible with `pool.map`.
     See `compute_for_cross` for full documentation.
     """
+    global GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift
     s, c, z_l = args
     return compute_for_cross((s, c, GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift, z_l))
 
@@ -138,12 +143,13 @@ class Measure:
             errMsg += "Please rename it or set z_gal_string='redshift'."
             raise ValueError(errMsg)
 
+        needed_columns = [z_gal_string] + bands
+        self.dataset = dataset[needed_columns].copy()
         for band in bands:
-            dataset[band] = dataset[band].replace(missing_data, np.nan)
-        dataset = dataset.rename(columns={z_gal_string: "redshift"})
-        dataset["redshift"] = dataset["redshift"].replace(missing_data, np.nan)
+            self.dataset[band] = self.dataset[band].replace(missing_data, np.nan)
+        self.dataset = self.dataset.rename(columns={z_gal_string: "redshift"})
+        self.dataset["redshift"] = self.dataset["redshift"].replace(missing_data, np.nan)
 
-        self.dataset = dataset
         self.bands = bands
         self.colors = list(combinations(self.bands, 2))
 
@@ -198,8 +204,6 @@ class Measure:
             This method updates the internal class attribute `self.dict_all`
             and does not return any value.
         """
-        global GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift
-
         N_cpu = (
             min(cpu_number, mp.cpu_count() - 2)
             if cpu_number
@@ -208,18 +212,30 @@ class Measure:
         N_cpu = max(1, N_cpu)  # Ensure at least 1 process
 
         # Precompute base arrays
-        GLOBAL_color1 = self.dataset[mag1].values.astype(np.float32) - self.dataset[
+        color1 = self.dataset[mag1].values.astype(np.float32) - self.dataset[
             mag2
         ].values.astype(np.float32)
-        GLOBAL_color2 = None
-        GLOBAL_redshift = self.dataset["redshift"].values.astype(np.float32)
+        redshift = self.dataset["redshift"].values.astype(np.float32)
 
         vmin, vmax = np.quantile(
-            GLOBAL_color1[np.isfinite(GLOBAL_color1)], [0.01, 0.99]
+            color1[np.isfinite(color1)], [0.01, 0.99]
         )
         n_steps = int((vmax - vmin) / self.c_precision) + 1
         test_colors = np.linspace(vmin, vmax, n_steps, dtype=np.float32)
 
+        # Create shared arrays
+        shared_color1 = mp.Array('f', color1)  # 'f' for float32
+        shared_redshift = mp.Array('f', redshift)
+
+        cross_color_arrays = {}
+        cross_shared_arrays = {}
+        if cross_colors:
+            for mag3, mag4 in cross_colors:
+                color2 = self.dataset[mag3].values.astype(np.float32) - self.dataset[mag4].values.astype(np.float32)
+                cross_color_arrays[(mag3, mag4)] = color2
+                cross_shared_arrays[(mag3, mag4)] = mp.Array('f', color2)
+
+        # Loop over limiting redshift points
         for z_l in tqdm(
             self.z_lim,
             desc=f"Processing the color-color spaces that include ({mag1}-{mag2})",
@@ -231,15 +247,15 @@ class Measure:
             if (mag1, mag2) not in self.dict_all[z_l]:
                 self.dict_all[z_l][(mag1, mag2)] = {}
 
-            mask_good = GLOBAL_redshift > z_l
-            mask_bad = GLOBAL_redshift < z_l
+            mask_good = redshift > z_l
+            mask_bad = redshift < z_l
 
             # One-color cuts
             color_cut_args = [(tc, z_l) for tc in test_colors]
             with mp.Pool(
                 N_cpu,
                 initializer=init_worker,
-                initargs=(GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift),
+                initargs=(shared_color1, None, shared_redshift),
             ) as pool:
                 results = pool.map(compute_for_simple_worker, color_cut_args)
 
@@ -295,14 +311,13 @@ class Measure:
 
                 for mag3, mag4 in cross_colors:
 
-                    GLOBAL_color2 = self.dataset[mag3].values.astype(
-                        np.float32
-                    ) - self.dataset[mag4].values.astype(np.float32)
+                    shared_color2 = cross_shared_arrays[(mag3, mag4)]
+                    color2 = cross_color_arrays[(mag3, mag4)]
 
                     sc_args = []
                     sc_grid = []
                     for s in self.s_samples:
-                        c_min, c_max = c_domain_given_s(GLOBAL_color1, GLOBAL_color2, s)
+                        c_min, c_max = c_domain_given_s(color1, color2, s)
                         n_c = int((c_max - c_min) / self.c_precision) + 1
                         c_grid = np.linspace(c_min, c_max, n_c, dtype=np.float32)
 
@@ -313,7 +328,7 @@ class Measure:
                     with mp.Pool(
                         N_cpu,
                         initializer=init_worker,
-                        initargs=(GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift),
+                        initargs=(shared_color1, shared_color2, shared_redshift),
                     ) as pool:
                         results = pool.map(compute_for_cross_worker, sc_args)
 

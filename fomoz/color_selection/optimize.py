@@ -16,6 +16,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 from tqdm import tqdm
+import pickle
+from multiprocessing import shared_memory
 
 from .auxiliary import (
     build_nested_dict,
@@ -24,11 +26,139 @@ from .auxiliary import (
     make_yaml_serializable,
     restructure_dict,
     set_plot,
+    create_shared_dataset,
+    create_shared_dictionary,
 )
 
 # Register the custom float representer for both default and safe dumpers
 yaml.add_representer(float, float_representer)
 yaml.add_representer(float, float_representer, Dumper=yaml.SafeDumper)
+
+# Global variables and functions using them
+GLOBAL_SHARED_DATA_META = None   # column_name -> {name,shape,dtype}
+GLOBAL_SHARED_DICT_META = None   # {name, size}
+GLOBAL_SHARED_DATA = None        # column_name -> numpy array (view)
+GLOBAL_DICT = None               # unpickled dictionary in worker RAM
+
+def _init_worker_shared(shared_dataset_meta, shared_dict_meta):
+    """
+    Initialize global data using shared memory to avoid copying.
+    
+    Parameters
+    ----------
+    shared_dataset_dict : multiprocessing.managers.DictProxy
+        Shared dictionary containing dataset arrays.
+    shared_dict : multiprocessing.managers.DictProxy  
+        Shared dictionary of optimal color conditions.
+    """
+    global GLOBAL_SHARED_DATA_META, GLOBAL_SHARED_DICT_META
+    global GLOBAL_SHARED_DATA, GLOBAL_DICT
+
+    GLOBAL_SHARED_DATA_META = shared_dataset_meta
+    GLOBAL_SHARED_DICT_META = shared_dict_meta
+
+    # Map dataset arrays
+    GLOBAL_SHARED_DATA = {}
+    for col, info in shared_dataset_meta.items():
+        shm = shared_memory.SharedMemory(name=info["name"])
+        arr = np.ndarray(info["shape"], dtype=np.dtype(info["dtype"]), buffer=shm.buf)
+        GLOBAL_SHARED_DATA[col] = arr
+
+    # Load dictionary into worker memory
+    shm = shared_memory.SharedMemory(name=shared_dict_meta["name"])
+    buf = np.ndarray((shared_dict_meta["size"],), dtype=np.uint8, buffer=shm.buf)
+    GLOBAL_DICT = pickle.loads(buf.tobytes())
+
+def _combine_optimal_cuts_for_zl_worker(z_l, dataset=None, dictionary=None):
+    """
+    Combine optimal color cuts and compute global metrics.
+
+    See `_combine_optimal_cuts`. This function is called across
+    worker processes.
+
+    Parameters
+    ----------
+    z_l : float
+        Limiting redshift.
+    dataset : pd.DataFrame
+        The data set.
+    dictionary : dict
+        Dictionary of selected optimal cuts (e.g. `self.dict_iterative`),
+        where each entry contains the metrics for a cut.
+
+    Returns
+    -------
+    (z_l, C, P, F) : tuple
+        A tuple containing:
+        - z_l : float  
+            The redshift threshold associated with this computation.
+        - C : float  
+            Completeness at this z_l (TP / (TP + FN)).
+        - P : float  
+            Purity at this z_l (TP / (TP + FP)).
+        - F : float  
+            Foreground failure rate (FP / (FP + TN)).
+    """
+    # If parameters provided, use them (sequential mode)
+    if dataset is not None and dictionary is not None:
+        cuts_for_zl = dictionary.get(z_l, {})
+        redshift = dataset["redshift"].values
+    else:
+        # Use globals (parallel mode)
+        dataset = GLOBAL_SHARED_DATA
+        cuts_for_zl = GLOBAL_DICT.get(z_l, {})
+        redshift = dataset["redshift"]
+
+    redshift = dataset["redshift"]
+    mask_total = np.zeros(redshift.shape, dtype=bool)
+
+    for base_pair, comp_cuts in cuts_for_zl.items():
+        mag1, mag2 = base_pair
+        color1 = dataset[mag1] - dataset[mag2]
+
+        for comp_pair, conditions in comp_cuts.items():
+            if comp_pair == base_pair:
+                for cond in conditions:
+                    c = cond["c"]
+                    if cond["condition_index"] == 0:
+                        mask = color1 > c
+                    else:
+                        mask = color1 < c
+                    mask_total |= mask
+            else:
+                mag3, mag4 = comp_pair
+                color2 = dataset[mag3] - dataset[mag4]
+
+                for cond in conditions:
+                    s = cond["s"]
+                    c = cond["c"]
+                    idx = cond["condition_index"]
+
+                    if idx == 0:
+                        mask = color1 >  s * color2 + c
+                    elif idx == 1:
+                        mask = color1 > -s * color2 + c
+                    elif idx == 2:
+                        mask = color1 <  s * color2 + c
+                    else:
+                        mask = color1 < -s * color2 + c
+
+                    mask_total |= mask
+
+    sel = mask_total
+    red_sel = redshift[sel]
+    red_unsel = redshift[~sel]
+
+    TP = int((red_sel > z_l).sum())
+    FP = int((red_sel < z_l).sum())
+    FN = int((red_unsel > z_l).sum())
+    TN = int((red_unsel < z_l).sum())
+
+    C = TP / (TP + FN) if TP + FN > 0 else 0.0
+    P = TP / (TP + FP) if TP + FP > 0 else 0.0
+    F = FP / (FP + TN) if FP + TN > 0 else 0.0
+
+    return (z_l, C, P, F)
 
 
 class Optimize:
@@ -267,7 +397,9 @@ class Optimize:
 
         return z_l, list(best_by_key.values()), dict_iterative_steps
 
-    def _combine_optimal_cuts(self, dataset, dictionary, C_tot, P_tot, F_tot):
+    def _combine_optimal_cuts(
+        self, dataset, dictionary, C_tot, P_tot, F_tot, cpu_number=1
+    ):
         """
         Combine optimal color cuts and compute global metrics.
 
@@ -290,6 +422,9 @@ class Optimize:
         F_tot : numpy.ndarray
             Array that accumulates total foreground failure rate values
             across cuts.
+        cpu_number : int or None, optional
+            Number of CPU cores to use for parallel processing. If None,
+            defaults to using all available cores minus two.
 
         Returns
         -------
@@ -297,66 +432,115 @@ class Optimize:
             Updates the input arrays (`C_tot`, `P_tot`, `F_tot`) in place
             but does not return a value.
         """
-        redshift = dataset["redshift"].values.astype(np.float32)
+        # Sequential
+        if cpu_number <= 1:
+            for z_l in self.z_lim:
+                z_l, C, P, F = _combine_optimal_cuts_for_zl_worker(z_l, dataset, dictionary)
+                idx = np.where(self.z_lim == z_l)[0][0]
+                C_tot[idx], P_tot[idx], F_tot[idx] = C, P, F
+            return
 
-        for z_l in self.z_lim:
-            if z_l not in dictionary:
-                continue
-            mask_total = np.zeros_like(redshift, dtype=bool)
+        # Create shared memory for dataset
+        shared_dataset_meta, dataset_shms = create_shared_dataset(dataset, self.bands)
 
-            for base_pair, comp_cuts in dictionary.get(z_l, {}).items():
-                for comp_pair, conditions in comp_cuts.items():
-                    for cond in conditions:
-                        mag1, mag2 = base_pair
-                        if comp_pair == base_pair:
-                            # Simple cut
-                            color = dataset[mag1].values.astype(np.float32) - dataset[
-                                mag2
-                            ].values.astype(np.float32)
-                            if cond["condition_index"] == 0:  # color > c
-                                mask = color > cond["c"]
-                            else:  # color < c
-                                mask = color < cond["c"]
-                        else:
-                            # Cross cut
-                            mag3, mag4 = comp_pair
-                            color1 = dataset[mag1].values.astype(np.float32) - dataset[
-                                mag2
-                            ].values.astype(np.float32)
-                            color2 = dataset[mag3].values.astype(np.float32) - dataset[
-                                mag4
-                            ].values.astype(np.float32)
-                            s = cond["s"]
-                            c = cond["c"]
-                            idx = cond["condition_index"]
+        # Create shared memory for dictionary
+        shared_dict_meta, dict_shm = create_shared_dictionary(dictionary)
 
-                            if idx == 0:
-                                mask = color1 > s * color2 + c
-                            elif idx == 1:
-                                mask = color1 > -s * color2 + c
-                            elif idx == 2:
-                                mask = color1 < s * color2 + c
-                            elif idx == 3:
-                                mask = color1 < -s * color2 + c
-                            else:
-                                continue
+        try:
+            with mp.Pool(
+                processes=cpu_number,
+                initializer=_init_worker_shared,
+                initargs=(shared_dataset_meta, shared_dict_meta)
+            ) as pool:
+                results = pool.map(_combine_optimal_cuts_for_zl_worker, list(self.z_lim))
 
-                        mask_total |= mask  # OR logic
+            # Store results
+            for z_l, C, P, F in results:
+                idx = np.where(self.z_lim == z_l)[0][0]
+                C_tot[idx], P_tot[idx], F_tot[idx] = C, P, F
 
-            # Compute metrics
-            selected = mask_total
-            redshift_sel = redshift[selected]
-            redshift_unsel = redshift[~selected]
+        finally:
+            # Clean up shared memory
+            for shm in dataset_shms:
+                try:
+                    shm.close()
+                    shm.unlink()
+                except:
+                    pass
 
-            TP = np.sum(redshift_sel > z_l)
-            FP = np.sum(redshift_sel < z_l)
-            FN = np.sum(redshift_unsel > z_l)
-            TN = np.sum(redshift_unsel < z_l)
+            try:
+                dict_shm.close()
+                dict_shm.unlink()
+            except:
+                pass
 
-            idx = np.where(self.z_lim == z_l)[0][0]
-            C_tot[idx] = TP / (TP + FN) if TP + FN > 0 else 0.0
-            P_tot[idx] = TP / (TP + FP) if TP + FP > 0 else 0.0
-            F_tot[idx] = FP / (FP + TN) if FP + TN > 0 else 0.0
+    def _estimate_errors(self, n_bootstraps=1000, cpu_number=None):
+        """
+        Estimate bootstrap errors.
+
+        This method computes mean and standard deviation of completeness, purity,
+        and foreground failure rate, based on bootstrap resampling. Results are
+        stored as instance attributes:
+        - C_std: Standard deviation of completeness
+        - P_std: Standard deviation of purity
+        - F_std: Standard deviation of foreground failure rate
+
+        Parameters
+        ----------
+        n_bootstraps : int, optional
+            Number of bootstrap resamples to perform, by default 1000.
+        cpu_number : int or None, optional
+            Number of CPU cores to use for parallel processing. If None,
+            defaults to using all available cores minus two.
+
+        Raises
+        ------
+        ValueError
+            If calibration has not been run prior to error estimation.
+        """
+        if np.sum(self.C_iterative_tot) == 0.0:
+            raise ValueError("No calibration is available! Run process() first.")
+
+        C_stats = np.zeros((2, len(self.z_lim)))  # [sum, sum_of_squares]
+        P_stats = np.zeros((2, len(self.z_lim)))
+        F_stats = np.zeros((2, len(self.z_lim)))
+
+        print("\nComputing bootstrap errors...")
+        for i in tqdm(range(n_bootstraps)):
+
+            indices = np.random.choice(
+                len(self.dataset), size=len(self.dataset), replace=True
+            )
+            bootstrap_sample = self.dataset.iloc[indices]
+
+            C_temp = np.zeros(len(self.z_lim))
+            P_temp = np.zeros(len(self.z_lim))
+            F_temp = np.zeros(len(self.z_lim))
+
+            self._combine_optimal_cuts(
+                bootstrap_sample,
+                self.dict_iterative,
+                C_temp,
+                P_temp,
+                F_temp,
+                cpu_number,
+            )
+
+            C_stats[0] += C_temp
+            C_stats[1] += C_temp**2.0
+            P_stats[0] += P_temp
+            P_stats[1] += P_temp**2.0
+            F_stats[0] += F_temp
+            F_stats[1] += F_temp**2.0
+
+            del bootstrap_sample, C_temp, P_temp, F_temp
+
+        C_mean = C_stats[0] / n_bootstraps
+        P_mean = P_stats[0] / n_bootstraps
+        F_mean = F_stats[0] / n_bootstraps
+        self.C_std = np.sqrt((C_stats[1] / n_bootstraps) - C_mean**2)
+        self.P_std = np.sqrt((P_stats[1] / n_bootstraps) - P_mean**2)
+        self.F_std = np.sqrt((F_stats[1] / n_bootstraps) - F_mean**2)
 
     def process(
         self,
@@ -496,76 +680,12 @@ class Optimize:
         # print("Purity:", self.P_iterative_tot)
         # print("Foreground failure rate:", self.F_iterative_tot)
 
-        self._estimate_errors(n_bootstraps=n_bootstraps)
+        self._estimate_errors(n_bootstraps=n_bootstraps, cpu_number=cpu_number)
 
         restructure_dict(
             self.dict_iterative, self.bands, self.colors, self.z_lim, purity_tot_min
         )
         interpolate_parameters(self.dict_iterative, k=k)
-
-    def _estimate_errors(self, n_bootstraps=1000):
-        """
-        Estimate bootstrap errors.
-
-        This method computes mean and standard deviation of completeness, purity,
-        and foreground failure rate, based on bootstrap resampling. Results are
-        stored as instance attributes:
-        - C_std: Standard deviation of completeness
-        - P_std: Standard deviation of purity
-        - F_std: Standard deviation of foreground failure rate
-
-        Parameters
-        ----------
-        n_bootstraps : int, optional
-            Number of bootstrap resamples to perform, by default 1000.
-
-        Raises
-        ------
-        ValueError
-            If calibration has not been run prior to error estimation.
-        """
-        if np.sum(self.C_iterative_tot) == 0.0:
-            raise ValueError("No calibration is available! Run process() first.")
-
-        C_stats = np.zeros((2, len(self.z_lim)))  # [sum, sum_of_squares]
-        P_stats = np.zeros((2, len(self.z_lim)))
-        F_stats = np.zeros((2, len(self.z_lim)))
-
-        print("\nComputing bootstrap errors...")
-        for i in tqdm(range(n_bootstraps)):
-
-            indices = np.random.choice(
-                len(self.dataset), size=len(self.dataset), replace=True
-            )
-            bootstrap_sample = self.dataset.iloc[indices]
-
-            C_temp = np.zeros(len(self.z_lim))
-            P_temp = np.zeros(len(self.z_lim))
-            F_temp = np.zeros(len(self.z_lim))
-
-            self._combine_optimal_cuts(
-                bootstrap_sample,
-                self.dict_iterative,
-                C_temp,
-                P_temp,
-                F_temp,
-            )
-
-            C_stats[0] += C_temp
-            C_stats[1] += C_temp**2.0
-            P_stats[0] += P_temp
-            P_stats[1] += P_temp**2.0
-            F_stats[0] += F_temp
-            F_stats[1] += F_temp**2.0
-
-            del bootstrap_sample, C_temp, P_temp, F_temp
-
-        C_mean = C_stats[0] / n_bootstraps
-        P_mean = P_stats[0] / n_bootstraps
-        F_mean = F_stats[0] / n_bootstraps
-        self.C_std = np.sqrt((C_stats[1] / n_bootstraps) - C_mean**2)
-        self.P_std = np.sqrt((P_stats[1] / n_bootstraps) - P_mean**2)
-        self.F_std = np.sqrt((F_stats[1] / n_bootstraps) - F_mean**2)
 
     def write_optimal_selection(
         self,
@@ -694,8 +814,8 @@ class Optimize:
             )
             ax[1].fill_between(
                 self.z_lim,
-                (self.P_iterative_tot - self.F_std) * 100.0,
-                (self.P_iterative_tot + self.F_std) * 100.0,
+                (self.P_iterative_tot - self.P_std) * 100.0,
+                (self.P_iterative_tot + self.P_std) * 100.0,
                 color="k",
                 alpha=0.3,
             )
