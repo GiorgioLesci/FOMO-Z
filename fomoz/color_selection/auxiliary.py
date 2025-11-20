@@ -7,10 +7,12 @@ interpolations, data visualization, and data conversion.
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
+import pickle
+
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import UnivariateSpline
-import pickle
+from multiprocessing import shared_memory
 
 
 def compute_metrics(mask, redshift, z_l):
@@ -541,61 +543,3 @@ def float_representer(dumper, value):
     else:
         text = f"{value:.6g}"
         return dumper.represent_scalar("tag:yaml.org,2002:float", text)
-
-
-def create_shared_array(arr: np.ndarray):
-    """
-    Create a SharedMemory buffer from a numpy array.
-    Returns (metadata, shm_object)
-    """
-    shm = shared_memory.SharedMemory(create=True, size=arr.nbytes)
-    buf = np.ndarray(arr.shape, dtype=arr.dtype, buffer=shm.buf)
-    buf[:] = arr[:]   # copy ONCE
-    meta = {
-        "name": shm.name,
-        "shape": arr.shape,
-        "dtype": str(arr.dtype),
-    }
-    return meta, shm
-
-
-def create_shared_dataset(dataset, bands):
-    """
-    Convert the needed columns into shared memory buffers.
-    Returns: (metadata_dict, list_of_shm_objects)
-    """
-    meta = {}
-    shms = []
-
-    cols = ["redshift"] + list(bands)
-
-    for col in cols:
-        arr = dataset[col].values.astype(np.float32)
-        m, shm = create_shared_array(arr)
-        meta[col] = m
-        shms.append(shm)
-
-    return meta, shms
-
-
-def create_shared_dictionary(dictionary):
-    """
-    Store the full dictionary (possibly large) in shared memory.
-
-    Steps:
-    - pickle the dictionary to bytes
-    - allocate a SharedMemory block of that size
-    - store metadata: name + length
-    """
-    blob = pickle.dumps(dictionary, protocol=pickle.HIGHEST_PROTOCOL)
-    blob_arr = np.frombuffer(blob, dtype=np.uint8)
-
-    shm = shared_memory.SharedMemory(create=True, size=blob_arr.nbytes)
-    buf = np.ndarray(blob_arr.shape, dtype=np.uint8, buffer=shm.buf)
-    buf[:] = blob_arr[:]
-
-    meta = {
-        "name": shm.name,
-        "size": blob_arr.size,
-    }
-    return meta, shm

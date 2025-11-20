@@ -34,14 +34,18 @@ def init_worker(shared_c1, shared_c2, shared_redshift):
     ----------
     shared_c1 : multiprocessing.sharedctypes.SynchronizedArray or None
         Shared memory array for the first color data. Use None if not available.
-    shared_c2 : multiprocessing.sharedctypes.SynchronizedArray or None  
+    shared_c2 : multiprocessing.sharedctypes.SynchronizedArray or None
         Shared memory array for the second color data. Use None if not available.
     shared_redshift : multiprocessing.sharedctypes.SynchronizedArray
         Shared memory array for galaxy redshift values.
     """
     global GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift
-    GLOBAL_color1 = np.frombuffer(shared_c1.get_obj(), dtype=np.float32) if shared_c1 else None
-    GLOBAL_color2 = np.frombuffer(shared_c2.get_obj(), dtype=np.float32) if shared_c2 else None  
+    GLOBAL_color1 = (
+        np.frombuffer(shared_c1.get_obj(), dtype=np.float32) if shared_c1 else None
+    )
+    GLOBAL_color2 = (
+        np.frombuffer(shared_c2.get_obj(), dtype=np.float32) if shared_c2 else None
+    )
     GLOBAL_redshift = np.frombuffer(shared_redshift.get_obj(), dtype=np.float32)
 
 
@@ -148,7 +152,9 @@ class Measure:
         for band in bands:
             self.dataset[band] = self.dataset[band].replace(missing_data, np.nan)
         self.dataset = self.dataset.rename(columns={z_gal_string: "redshift"})
-        self.dataset["redshift"] = self.dataset["redshift"].replace(missing_data, np.nan)
+        self.dataset["redshift"] = self.dataset["redshift"].replace(
+            missing_data, np.nan
+        )
 
         self.bands = bands
         self.colors = list(combinations(self.bands, 2))
@@ -217,23 +223,23 @@ class Measure:
         ].values.astype(np.float32)
         redshift = self.dataset["redshift"].values.astype(np.float32)
 
-        vmin, vmax = np.quantile(
-            color1[np.isfinite(color1)], [0.01, 0.99]
-        )
+        vmin, vmax = np.quantile(color1[np.isfinite(color1)], [0.01, 0.99])
         n_steps = int((vmax - vmin) / self.c_precision) + 1
         test_colors = np.linspace(vmin, vmax, n_steps, dtype=np.float32)
 
         # Create shared arrays
-        shared_color1 = mp.Array('f', color1)  # 'f' for float32
-        shared_redshift = mp.Array('f', redshift)
+        shared_color1 = mp.Array("f", color1)  # 'f' for float32
+        shared_redshift = mp.Array("f", redshift)
 
         cross_color_arrays = {}
         cross_shared_arrays = {}
         if cross_colors:
             for mag3, mag4 in cross_colors:
-                color2 = self.dataset[mag3].values.astype(np.float32) - self.dataset[mag4].values.astype(np.float32)
+                color2 = self.dataset[mag3].values.astype(np.float32) - self.dataset[
+                    mag4
+                ].values.astype(np.float32)
                 cross_color_arrays[(mag3, mag4)] = color2
-                cross_shared_arrays[(mag3, mag4)] = mp.Array('f', color2)
+                cross_shared_arrays[(mag3, mag4)] = mp.Array("f", color2)
 
         # Loop over limiting redshift points
         for z_l in tqdm(
