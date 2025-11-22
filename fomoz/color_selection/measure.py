@@ -253,9 +253,6 @@ class Measure:
             if (mag1, mag2) not in self.dict_all[z_l]:
                 self.dict_all[z_l][(mag1, mag2)] = {}
 
-            mask_good = redshift > z_l
-            mask_bad = redshift < z_l
-
             # One-color cuts
             color_cut_args = [(tc, z_l) for tc in test_colors]
             with mp.Pool(
