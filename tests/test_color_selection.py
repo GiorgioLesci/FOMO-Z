@@ -22,7 +22,7 @@ from fomoz.color_selection.auxiliary import (
 )
 from fomoz.color_selection.measure import Measure
 from fomoz.color_selection.optimize import Optimize
-from fomoz.color_selection.select_background import SelectBackground
+from fomoz.color_selection.select_galaxy import SelectGalaxy
 
 
 # Shared fixture for reference dataset
@@ -440,11 +440,11 @@ class TestOptimizeProcess:
 
 
 ############################
-### select_background.py ###
+### select_galaxy.py ###
 ############################
 
-class TestSelectBackground:
-    """Test cases for SelectBackground.process() method with reference.csv."""
+class TestSelectGalaxy:
+    """Test cases for SelectGalaxy.process() method with reference.csv."""
     
     def test_process(self, reference_dataset, reference_optimize_instance):
         """Test process method with reference data and check the number of selected objects."""
@@ -463,7 +463,7 @@ class TestSelectBackground:
         zl_new = np.arange(min(optimize.z_lim), max(optimize.z_lim), 0.01)
 
         # Select
-        sel = SelectBackground()
+        sel = SelectGalaxy()
         sel.load_parameters(optimize)
         sel.process(zl_new, test_sample)
         mask = sel.mask

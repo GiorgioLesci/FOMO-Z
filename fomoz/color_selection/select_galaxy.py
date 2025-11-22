@@ -17,7 +17,7 @@ import yaml
 from scipy.interpolate import BSpline
 
 
-class SelectBackground:
+class SelectGalaxy:
     """Apply precomputed optimal color selections to datasets."""
 
     def __init__(self):
@@ -175,7 +175,8 @@ class SelectBackground:
         """
         if not self.dict:
             raise ValueError(
-                "A color cut dictionary must be set " "before the call of this function"
+                "A color cut dictionary must be set",
+                "before the call of this function."
             )
 
         if isinstance(z_lim, (float, int)):

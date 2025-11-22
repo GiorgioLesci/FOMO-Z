@@ -440,10 +440,11 @@ class Optimize:
         purity_tot_min,
         start_purity=0.999,
         step=0.001,
-        cpu_number=None,
         k=1,
-        store_iterations=False,
+        do_bootstrap=False,
         n_bootstraps=1000,
+        cpu_number=None,
+        store_iterations=False,
     ):
         r"""
         Perform the iterative search for optimal color conditions.
@@ -503,6 +504,8 @@ class Optimize:
             - If there are fewer than ``k+1`` points, the degree is reduced
               to ``n_points - 1``.
             - If there is only one point, interpolation is skipped.
+        do_bootstrap : bool, optional
+            If True, derive uncertainties on C, P, and F through bootstrap.
         n_bootstraps : int, optional
             Number of bootstrap resamples to perform, by default 1000.
         store_iterations : bool, optional
@@ -582,7 +585,8 @@ class Optimize:
         del self.redshift, self.color_cache
 
         # Bootstrap errors
-        self._estimate_errors(n_bootstraps=n_bootstraps)
+        if do_bootstrap:
+            self._estimate_errors(n_bootstraps=n_bootstraps)
 
         #
         restructure_dict(
