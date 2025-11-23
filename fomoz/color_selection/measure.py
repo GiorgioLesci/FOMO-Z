@@ -20,10 +20,10 @@ from .auxiliary import compute_for_cross, compute_for_simple, c_domain_given_s
 # Globals visible to workers
 GLOBAL_color1 = None
 GLOBAL_color2 = None
-GLOBAL_redshift = None
+GLOBAL_shared_mask = None
 
 
-def init_worker(shared_c1, shared_c2, shared_redshift):
+def init_worker(shared_c1, shared_c2, shared_target_mask):
     """
     Initialize global data shared across worker processes using shared memory.
 
@@ -36,17 +36,17 @@ def init_worker(shared_c1, shared_c2, shared_redshift):
         Shared memory array for the first color data. Use None if not available.
     shared_c2 : multiprocessing.sharedctypes.SynchronizedArray or None
         Shared memory array for the second color data. Use None if not available.
-    shared_redshift : multiprocessing.sharedctypes.SynchronizedArray
+    shared_target_mask : multiprocessing.sharedctypes.SynchronizedArray
         Shared memory array for galaxy redshift values.
     """
-    global GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift
+    global GLOBAL_color1, GLOBAL_color2, GLOBAL_shared_mask
     GLOBAL_color1 = (
         np.frombuffer(shared_c1.get_obj(), dtype=np.float32) if shared_c1 else None
     )
     GLOBAL_color2 = (
         np.frombuffer(shared_c2.get_obj(), dtype=np.float32) if shared_c2 else None
     )
-    GLOBAL_redshift = np.frombuffer(shared_redshift.get_obj(), dtype=np.float32)
+    GLOBAL_shared_mask = np.frombuffer(shared_target_mask.get_obj(), dtype=bool)
 
 
 def compute_for_simple_worker(args):
@@ -56,9 +56,9 @@ def compute_for_simple_worker(args):
     Parameters are passed via `args` to remain compatible with `pool.map`.
     See `compute_for_simple` for full documentation.
     """
-    global GLOBAL_color1, GLOBAL_redshift
-    c, z_l = args
-    return compute_for_simple((c, GLOBAL_color1, GLOBAL_redshift, z_l))
+    global GLOBAL_color1, GLOBAL_shared_mask
+    c = args
+    return compute_for_simple((c, GLOBAL_color1, GLOBAL_shared_mask))
 
 
 def compute_for_cross_worker(args):
@@ -68,9 +68,9 @@ def compute_for_cross_worker(args):
     Parameters are passed via `args` to remain compatible with `pool.map`.
     See `compute_for_cross` for full documentation.
     """
-    global GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift
-    s, c, z_l = args
-    return compute_for_cross((s, c, GLOBAL_color1, GLOBAL_color2, GLOBAL_redshift, z_l))
+    global GLOBAL_color1, GLOBAL_color2, GLOBAL_shared_mask
+    s, c = args
+    return compute_for_cross((s, c, GLOBAL_color1, GLOBAL_color2, GLOBAL_shared_mask))
 
 
 class Measure:
@@ -194,6 +194,72 @@ class Measure:
         self.dict_all = {}
         self.purity_initial_threshold = purity_initial_threshold
 
+        # Check the format of the additional rules
+        if additional_rules is not None:
+
+            if not isinstance(additional_rules, list):
+                raise ValueError("additional_rules must be a list.")
+
+            for i in range(len(additional_rules)):
+
+                if not isinstance(additional_rules[i], list):
+                    raise ValueError(f"additional_rules[{i}] is not a list.")
+
+                if len(additional_rules[i]) != 3:
+                    errMsg = "Each list in additional_rules must contain "
+                    errMsg += " exactly 3 elements."
+                    raise ValueError(errMsg)
+
+                property_name, operator, _ = additional_rules[i]
+
+                if not isinstance(property_name, str):
+                    errMsg = f"Rule {i}: property_name must be a string, got {type(property_name)}"
+                    raise TypeError(errMsg)
+                if not isinstance(operator, str):
+                    errMsg = f"Rule {i}: operator must be a string, got {type(operator)}"
+                    raise TypeError(errMsg)
+
+                if property_name not in self.dataset.columns:
+                    errMsg = f"The property '{property_name}' "
+                    errMsg += f"in additional_rules is not in the dataset."
+                    raise KeyError(errMsg)
+
+                valid_operators = [">", "<", ">=", "<=", "=="]
+                if operator not in valid_operators:
+                    errMsg = f"Rule {i}: operator '{operator}' is not supported. "
+                    errMsg += f"Must be one of {valid_operators}"
+                    raise ValueError(errMsg)
+
+        # Create the target mask
+        self.target_mask = np.full(
+            (len(self.z_lim), len(self.dataset)), False, dtype=bool
+        )
+        for i, zz in enumerate(self.z_lim):
+
+            # Limiting redshift
+            if is_zlim_lower:
+                self.target_mask[i] = self.dataset["redshift"] > zz
+            else:
+                self.target_mask[i] = self.dataset["redshift"] < zz
+
+            # Additional rules
+            if additional_rules is None:
+                continue
+            for property_name, operator, threshold in additional_rules:
+
+                data = self.dataset[property_name]
+
+                if operator == ">":
+                    self.target_mask[i] &= data > threshold
+                elif operator == "<":
+                    self.target_mask[i] &= data < threshold
+                elif operator == ">=":
+                    self.target_mask[i] &= data >= threshold
+                elif operator == "<=":
+                    self.target_mask[i] &= data <= threshold
+                elif operator == "==":
+                    self.target_mask[i] &= data == threshold
+
     def _apply_cuts(self, mag1, mag2, cross_colors=[], cpu_number=None):
         """
         Apply linear color–color cuts in parallel across a dataset.
@@ -243,7 +309,6 @@ class Measure:
 
         # Create shared arrays
         shared_color1 = mp.Array("f", color1)  # 'f' for float32
-        shared_redshift = mp.Array("f", redshift)
 
         cross_color_arrays = {}
         cross_shared_arrays = {}
@@ -256,10 +321,12 @@ class Measure:
                 cross_shared_arrays[(mag3, mag4)] = mp.Array("f", color2)
 
         # Loop over limiting redshift points
-        for z_l in tqdm(
-            self.z_lim,
+        for i, z_l in tqdm(
+            enumerate(self.z_lim),
             desc=f"Processing the color-color spaces that include ({mag1}-{mag2})",
         ):
+
+            shared_target_mask = mp.Array("b", self.target_mask[i].astype(bool))
 
             if z_l not in self.dict_all:
                 self.dict_all[z_l] = {}
@@ -268,13 +335,12 @@ class Measure:
                 self.dict_all[z_l][(mag1, mag2)] = {}
 
             # One-color cuts
-            color_cut_args = [(tc, z_l) for tc in test_colors]
             with mp.Pool(
                 N_cpu,
                 initializer=init_worker,
-                initargs=(shared_color1, None, shared_redshift),
+                initargs=(shared_color1, None, shared_target_mask),
             ) as pool:
-                results = pool.map(compute_for_simple_worker, color_cut_args)
+                results = pool.map(compute_for_simple_worker, test_colors)
 
             results_up = [res[:4] for res in results]
             results_low = [res[4:] for res in results]
@@ -331,7 +397,6 @@ class Measure:
                     shared_color2 = cross_shared_arrays[(mag3, mag4)]
                     color2 = cross_color_arrays[(mag3, mag4)]
 
-                    sc_args = []
                     sc_grid = []
                     for s in self.s_samples:
                         c_min, c_max = c_domain_given_s(color1, color2, s)
@@ -339,15 +404,14 @@ class Measure:
                         c_grid = np.linspace(c_min, c_max, n_c, dtype=np.float32)
 
                         for c in c_grid:
-                            sc_args.append((s, c, z_l))
                             sc_grid.append((s, c))
 
                     with mp.Pool(
                         N_cpu,
                         initializer=init_worker,
-                        initargs=(shared_color1, shared_color2, shared_redshift),
+                        initargs=(shared_color1, shared_color2, shared_target_mask),
                     ) as pool:
-                        results = pool.map(compute_for_cross_worker, sc_args)
+                        results = pool.map(compute_for_cross_worker, sc_grid)
 
                     # Transpose result list for each metric
                     tp_all, fp_all, fn_all, tn_all = [], [], [], []

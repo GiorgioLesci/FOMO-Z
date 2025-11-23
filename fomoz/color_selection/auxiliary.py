@@ -14,7 +14,7 @@ import numpy as np
 from scipy.interpolate import UnivariateSpline
 
 
-def compute_metrics(mask, redshift, z_l):
+def compute_metrics(mask, target_mask):
     """
     Compute classification metrics (TP, FP, FN, TN).
 
@@ -26,13 +26,9 @@ def compute_metrics(mask, redshift, z_l):
     Parameters
     ----------
     mask : array-like of bool
-        Boolean mask indicating which objects are selected (True) and which
-        are not (False).
-    redshift : array-like of float
-        Array of redshift values corresponding to the objects.
-    z_l : float
-        Limiting redshift used to classify objects
-        as "background" (z > z_l) or "foreground" (z < z_l).
+        Boolean mask of selected objects by color cuts.
+    target_mask : np.ndarray  
+        Boolean mask of target objects (satisfying redshift + additional rules).
 
     Returns
     -------
@@ -45,13 +41,10 @@ def compute_metrics(mask, redshift, z_l):
     TN : int
         True Negatives.
     """
-    redshift_sel = redshift[mask]
-    redshift_unsel = redshift[~mask]
-
-    TP = np.count_nonzero(redshift_sel > z_l)
-    FP = np.count_nonzero(redshift_sel < z_l)
-    FN = np.count_nonzero(redshift_unsel > z_l)
-    TN = np.count_nonzero(redshift_unsel < z_l)
+    TP = (mask & target_mask).sum()
+    FP = (mask & ~target_mask).sum()
+    FN = (~mask & target_mask).sum() 
+    TN = (~mask & ~target_mask).sum()
 
     return TP, FP, FN, TN
 
@@ -76,10 +69,8 @@ def compute_for_simple(args):
             Threshold value applied to the color array.
         - color : array-like of float
             Array of color values for the objects.
-        - redshift : array-like of float
-            Array of redshift values corresponding to the objects.
-        - z_l : float
-            Limiting redshift used for classification.
+        - target_mask : np.ndarray  
+            Boolean mask of target objects (satisfying redshift + additional rules).
 
     Returns
     -------
@@ -89,13 +80,13 @@ def compute_for_simple(args):
         where the suffix `_up` refers to the mask `color > c` and `_low`
         refers to `color < c`.
     """
-    c, color, redshift, z_l = args
+    c, color, target_mask = args
     mask_up = color > c
     mask_low = color < c
 
     return [
-        *compute_metrics(mask_up, redshift, z_l),
-        *compute_metrics(mask_low, redshift, z_l),
+        *compute_metrics(mask_up, target_mask),
+        *compute_metrics(mask_low, target_mask),
     ]
 
 
@@ -120,10 +111,8 @@ def compute_for_cross(args):
             First color feature array.
         - color2 : array-like of float
             Second color feature array.
-        - redshift : array-like of float
-            Array of redshift values corresponding to the objects.
-        - z_l : float
-            Limiting redshift used for classification.
+        - target_mask : np.ndarray  
+            Boolean mask of target objects (satisfying redshift + additional rules).
 
     Returns
     -------
@@ -136,7 +125,7 @@ def compute_for_cross(args):
         3. `color1 <  s * color2 + c`
         4. `color1 < -s * color2 + c`
     """
-    s, c, color1, color2, redshift, z_l = args
+    s, c, color1, color2, target_mask = args
 
     cuts = [
         color1 > s * color2 + c,
@@ -145,7 +134,7 @@ def compute_for_cross(args):
         color1 < -s * color2 + c,
     ]
 
-    return [compute_metrics(mask, redshift, z_l) for mask in cuts]
+    return [compute_metrics(mask, target_mask) for mask in cuts]
 
 
 def c_domain_given_s(color1, color2, s, q_low=0.01, q_high=0.99):
