@@ -2,7 +2,7 @@
 OPTIMIZE COLOR CUT COMBINATION.
 
 This module selects the optimal color conditions and the corresponding
-optimal parameters, given any lower limit in redshift.
+optimal parameters, given any limit on redshift and on other galaxy properties.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """

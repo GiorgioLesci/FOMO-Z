@@ -37,13 +37,13 @@ def compute_metrics(mask, redshift, z_l):
     Returns
     -------
     TP : int
-        True Positives – number of selected objects with redshift > z_l.
+        True Positives.
     FP : int
-        False Positives – number of selected objects with redshift < z_l.
+        False Positives.
     FN : int
-        False Negatives – number of unselected objects with redshift > z_l.
+        False Negatives.
     TN : int
-        True Negatives – number of unselected objects with redshift < z_l.
+        True Negatives.
     """
     redshift_sel = redshift[mask]
     redshift_unsel = redshift[~mask]

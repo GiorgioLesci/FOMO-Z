@@ -2,7 +2,7 @@
 MEASURE COLOR CUT PERFORMANCE.
 
 This module provides the computation of color condition metrics,
-given any lower limit in redshift and condition parameter values.
+given any limit on galaxy properties and color condition parameter values.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
@@ -82,6 +82,8 @@ class Measure:
         bands,
         z_lim,
         z_gal_string="redshift",
+        is_zlim_lower=True,
+        additional_rules=None,
         missing_data=-99,
         s_samples=np.linspace(0.3, 1.7, 30),
         c_precision=0.05,
@@ -92,7 +94,7 @@ class Measure:
 
         Class defining color selection completeness, purity, and
         foreground failure rate for all color conditions, given any
-        lower redshift limit values and color condition parameters.
+        redshift limit values and color condition parameters.
 
         This class standardizes input photometric data, handles missing values,
         constructs color arrays from provided bands, and computes color selection
@@ -108,8 +110,20 @@ class Measure:
             Names of the photometric bands to include in the analysis.
         z_lim : array-like
             Array of redshift limits/thresholds to be used in selection tests.
+            It can represent either lower of higher limit values, depending on
+            the value of `is_zlim_lower`.
         z_gal_string : str, default='redshift'
             Column name in `dataset` that contains the galaxy redshift values.
+        is_zlim_lower : bool, default = True
+            If True, `z_lim` is a set of lower redshift limits. Otherwise, `z_lim`
+            is a set of higher limits.
+        additional_rules : list of lists, default = None
+            Additional selection rules beyond redshift. Each rule is a list
+            with this format: [property, operator, threshold].
+            All rules (including the one on the i-th `z_lim`) are
+            combined with AND logic.
+            Example: [ ["logM", ">", 10.0], ["u", "<", 24.0] ].
+            Supported operators: ">", "<", ">=", "<=", "==".
         missing_data : int or float, default=-99
             Value used in the dataset to denote missing entries. These are replaced
             with NaN for consistency.
