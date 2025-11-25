@@ -51,7 +51,8 @@ def init_worker(shared_c1, shared_c2, shared_target_mask):
     GLOBAL_color2 = (
         np.frombuffer(shared_c2.get_obj(), dtype=np.float32) if shared_c2 else None
     )
-    GLOBAL_shared_mask = np.frombuffer(shared_target_mask.get_obj(), dtype=bool)
+    bool_array = np.frombuffer(shared_target_mask.get_obj(), dtype=np.int8)
+    GLOBAL_shared_mask = bool_array.astype(bool)
 
 
 def compute_for_simple_worker(args):
@@ -93,6 +94,7 @@ class Measure:
         s_samples=np.linspace(0.3, 1.7, 30),
         c_precision=0.05,
         initial_threshold=0.9,
+        maximized_quantity="completeness",
     ):
         """
         Measure the metrics of color conditions.
@@ -140,9 +142,14 @@ class Measure:
             but significantly increase the number of operations. If you halve `c_precision`,
             expect about 2 times more c steps per s (also runtime and RAM roughly double).
         initial_threshold : float, default=0.9
-            Initial threshold on purity or completeness. Color conditions not
-            satisfying this threshold are not stored. This is useful to avoid filling
-            memory with unused information.
+            Initial threshold on purity or completeness, depending on the value of
+            `maximized_quantity`. Color conditions not satisfying this threshold are
+            not stored. This is useful to avoid filling memory with unused information.
+        maximized_quantity : str, default="completeness"
+            The quantity to maximize. Possibilities are either "completeness" or
+            "purity". If "completeness", `initial_threshold` acts on the purity. If
+            "purity", `initial_threshold` acts on completeness. This parameter defines
+            what is maximized in the `Optimize` class.
         """
         assert isinstance(
             dataset, pd.DataFrame
@@ -200,9 +207,21 @@ class Measure:
         self.s_samples = s_samples.astype(np.float32)
         self.c_precision = float(c_precision)
         self.dict_all = {}
+
+        self.is_zlim_lower = is_zlim_lower
+        self.additional_rules = additional_rules
+
         if initial_threshold <= 0.0:
             raise ValueError("initial_threshold must be strictly larger than 0.")
         self.initial_threshold = initial_threshold
+
+        if maximized_quantity not in ["completeness", "purity"]:
+            errMsg = "maximized_quantity must be either 'completeness' or 'purity'."
+            raise ValueError(errMsg)
+        if maximized_quantity == "completeness":
+            self.thresholded_quantity = "purity"
+        else:
+            self.thresholded_quantity = "completeness"
 
         # Check the format of the additional rules
         if additional_rules is not None:
@@ -241,14 +260,6 @@ class Measure:
                     errMsg = f"Rule {i}: operator '{operator}' is not supported. "
                     errMsg += f"Must be one of {valid_operators}"
                     raise ValueError(errMsg)
-
-        # Create the target mask
-        self.is_zlim_lower = is_zlim_lower
-        self.additional_rules = additional_rules
-
-        self.target_mask = get_target_mask(
-            self.dataset, self.z_lim, self.is_zlim_lower, self.additional_rules
-        )
 
     def _apply_cuts(self, mag1, mag2, cross_colors=[], cpu_number=None):
         """
@@ -317,7 +328,7 @@ class Measure:
             )
         ):
 
-            shared_target_mask = mp.Array("b", self.target_mask[i].astype(bool))
+            shared_target_mask = mp.Array("b", [bool(x) for x in self.target_mask[i]])
 
             if z_l not in self.dict_all:
                 self.dict_all[z_l] = {}
@@ -353,17 +364,27 @@ class Measure:
             purity_low = tp_low / np.maximum(tp_low + fp_low, 1e-12)
             compl_up = tp_up / np.maximum(tp_up + fn_up, 1e-12)
             compl_low = tp_low / np.maximum(tp_low + fn_low, 1e-12)
-            f_low_up = fp_up / np.maximum(fp_up + tn_up, 1e-12)
-            f_low_low = fp_low / np.maximum(fp_low + tn_low, 1e-12)
+            failure_up = fp_up / np.maximum(fp_up + tn_up, 1e-12)
+            failure_low = fp_low / np.maximum(fp_low + tn_low, 1e-12)
+
+            if self.thresholded_quantity == "purity":
+                mask_threshold_up = purity_up > self.initial_threshold
+                mask_threshold_low = purity_low > self.initial_threshold
+            else:
+                mask_threshold_up = compl_up > self.initial_threshold
+                mask_threshold_low = compl_low > self.initial_threshold
+
             mask_up = (
-                (purity_up > self.initial_threshold)
+                (mask_threshold_up)
                 & (compl_up > 0.0)
-                & (f_low_up < 1.0)
+                & (purity_up > 0.0)
+                & (failure_up < 1.0)
             )
             mask_low = (
-                (purity_low > self.initial_threshold)
+                (mask_threshold_low)
                 & (compl_low > 0.0)
-                & (f_low_low < 1.0)
+                & (purity_low > 0.0)
+                & (failure_low < 1.0)
             )
 
             sub_dict = {}
@@ -424,11 +445,18 @@ class Measure:
                     # Mask
                     purity = tp_all / np.maximum(tp_all + fp_all, 1e-12)
                     compl = tp_all / np.maximum(tp_all + fn_all, 1e-12)
-                    f_low = fp_all / np.maximum(fp_all + tn_all, 1e-12)
+                    failure = fp_all / np.maximum(fp_all + tn_all, 1e-12)
+
+                    if self.thresholded_quantity == "purity":
+                        mask_threshold = purity > self.initial_threshold
+                    else:
+                        mask_threshold = compl > self.initial_threshold
+
                     mask_per_condition = (
-                        (purity > self.initial_threshold)
+                        (mask_threshold)
                         & (compl > 0.0)
-                        & (f_low < 1.0)
+                        & (purity > 0.0)
+                        & (failure < 1.0)
                     )
 
                     # Save structure per condition index (0, 1, 2, 3)
@@ -473,6 +501,12 @@ class Measure:
             This method updates the internal class attribute `self.dict_all`
             and does not return any value.
         """
+        # Create the target mask
+        self.target_mask = get_target_mask(
+            self.dataset, self.z_lim, self.is_zlim_lower, self.additional_rules
+        )
+
+        # Measure color cut metrics
         print("Computing color cuts given the following set of bands:", self.bands)
 
         for i in range(len(self.colors)):

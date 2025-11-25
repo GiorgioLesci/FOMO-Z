@@ -46,7 +46,9 @@ class Optimize:
         This class takes the results from a `Measure` instance (which stores
         metrics for a grid of color cuts) and provides structures for ranking,
         aggregating, and optimizing those cuts. Single color conditions having
-        failure rate equal to 1 are always excluded.
+        failure rate equal to 1 or completeness equal to 0 are always excluded.
+        The maximized quantity (either completeness or purity) is defined by the
+        `Measure` instance given in input to this constructor.
 
         Attributes
         ----------
@@ -84,6 +86,7 @@ class Optimize:
         self.z_lim = measure.z_lim
         self.dict_all = measure.dict_all
         self.initial_threshold = measure.initial_threshold
+        self.thresholded_quantity = measure.thresholded_quantity
         self.target_mask = measure.target_mask
         self.is_zlim_lower = measure.is_zlim_lower
         self.additional_rules = measure.additional_rules
@@ -111,9 +114,9 @@ class Optimize:
             - z_l : float
                 The redshift threshold being processed.
             - threshold_tot_min : float
-                Minimum required total purity/completeness for the optimized set of cuts.
+                Minimum required total purity or completeness for the optimized set of cuts.
             - step : float
-                Increment step applied when scanning over purity/completeness thresholds.
+                Increment step applied when scanning over purity or completeness thresholds.
             - store_iterations : bool
                 If True, store the iteration steps in self.dict_iterative_steps.
 
@@ -141,7 +144,10 @@ class Optimize:
         for base_pair, comp_dict in all_cuts.items():
             for comp_pair, conditions in comp_dict.items():
                 for cond_index, cond_data in conditions.items():
-                    candidate_max = cond_data.get("purity", [])
+                    candidate_max = cond_data.get(
+                        self.thresholded_quantity,
+                        [],
+                    )
                     for i, candidate in enumerate(candidate_max):
                         if candidate > start_threshold:
                             start_threshold = candidate
@@ -153,6 +159,11 @@ class Optimize:
             )
 
         # Start the iterative process
+        if self.thresholded_quantity == "purity":
+            maximized_quantity = "completeness"
+        else:
+            maximized_quantity = "purity"
+
         current_thresh = start_threshold
         best_by_key = {}
         dict_iterative_steps = {}
@@ -189,21 +200,42 @@ class Optimize:
                             C_vals = cond_dict.get("completeness", [])
 
                             for i, c_val in enumerate(c_vals):
+
                                 purity = P_vals[i]
                                 compl = C_vals[i]
 
-                                if purity >= current_thresh and compl > 0.0:
-                                    key = (base_pair, comp_pair, cond_index)
+                                key = (base_pair, comp_pair, cond_index)
+
+                                if self.thresholded_quantity == "purity":
+                                    threshold_condition = purity >= current_thresh
+                                    maximization_condition = (
+                                        compl
+                                        > new_best_by_key.get(key, {"completeness": 1})[
+                                            "completeness"
+                                        ]
+                                    )
+                                    maximized_quantity_value = compl
+                                else:
+                                    threshold_condition = compl >= current_thresh
+                                    maximization_condition = (
+                                        purity
+                                        > new_best_by_key.get(key, {"purity": 1})[
+                                            "purity"
+                                        ]
+                                    )
+                                    maximized_quantity_value = purity
+
+                                if threshold_condition:
                                     cut = {
                                         "base_pair": base_pair,
                                         "comp_pair": comp_pair,
                                         "c": float(c_val),
                                         "condition_index": cond_index,
-                                        "completeness": compl,
+                                        maximized_quantity: maximized_quantity_value,
                                     }
                                     if (
                                         key not in new_best_by_key
-                                        or compl > new_best_by_key[key]["completeness"]
+                                        or maximization_condition
                                     ):
                                         new_best_by_key[key] = cut
 
@@ -217,22 +249,43 @@ class Optimize:
                             C_vals = cond_dict.get("completeness", [])
 
                             for i in range(len(c_vals)):
+
                                 purity = P_vals[i]
                                 compl = C_vals[i]
 
-                                if purity >= current_thresh and compl > 0.0:
-                                    key = (base_pair, comp_pair, cond_index)
+                                key = (base_pair, comp_pair, cond_index)
+
+                                if self.thresholded_quantity == "purity":
+                                    threshold_condition = purity >= current_thresh
+                                    maximization_condition = (
+                                        compl
+                                        > new_best_by_key.get(key, {"completeness": 1})[
+                                            "completeness"
+                                        ]
+                                    )
+                                    maximized_quantity_value = compl
+                                else:
+                                    threshold_condition = compl >= current_thresh
+                                    maximization_condition = (
+                                        purity
+                                        > new_best_by_key.get(key, {"purity": 1})[
+                                            "purity"
+                                        ]
+                                    )
+                                    maximized_quantity_value = purity
+
+                                if threshold_condition:
                                     cut = {
                                         "base_pair": base_pair,
                                         "comp_pair": comp_pair,
                                         "s": float(s_vals[i]),
                                         "c": float(c_vals[i]),
                                         "condition_index": cond_index,
-                                        "completeness": compl,
+                                        maximized_quantity: maximized_quantity_value,
                                     }
                                     if (
                                         key not in new_best_by_key
-                                        or compl > new_best_by_key[key]["completeness"]
+                                        or maximization_condition
                                     ):
                                         new_best_by_key[key] = cut
 
@@ -256,7 +309,12 @@ class Optimize:
                 err_msg += f" the failure rate is 1 at z_l={z_l}."
                 raise ValueError(err_msg)
 
-            if P_tot_new[idx] >= threshold_tot_min:
+            if self.thresholded_quantity == "purity":
+                threshold_condition = P_tot_new[idx] >= threshold_tot_min
+            else:
+                threshold_condition = C_tot_new[idx] >= threshold_tot_min
+
+            if threshold_condition:
                 best_by_key = new_best_by_key
                 C_tot = C_tot_new
                 P_tot = P_tot_new
@@ -447,14 +505,14 @@ class Optimize:
         Perform the iterative search for optimal color conditions.
 
         Here, either completeness or purity are maximized, depending on what was
-        set in the `Measure` instance.
+        set in the `Measure` instance given in input to the constructor of this class.
         This method incrementally relaxes the single color cut purity (completeness)
         threshold in order to identify a set of cuts that maximize total completeness
         (purity) while still satisfying the global threshold. The algorithm
         proceeds iteratively, starting from a strict initial threshold and reducing
         it by `step` until the total purity (or completeness) remains above
         `threshold_tot_min`. The starting threshold corresponds to the maximum
-        purity (or completeness) attained by single color conditions.
+        purity (or completeness) attained across all single color conditions.
         Also bootstrap errors on the metrics are derived.
 
         Constraints
@@ -486,8 +544,8 @@ class Optimize:
         Parameters
         ----------
         threshold_tot_min : float or array-like
-            Required minimum global purity across all redshift bins. If float,
-            the same threshold is applied at any limiting redshift point.
+            Required minimum global purity or completeness across all redshift bins.
+            If float, the same threshold is applied at any limiting redshift point.
             If array-like, a different threshold is used at each limiting
             redshift.
         step : float, optional
