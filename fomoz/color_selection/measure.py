@@ -130,7 +130,7 @@ class Measure:
             All rules (including the one on the i-th `z_lim`) are
             combined with AND logic.
             Example: [ ["logM", ">", 10.0], ["u", "<", 24.0] ].
-            Supported operators: ">", "<", ">=", "<=", "==".
+            Supported operators: ">", "<", ">=", "<=", "==", "!=".
         missing_data : int or float, default=-99
             Value used in the dataset to denote missing entries. These are replaced
             with NaN for consistency.
@@ -255,7 +255,7 @@ class Measure:
                     errMsg += f"in additional_rules is not in the dataset."
                     raise KeyError(errMsg)
 
-                valid_operators = [">", "<", ">=", "<=", "=="]
+                valid_operators = [">", "<", ">=", "<=", "==", "!="]
                 if operator not in valid_operators:
                     errMsg = f"Rule {i}: operator '{operator}' is not supported. "
                     errMsg += f"Must be one of {valid_operators}"

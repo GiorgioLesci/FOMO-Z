@@ -37,7 +37,7 @@ def get_target_mask(dataset, z_lim, is_zlim_lower, additional_rules):
     additional_rules : list of lists or None
         Additional selection rules beyond redshift. Each rule is a list with format:
         (property_name, operator, threshold). All rules are combined with AND logic.
-        Supported operators: ">", "<", ">=", "<=", "==".
+        Supported operators: ">", "<", ">=", "<=", "==", "!=".
 
         Example:
         [("logM", ">", 10.0), ("u", "<", 24.0)] selects galaxies with
@@ -83,6 +83,8 @@ def get_target_mask(dataset, z_lim, is_zlim_lower, additional_rules):
                 target_mask[i] &= data <= threshold
             elif operator == "==":
                 target_mask[i] &= data == threshold
+            elif operator == "!=":
+                target_mask[i] &= data != threshold
 
     return target_mask
 
