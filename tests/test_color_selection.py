@@ -70,22 +70,56 @@ def reference_optimize_instance(reference_measure_instance):
 class TestBuildNestedDict:
     """Test cases for build_nested_dict function."""
     
-    def test_build_nested_dict_basic(self):
-        """Test building nested dictionary from cut list."""
-        cut_list = [
-            {"base_pair": ("g", "r"), "comp_pair": ("r", "i"), "value": 1},
-            {"base_pair": ("g", "r"), "comp_pair": ("r", "i"), "value": 2},
-            {"base_pair": ("g", "r"), "comp_pair": ("i", "z"), "value": 3},
-            {"base_pair": ("r", "i"), "comp_pair": ("i", "z"), "value": 4},
-        ]
+    def test_build_nested_dict(self):
+        """Test building nested dictionary from cut dictionary."""
+        cut_dict = {
+            (("g", "r"), ("r", "i"), 0): {
+                "c": 0.5, 
+                "s": 1.2, 
+                "completeness": 0.8,
+                "value": 1
+            },
+            (("g", "r"), ("r", "i"), 1): {
+                "c": 0.3, 
+                "s": 0.8, 
+                "completeness": 0.7,
+                "value": 2
+            },
+            (("g", "r"), ("i", "z"), 0): {
+                "c": 0.7, 
+                "s": 1.5, 
+                "completeness": 0.9,
+                "value": 3
+            },
+            (("r", "i"), ("i", "z"), 0): {
+                "c": 0.2, 
+                "s": 1.1, 
+                "completeness": 0.6,
+                "value": 4
+            },
+        }
         
-        result = build_nested_dict(cut_list)
+        result = build_nested_dict(cut_dict)
         
+        # Check top-level structure
         assert ("g", "r") in result
+        assert ("r", "i") in result
+        
+        # Check nested structure for ("g", "r")
         assert ("r", "i") in result["g", "r"]
         assert ("i", "z") in result["g", "r"]
+        
+        # Check number of cuts in each comp_pair
         assert len(result["g", "r"]["r", "i"]) == 2
         assert len(result["g", "r"]["i", "z"]) == 1
+        assert len(result["r", "i"]["i", "z"]) == 1
+        
+        # Check that condition_index and parameters are preserved
+        cut_1 = result["g", "r"]["r", "i"][0]
+        assert "condition_index" in cut_1
+        assert "c" in cut_1
+        assert "s" in cut_1
+        assert "completeness" in cut_1
 
 
 class TestRestructureDict:

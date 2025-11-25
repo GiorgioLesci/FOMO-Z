@@ -14,7 +14,12 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from .auxiliary import compute_for_cross, compute_for_simple, c_domain_given_s
+from .auxiliary import (
+    get_target_mask,
+    compute_for_cross,
+    compute_for_simple,
+    c_domain_given_s,
+)
 
 
 # Globals visible to workers
@@ -93,7 +98,7 @@ class Measure:
         Measure the metrics of color conditions.
 
         Class defining color selection completeness, purity, and
-        foreground failure rate for all color conditions, given any
+        failure rate for all color conditions, given any
         redshift limit values and color condition parameters.
 
         This class standardizes input photometric data, handles missing values,
@@ -149,7 +154,10 @@ class Measure:
             raise KeyError(errMsg)
 
         if "c" in bands or "s" in bands:
-            raise ValueError("Magnitude keys cannot equal 'c' or 's'.")
+            raise ValueError("Band keys cannot equal 'c' or 's'.")
+
+        if len(bands) < 2:
+            raise ValueError("At least two photometric bands are required.")
 
         if z_gal_string in bands:
             errMsg = f"z_gal_string='{z_gal_string}' conflicts "
@@ -216,7 +224,9 @@ class Measure:
                     errMsg = f"Rule {i}: property_name must be a string, got {type(property_name)}"
                     raise TypeError(errMsg)
                 if not isinstance(operator, str):
-                    errMsg = f"Rule {i}: operator must be a string, got {type(operator)}"
+                    errMsg = (
+                        f"Rule {i}: operator must be a string, got {type(operator)}"
+                    )
                     raise TypeError(errMsg)
 
                 if property_name not in self.dataset.columns:
@@ -231,34 +241,12 @@ class Measure:
                     raise ValueError(errMsg)
 
         # Create the target mask
-        self.target_mask = np.full(
-            (len(self.z_lim), len(self.dataset)), False, dtype=bool
+        self.is_zlim_lower = is_zlim_lower
+        self.additional_rules = additional_rules
+
+        self.target_mask = get_target_mask(
+            self.dataset, self.z_lim, self.is_zlim_lower, self.additional_rules
         )
-        for i, zz in enumerate(self.z_lim):
-
-            # Limiting redshift
-            if is_zlim_lower:
-                self.target_mask[i] = self.dataset["redshift"] > zz
-            else:
-                self.target_mask[i] = self.dataset["redshift"] < zz
-
-            # Additional rules
-            if additional_rules is None:
-                continue
-            for property_name, operator, threshold in additional_rules:
-
-                data = self.dataset[property_name]
-
-                if operator == ">":
-                    self.target_mask[i] &= data > threshold
-                elif operator == "<":
-                    self.target_mask[i] &= data < threshold
-                elif operator == ">=":
-                    self.target_mask[i] &= data >= threshold
-                elif operator == "<=":
-                    self.target_mask[i] &= data <= threshold
-                elif operator == "==":
-                    self.target_mask[i] &= data == threshold
 
     def _apply_cuts(self, mag1, mag2, cross_colors=[], cpu_number=None):
         """
@@ -301,7 +289,6 @@ class Measure:
         color1 = self.dataset[mag1].values.astype(np.float32) - self.dataset[
             mag2
         ].values.astype(np.float32)
-        redshift = self.dataset["redshift"].values.astype(np.float32)
 
         vmin, vmax = np.quantile(color1[np.isfinite(color1)], [0.01, 0.99])
         n_steps = int((vmax - vmin) / self.c_precision) + 1
@@ -321,10 +308,10 @@ class Measure:
                 cross_shared_arrays[(mag3, mag4)] = mp.Array("f", color2)
 
         # Loop over limiting redshift points
-        for i, z_l in tqdm(
-            enumerate(self.z_lim),
+        for i, z_l in enumerate(tqdm(
+            self.z_lim,
             desc=f"Processing the color-color spaces that include ({mag1}-{mag2})",
-        ):
+        )):
 
             shared_target_mask = mp.Array("b", self.target_mask[i].astype(bool))
 

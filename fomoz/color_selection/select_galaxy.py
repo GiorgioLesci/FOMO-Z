@@ -176,7 +176,7 @@ class SelectGalaxy:
         if not self.dict:
             raise ValueError(
                 "A color cut dictionary must be set",
-                "before the call of this function."
+                "before the call of this function.",
             )
 
         if isinstance(z_lim, (float, int)):

@@ -21,6 +21,8 @@ from tqdm import tqdm
 import pandas as pd
 
 from .auxiliary import (
+    get_target_mask,
+    compute_metrics,
     build_nested_dict,
     float_representer,
     interpolate_parameters,
@@ -44,7 +46,7 @@ class Optimize:
         This class takes the results from a `Measure` instance (which stores
         metrics for a grid of color cuts) and provides structures for ranking,
         aggregating, and optimizing those cuts. Single color conditions having
-        foreground failure rate equal to 1 are always excluded.
+        failure rate equal to 1 are always excluded.
 
         Attributes
         ----------
@@ -82,6 +84,9 @@ class Optimize:
         self.z_lim = measure.z_lim
         self.dict_all = measure.dict_all
         self.purity_initial_threshold = measure.purity_initial_threshold
+        self.target_mask = measure.target_mask
+        self.is_zlim_lower = measure.is_zlim_lower
+        self.additional_rules = measure.additional_rules
 
         self.dict_iterative = {}
         self.dict_iterative_steps = {}
@@ -238,49 +243,53 @@ class Optimize:
                                     ):
                                         new_best_by_key[key] = cut
 
-            C_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
-            P_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
-            F_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
+            if new_best_by_key:
 
-            selection = list(new_best_by_key.values())
-            nested = build_nested_dict(selection)
-            self._combine_optimal_cuts(
-                self.color_cache,
-                self.redshift,
-                {z_l: nested},
-                C_tot_new,
-                P_tot_new,
-                F_tot_new,
-            )
+                C_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
+                P_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
+                F_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
 
-            if F_tot_new[idx] == 1.0:
-                err_msg = "No effective selection found:"
-                err_msg += f" entire foreground sample selected at z_l={z_l}."
-                raise ValueError(err_msg)
+                nested = build_nested_dict(new_best_by_key)
 
-            if P_tot_new[idx] >= purity_tot_min:
-                best_by_key = new_best_by_key
-                C_tot = C_tot_new
-                P_tot = P_tot_new
-                F_tot = F_tot_new
+                self._combine_optimal_cuts(
+                    self.color_cache,
+                    self.target_mask,
+                    {z_l: nested},
+                    C_tot_new,
+                    P_tot_new,
+                    F_tot_new,
+                )
+
+                if F_tot_new[idx] == 1.0:
+                    err_msg = "No effective selection found:"
+                    err_msg += f" the failure rate is 1 at z_l={z_l}."
+                    raise ValueError(err_msg)
+
+                if P_tot_new[idx] >= purity_tot_min:
+                    best_by_key = new_best_by_key
+                    C_tot = C_tot_new
+                    P_tot = P_tot_new
+                    F_tot = F_tot_new
+                    current_thresh -= step
+
+                    if store_iterations:
+                        dict_iterative_steps[iteration] = nested
+                        iteration += 1
+                else:
+                    break  # below the threshold
+
+            else:
                 current_thresh -= step
 
-                if store_iterations:
-                    dict_iterative_steps[iteration] = nested
-            else:
-                break  # below the threshold
-
-            iteration += 1
-
-        return z_l, list(best_by_key.values()), dict_iterative_steps
+        return z_l, best_by_key, dict_iterative_steps
 
     def _combine_optimal_cuts(
-        self, color_cache, redshift, dictionary, C_tot, P_tot, F_tot
+        self, color_cache, target_mask, dictionary, C_tot, P_tot, F_tot
     ):
         """
         Combine optimal color cuts and compute global metrics.
 
-        This method aggregates purity, completeness, and foreground
+        This method aggregates purity, completeness, and
         failure rates across a set of optimal cuts stored in
         `dictionary`. The combined results are accumulated into the
         provided arrays `C_tot`, `P_tot`, and `F_tot`.
@@ -291,8 +300,8 @@ class Optimize:
             Dictionary mapping color pairs (mag1, mag2) to precomputed
             color arrays (mag1 - mag2). Keys are tuples of band names,
             values are numpy arrays of color values.
-        redshift : numpy.ndarray
-            Array of redshift values for all objects in the dataset.
+        target_mask : np.ndarray
+            Boolean mask of target objects (satisfying redshift + additional rules).
         dictionary : dict
             Dictionary of selected optimal cuts (e.g. `self.dict_iterative`),
             where each entry contains the metrics for a cut.
@@ -301,8 +310,7 @@ class Optimize:
         P_tot : numpy.ndarray
             Array that accumulates total purity values across cuts.
         F_tot : numpy.ndarray
-            Array that accumulates total foreground failure rate values
-            across cuts.
+            Array that accumulates total failure rate values across cuts.
 
         Returns
         -------
@@ -310,9 +318,11 @@ class Optimize:
             Updates the input arrays (`C_tot`, `P_tot`, `F_tot`) in place
             but does not return a value.
         """
+        n_galaxies = len(target_mask[0])
+
         for i, z_l in enumerate(self.z_lim):
 
-            mask_total = np.zeros(redshift.shape, dtype=bool)
+            mask_total = np.zeros(n_galaxies, dtype=bool)
             cuts_for_zl = dictionary.get(z_l, {})
 
             for base_pair, comp_cuts in cuts_for_zl.items():
@@ -348,30 +358,22 @@ class Optimize:
 
                             mask_total |= mask
 
-            z_sel = redshift[mask_total]
-            z_unsel = redshift[~mask_total]
+            TP, FP, FN, TN = compute_metrics(mask_total, target_mask[i])
 
-            TP = int((z_sel > z_l).sum())
-            FP = int((z_sel < z_l).sum())
-            FN = int((z_unsel > z_l).sum())
-            TN = int((z_unsel < z_l).sum())
-
-            C = TP / (TP + FN) if TP + FN > 0 else 0.0
-            P = TP / (TP + FP) if TP + FP > 0 else 0.0
-            F = FP / (FP + TN) if FP + TN > 0 else 0.0
-
-            C_tot[i], P_tot[i], F_tot[i] = C, P, F
+            C_tot[i] = TP / (TP + FN) if TP + FN > 0 else 0.0
+            P_tot[i] = TP / (TP + FP) if TP + FP > 0 else 0.0
+            F_tot[i] = FP / (FP + TN) if FP + TN > 0 else 0.0
 
     def _estimate_errors(self, n_bootstraps=1000):
         """
         Estimate bootstrap errors.
 
         This method computes mean and standard deviation of completeness, purity,
-        and foreground failure rate, based on bootstrap resampling. Results are
+        and failure rate, based on bootstrap resampling. Results are
         stored as instance attributes:
         - C_std: Standard deviation of completeness
         - P_std: Standard deviation of purity
-        - F_std: Standard deviation of foreground failure rate
+        - F_std: Standard deviation of failure rate
 
         Parameters
         ----------
@@ -399,7 +401,6 @@ class Optimize:
             bootstrap_sample = self.dataset.iloc[indices]
 
             # Pre-compute colors
-            redshift = bootstrap_sample["redshift"].values.astype(np.float32)
             color_cache = {}
             for mag1, mag2 in self.colors:
                 color_cache[(mag1, mag2)] = bootstrap_sample[mag1].values.astype(
@@ -410,9 +411,18 @@ class Optimize:
             P_temp = np.zeros(len(self.z_lim))
             F_temp = np.zeros(len(self.z_lim))
 
+            # Get the target mask
+            target_mask = get_target_mask(
+                bootstrap_sample,
+                self.z_lim,
+                self.is_zlim_lower,
+                self.additional_rules,
+            )
+
+            # Compute the metrics
             self._combine_optimal_cuts(
                 color_cache,
-                redshift,
+                target_mask,
                 self.dict_iterative,
                 C_temp,
                 P_temp,
@@ -524,7 +534,7 @@ class Optimize:
             - ``self.C_iterative_tot`` : numpy.ndarray
                 Total completeness across all bins.
             - ``self.F_iterative_tot`` : numpy.ndarray
-                Total foreground failure rate across all bins.
+                Total failure rate across all bins.
         """
         if isinstance(purity_tot_min, float):
             purity_tot_min = [purity_tot_min] * len(self.z_lim)
@@ -562,14 +572,14 @@ class Optimize:
             results = pool.map(self._process_iterative_for_one_z, args_list)
 
         for result in results:
-            z_l, cut_list, steps = result
-            self.dict_iterative[z_l] = build_nested_dict(cut_list)
+            z_l, cuts_dict, steps = result
+            self.dict_iterative[z_l] = build_nested_dict(cuts_dict)
             self.dict_iterative_steps[z_l] = steps
 
         print("Combining the optimal cuts...")
         self._combine_optimal_cuts(
             self.color_cache,
-            self.redshift,
+            self.target_mask,
             self.dict_iterative,
             self.C_iterative_tot,
             self.P_iterative_tot,
@@ -621,7 +631,7 @@ class Optimize:
             Additional notes entering the metadata.
         write_also_metrics : bool, optional
             If True, write the `{file_name}_metrics.csv` file containing
-            purity, completeness, and foreground failure rate
+            purity, completeness, and failure rate
             as a function of limiting redshift, and their errors.
 
         Raises
@@ -674,7 +684,7 @@ class Optimize:
         This method produces a three-panel figure showing:
         1. Completeness as a function of redshift threshold.
         2. Purity as a function of redshift threshold.
-        3. Foreground failure rate as a function of redshift threshold.
+        3. Failure rate as a function of redshift threshold.
 
         Parameters
         ----------

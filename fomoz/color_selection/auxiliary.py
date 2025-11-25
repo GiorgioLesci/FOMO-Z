@@ -14,20 +14,91 @@ import numpy as np
 from scipy.interpolate import UnivariateSpline
 
 
+def get_target_mask(dataset, z_lim, is_zlim_lower, additional_rules):
+    """
+    Create a mask identifying galaxies that satisfy a set of conditions.
+
+    This function generates a 2D boolean mask array where each row corresponds
+    to a different redshift limit and each column corresponds to a galaxy in the
+    dataset. A value of `True` indicates that a galaxy meets all selection criteria
+    for that particular redshift limit.
+
+    Parameters
+    ----------
+    dataset : pandas.DataFrame
+        Input dataset containing galaxy properties. Must include a 'redshift' column
+        and any additional properties referenced in `additional_rules`.
+    z_lim : array-like of float
+        Array of redshift thresholds to apply. Each value defines a separate
+        selection criterion.
+    is_zlim_lower : bool
+        If True, `z_lim` values are treated as lower limits. If False, `z_lim`
+        values are treated as upper limits.
+    additional_rules : list of lists or None
+        Additional selection rules beyond redshift. Each rule is a list with format:
+        (property_name, operator, threshold). All rules are combined with AND logic.
+        Supported operators: ">", "<", ">=", "<=", "==".
+
+        Example:
+        [("logM", ">", 10.0), ("u", "<", 24.0)] selects galaxies with
+        stellar mass > 10^10 solar masses AND u-band magnitude < 24.0.
+
+    Returns
+    -------
+    target_mask : numpy.ndarray of bool
+        2D boolean array with shape (len(z_lim), len(dataset)).
+        target_mask[i, j] = True indicates that galaxy j satisfies all selection
+        criteria for redshift limit z_lim[i].
+
+    Notes
+    -----
+    - The function applies all selection criteria with AND logic: a galaxy must
+      satisfy the redshift condition AND all additional rules to be marked as True.
+    - The returned mask can be used directly for calculating completeness, purity,
+      and other selection metrics.
+    """
+    target_mask = np.full((len(z_lim), len(dataset)), False, dtype=bool)
+    for i, zz in enumerate(z_lim):
+
+        # Limiting redshift
+        if is_zlim_lower:
+            target_mask[i] = dataset["redshift"] > zz
+        else:
+            target_mask[i] = dataset["redshift"] < zz
+
+        # Additional rules
+        if additional_rules is None:
+            continue
+        for property_name, operator, threshold in additional_rules:
+
+            data = dataset[property_name]
+
+            if operator == ">":
+                target_mask[i] &= data > threshold
+            elif operator == "<":
+                target_mask[i] &= data < threshold
+            elif operator == ">=":
+                target_mask[i] &= data >= threshold
+            elif operator == "<=":
+                target_mask[i] &= data <= threshold
+            elif operator == "==":
+                target_mask[i] &= data == threshold
+
+    return target_mask
+
+
 def compute_metrics(mask, target_mask):
     """
     Compute classification metrics (TP, FP, FN, TN).
 
-    The function evaluates how well a given mask separates objects above and
-    below a specified limiting redshift `z_l`. It compares the selected and
-    unselected samples against the threshold to compute true/false positives
-    and true/false negatives.
+    The function computes true/false positives and true/false negatives
+    based on the input masks.
 
     Parameters
     ----------
     mask : array-like of bool
         Boolean mask of selected objects by color cuts.
-    target_mask : np.ndarray  
+    target_mask : np.ndarray
         Boolean mask of target objects (satisfying redshift + additional rules).
 
     Returns
@@ -41,10 +112,16 @@ def compute_metrics(mask, target_mask):
     TN : int
         True Negatives.
     """
-    TP = (mask & target_mask).sum()
-    FP = (mask & ~target_mask).sum()
-    FN = (~mask & target_mask).sum() 
-    TN = (~mask & ~target_mask).sum()
+    if mask.shape != target_mask.shape:
+        raise ValueError(
+            f"Mask shapes do not match: mask has shape {mask.shape}, "
+            f"target_mask has shape {target_mask.shape}"
+        )
+
+    TP = np.count_nonzero(mask & target_mask)
+    FP = np.count_nonzero(mask & ~target_mask)
+    FN = np.count_nonzero(~mask & target_mask)
+    TN = np.count_nonzero(~mask & ~target_mask)
 
     return TP, FP, FN, TN
 
@@ -69,7 +146,7 @@ def compute_for_simple(args):
             Threshold value applied to the color array.
         - color : array-like of float
             Array of color values for the objects.
-        - target_mask : np.ndarray  
+        - target_mask : np.ndarray
             Boolean mask of target objects (satisfying redshift + additional rules).
 
     Returns
@@ -111,7 +188,7 @@ def compute_for_cross(args):
             First color feature array.
         - color2 : array-like of float
             Second color feature array.
-        - target_mask : np.ndarray  
+        - target_mask : np.ndarray
             Boolean mask of target objects (satisfying redshift + additional rules).
 
     Returns
@@ -201,7 +278,7 @@ def c_domain_given_s(color1, color2, s, q_low=0.01, q_high=0.99):
     return lo, hi
 
 
-def build_nested_dict(cut_list):
+def build_nested_dict(cuts):
     """
     Build a nested dictionary from a list of color cuts.
 
@@ -211,14 +288,16 @@ def build_nested_dict(cut_list):
 
     Parameters
     ----------
-    cut_list : list of dict
-        List of cut definitions. Each element must be a dictionary
-        containing at least the keys:
-        - "base_pair" : tuple
-            The primary color pair (e.g., (g, r)).
-        - "comp_pair" : tuple
-            The secondary or comparison color pair (e.g., (r, i)).
-        - other keys may be present (e.g., slope, intercept, metrics).
+    cuts : dict
+        Dictionary of cut definitions, where keys are tuples of the form
+        (base_pair, comp_pair, condition_index) and values are dictionaries
+        containing cut parameters. Each value dictionary must contain:
+        - "c" : float
+            Intercept parameter of the cut
+        - "completeness" : float  
+            Completeness value of the cut
+        - "s" : float, optional
+            Slope parameter (present only for cross-color cuts)
 
     Returns
     -------
@@ -237,10 +316,14 @@ def build_nested_dict(cut_list):
         }
     """
     nested = {}
-    for cut in cut_list:
-        base_pair = cut["base_pair"]
-        comp_pair = cut["comp_pair"]
-        nested.setdefault(base_pair, {}).setdefault(comp_pair, []).append(cut)
+    for key, cut in cuts.items():
+        base_pair, comp_pair, cond_index = key
+        nested.setdefault(base_pair, {}).setdefault(comp_pair, []).append({
+            "condition_index": cond_index,
+            "c": cut["c"],
+            "s": cut.get("s"),  # None for simple cuts
+            "completeness": cut["completeness"]
+        })
     return nested
 
 
@@ -430,14 +513,14 @@ def set_plot():
     The function generates a 1x3 grid of subplots intended for plotting:
     - Completeness (left panel)
     - Purity (middle panel)
-    - Foreground failure rate (right panel)
+    - Failure rate (right panel)
 
     Returns
     -------
     ax : ndarray of matplotlib.axes.Axes
         Array of 3 subplot axes: [ax[0], ax[1], ax[2]]
         corresponding to the panels for completeness, purity, and
-        foreground failure rate, respectively.
+        failure rate, respectively.
     """
     fig, ax = plt.subplots(
         1, 3, figsize=(15, 4.5), sharex="row", gridspec_kw={"wspace": 0.35}
@@ -449,7 +532,7 @@ def set_plot():
         ax[i].set_xlabel(r"$z_{\rm l}$", fontsize=15)
     ax[0].set_ylabel(r"Completeness [%]", fontsize=15)
     ax[1].set_ylabel(r"Purity [%]", fontsize=15)
-    ax[2].set_ylabel(r"Foreground failure rate [%]", fontsize=15)
+    ax[2].set_ylabel(r"Failure rate [%]", fontsize=15)
 
     return ax
 
