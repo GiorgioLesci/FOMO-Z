@@ -64,7 +64,7 @@ class Optimize:
             Dictionary of metrics for all tested color–color cuts, inherited from
             the `Measure` object.
         dict_iterative : dict
-            Container for storing results based on an iterative purity threshold.
+            Container for storing results based on an iterative threshold.
         P_iterative_tot : numpy.ndarray
             Total purity values (iterative threshold).
         C_iterative_tot : numpy.ndarray
@@ -83,7 +83,7 @@ class Optimize:
         self.dataset = measure.dataset
         self.z_lim = measure.z_lim
         self.dict_all = measure.dict_all
-        self.purity_initial_threshold = measure.purity_initial_threshold
+        self.initial_threshold = measure.initial_threshold
         self.target_mask = measure.target_mask
         self.is_zlim_lower = measure.is_zlim_lower
         self.additional_rules = measure.additional_rules
@@ -101,24 +101,8 @@ class Optimize:
         r"""
         Optimize the color cut selection for a single redshift threshold `z_l`.
 
-        For the given redshift value, this method searches for the set of
-        cuts that ($\mathcal{P}_{\rm iter}^{\rm ini}$: `start_purity`,
-        $\delta\mathcal{P}_{\rm iter}$: `step`, $z_{\rm l}$: `z_l`,
-        $\mathcal{P}_{\rm min}$: `purity_min`):
-        - Update $\mathcal{P}_{\rm iter}^k = \mathcal{P}_{\rm iter}^{\rm ini} -
-          k\,\delta\mathcal{P}_{\rm iter}$, where $k$ is the iteration index,
-          starting from 0.
-        - For any $(x,y)$ color pair, select the $j$th condition
-          if there exists at least one parameter set $\vec{p}$ that yields
-          $\mathcal{P}_j(z_{\rm l}\,|\,\vec{p},x,y)>\mathcal{P}_{\rm iter}^k$.
-        - Among those selected at step 2, define the optimal $j$th condition
-          in the $(x,y)$ space as the one having $\vec{p}$ parameters that
-          maximize $\mathcal{C}_j(z_{\rm l}\,|\,\vec{p},x,y)$.
-        - Combine the selected conditions in all $(x,y)$ spaces through the
-          $\lor$ logical operator, and evaluate the global purity,
-          $\mathcal{P}(z_{\rm l})$.
-        - Repeat from point 1 as long as
-          $\mathcal{P}(z_{\rm l})>\mathcal{P}_{\rm min}$.
+        See the documentation of `process` for a detailed description of the
+        iterative process implemented in this function.
 
         Parameters
         ----------
@@ -126,12 +110,10 @@ class Optimize:
             A 4-element tuple containing:
             - z_l : float
                 The redshift threshold being processed.
-            - purity_tot_min : float
-                Minimum required total purity for the optimized set of cuts.
-            - start_purity : float
-                Starting value for the individual purity threshold search.
+            - threshold_tot_min : float
+                Minimum required total purity/completeness for the optimized set of cuts.
             - step : float
-                Increment step applied when scanning over purity thresholds.
+                Increment step applied when scanning over purity/completeness thresholds.
             - store_iterations : bool
                 If True, store the iteration steps in self.dict_iterative_steps.
 
@@ -144,13 +126,7 @@ class Optimize:
              performance metrics (purity, completeness, failure rate)
              for the given redshift threshold.
         """
-        z_l, purity_tot_min, start_purity, step, store_iterations = args
-
-        if start_purity <= purity_tot_min:
-            raise ValueError(
-                f"The starting purity, {start_purity},"
-                f" is <= than the global purity threshold, {purity_tot_min}."
-            )
+        z_l, threshold_tot_min, step, store_iterations = args
 
         self.dict_iterative[z_l] = {}
         all_cuts = self.dict_all.get(z_l, {})
@@ -159,8 +135,25 @@ class Optimize:
 
         idx = np.where(self.z_lim == z_l)[0][0]
 
+        # Find the initial threshold
+        start_threshold = 0.0
+
+        for base_pair, comp_dict in all_cuts.items():
+            for comp_pair, conditions in comp_dict.items():
+                for cond_index, cond_data in conditions.items():
+                    candidate_max = cond_data.get("purity", [])
+                    for i, candidate in enumerate(candidate_max):
+                        if candidate > start_threshold:
+                            start_threshold = candidate
+
+        if start_threshold <= threshold_tot_min:
+            raise ValueError(
+                f"At z_l={z_l}, the starting threshold, {start_threshold},"
+                f" is <= than the global threshold, {threshold_tot_min}."
+            )
+
         # Start the iterative process
-        current_thresh = start_purity
+        current_thresh = start_threshold
         best_by_key = {}
         dict_iterative_steps = {}
 
@@ -171,9 +164,9 @@ class Optimize:
         iteration = 0
         while current_thresh > 0:
 
-            if current_thresh <= self.purity_initial_threshold:
+            if current_thresh <= self.initial_threshold:
                 errMsg = "The current threshold in the iterative process"
-                errMsg += " is lower than or equal to the initial purity"
+                errMsg += " is lower than or equal to the initial"
                 errMsg += " threshold set in the Measure class! Lower the latter."
                 raise ValueError(errMsg)
 
@@ -243,43 +236,38 @@ class Optimize:
                                     ):
                                         new_best_by_key[key] = cut
 
-            if new_best_by_key:
+            C_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
+            P_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
+            F_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
 
-                C_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
-                P_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
-                F_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
+            nested = build_nested_dict(new_best_by_key)
 
-                nested = build_nested_dict(new_best_by_key)
+            self._combine_optimal_cuts(
+                self.color_cache,
+                self.target_mask,
+                {z_l: nested},
+                C_tot_new,
+                P_tot_new,
+                F_tot_new,
+            )
 
-                self._combine_optimal_cuts(
-                    self.color_cache,
-                    self.target_mask,
-                    {z_l: nested},
-                    C_tot_new,
-                    P_tot_new,
-                    F_tot_new,
-                )
+            if F_tot_new[idx] == 1.0:
+                err_msg = "No effective selection found:"
+                err_msg += f" the failure rate is 1 at z_l={z_l}."
+                raise ValueError(err_msg)
 
-                if F_tot_new[idx] == 1.0:
-                    err_msg = "No effective selection found:"
-                    err_msg += f" the failure rate is 1 at z_l={z_l}."
-                    raise ValueError(err_msg)
-
-                if P_tot_new[idx] >= purity_tot_min:
-                    best_by_key = new_best_by_key
-                    C_tot = C_tot_new
-                    P_tot = P_tot_new
-                    F_tot = F_tot_new
-                    current_thresh -= step
-
-                    if store_iterations:
-                        dict_iterative_steps[iteration] = nested
-                        iteration += 1
-                else:
-                    break  # below the threshold
-
-            else:
+            if P_tot_new[idx] >= threshold_tot_min:
+                best_by_key = new_best_by_key
+                C_tot = C_tot_new
+                P_tot = P_tot_new
+                F_tot = F_tot_new
                 current_thresh -= step
+
+                if store_iterations:
+                    dict_iterative_steps[iteration] = nested
+                    iteration += 1
+            else:
+                break  # below the threshold
 
         return z_l, best_by_key, dict_iterative_steps
 
@@ -447,8 +435,7 @@ class Optimize:
 
     def process(
         self,
-        purity_tot_min,
-        start_purity=0.999,
+        threshold_tot_min,
         step=0.001,
         k=1,
         do_bootstrap=False,
@@ -459,19 +446,23 @@ class Optimize:
         r"""
         Perform the iterative search for optimal color conditions.
 
-        This method incrementally relaxes the single cut purity threshold in
-        order to identify a set of cuts that maximize total completeness while
-        still satisfying the global purity constraint. The algorithm proceeds
-        iteratively, starting from a strict initial purity threshold and reducing
-        it by `step` until the total purity remains above `purity_tot_min`.
+        Here, either completeness or purity are maximized, depending on what was
+        set in the `Measure` instance.
+        This method incrementally relaxes the single color cut purity (completeness)
+        threshold in order to identify a set of cuts that maximize total completeness
+        (purity) while still satisfying the global threshold. The algorithm
+        proceeds iteratively, starting from a strict initial threshold and reducing
+        it by `step` until the total purity (or completeness) remains above
+        `threshold_tot_min`. The starting threshold corresponds to the maximum
+        purity (or completeness) attained by single color conditions.
         Also bootstrap errors on the metrics are derived.
 
         Constraints
         -----------
         For each redshift value, this method searches for the set of
-        cuts that ($\mathcal{P}_{\rm iter}^{\rm ini}$: `start_purity`,
+        cuts that ($\mathcal{P}_{\rm iter}^{\rm ini}$: initial threshold,
         $\delta\mathcal{P}_{\rm iter}$: `step`, $z_{\rm l}$: `z_l`,
-        $\mathcal{P}_{\rm min}$: `purity_min`):
+        $\mathcal{P}_{\rm min}$: `threshold_tot_min`):
         - Update $\mathcal{P}_{\rm iter}^k = \mathcal{P}_{\rm iter}^{\rm ini} -
           k\,\delta\mathcal{P}_{\rm iter}$, where $k$ is the iteration index,
           starting from 0.
@@ -494,16 +485,13 @@ class Optimize:
 
         Parameters
         ----------
-        purity_tot_min : float or array-like
+        threshold_tot_min : float or array-like
             Required minimum global purity across all redshift bins. If float,
             the same threshold is applied at any limiting redshift point.
             If array-like, a different threshold is used at each limiting
             redshift.
-        start_purity : float, optional
-            Initial strict threshold for the individual cut purities.
-            Must be greater than `purity_tot_min`. Default is 0.999.
         step : float, optional
-            Increment by which the single-cut purity threshold is reduced
+            Increment by which the single-cut threshold is reduced
             during the search. Default is 0.001.
         cpu_number : int or None, optional
             Number of CPU cores to use for parallel processing. If None,
@@ -536,10 +524,10 @@ class Optimize:
             - ``self.F_iterative_tot`` : numpy.ndarray
                 Total failure rate across all bins.
         """
-        if isinstance(purity_tot_min, float):
-            purity_tot_min = [purity_tot_min] * len(self.z_lim)
+        if isinstance(threshold_tot_min, float):
+            threshold_tot_min = [threshold_tot_min] * len(self.z_lim)
 
-        print("\nRunning iterative purity threshold search...")
+        print("\nRunning iterative threshold search...")
         start_time = time.time()
 
         # Pre-compute colors
@@ -561,8 +549,7 @@ class Optimize:
         args_list = [
             (
                 z_l,
-                purity_tot_min[np.where(self.z_lim == z_l)[0][0]],
-                start_purity,
+                threshold_tot_min[np.where(self.z_lim == z_l)[0][0]],
                 step,
                 store_iterations,
             )
@@ -600,7 +587,7 @@ class Optimize:
 
         #
         restructure_dict(
-            self.dict_iterative, self.bands, self.colors, self.z_lim, purity_tot_min
+            self.dict_iterative, self.bands, self.colors, self.z_lim, threshold_tot_min
         )
         interpolate_parameters(self.dict_iterative, k=k)
 

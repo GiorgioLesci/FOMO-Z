@@ -92,7 +92,7 @@ class Measure:
         missing_data=-99,
         s_samples=np.linspace(0.3, 1.7, 30),
         c_precision=0.05,
-        purity_initial_threshold=0.9,
+        initial_threshold=0.9,
     ):
         """
         Measure the metrics of color conditions.
@@ -139,10 +139,10 @@ class Measure:
             Precision of the c parameter sampling. Smaller values increase accuracy
             but significantly increase the number of operations. If you halve `c_precision`,
             expect about 2 times more c steps per s (also runtime and RAM roughly double).
-        purity_initial_threshold : float, default=0.9
-            Initial threshold on purity. Color conditions with purity lower than
-            this value are not stored. This is useful to avoid filling memory
-            with unused information.
+        initial_threshold : float, default=0.9
+            Initial threshold on purity or completeness. Color conditions not
+            satisfying this threshold are not stored. This is useful to avoid filling
+            memory with unused information.
         """
         assert isinstance(
             dataset, pd.DataFrame
@@ -200,7 +200,9 @@ class Measure:
         self.s_samples = s_samples.astype(np.float32)
         self.c_precision = float(c_precision)
         self.dict_all = {}
-        self.purity_initial_threshold = purity_initial_threshold
+        if initial_threshold <= 0.0:
+            raise ValueError("initial_threshold must be strictly larger than 0.")
+        self.initial_threshold = initial_threshold
 
         # Check the format of the additional rules
         if additional_rules is not None:
@@ -308,10 +310,12 @@ class Measure:
                 cross_shared_arrays[(mag3, mag4)] = mp.Array("f", color2)
 
         # Loop over limiting redshift points
-        for i, z_l in enumerate(tqdm(
-            self.z_lim,
-            desc=f"Processing the color-color spaces that include ({mag1}-{mag2})",
-        )):
+        for i, z_l in enumerate(
+            tqdm(
+                self.z_lim,
+                desc=f"Processing the color-color spaces that include ({mag1}-{mag2})",
+            )
+        ):
 
             shared_target_mask = mp.Array("b", self.target_mask[i].astype(bool))
 
@@ -352,12 +356,12 @@ class Measure:
             f_low_up = fp_up / np.maximum(fp_up + tn_up, 1e-12)
             f_low_low = fp_low / np.maximum(fp_low + tn_low, 1e-12)
             mask_up = (
-                (purity_up > self.purity_initial_threshold)
+                (purity_up > self.initial_threshold)
                 & (compl_up > 0.0)
                 & (f_low_up < 1.0)
             )
             mask_low = (
-                (purity_low > self.purity_initial_threshold)
+                (purity_low > self.initial_threshold)
                 & (compl_low > 0.0)
                 & (f_low_low < 1.0)
             )
@@ -422,7 +426,7 @@ class Measure:
                     compl = tp_all / np.maximum(tp_all + fn_all, 1e-12)
                     f_low = fp_all / np.maximum(fp_all + tn_all, 1e-12)
                     mask_per_condition = (
-                        (purity > self.purity_initial_threshold)
+                        (purity > self.initial_threshold)
                         & (compl > 0.0)
                         & (f_low < 1.0)
                     )

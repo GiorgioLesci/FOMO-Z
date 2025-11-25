@@ -47,7 +47,7 @@ def reference_measure_instance(reference_dataset):
     bands = ['g', 'r', 'i']
     z_lim = [0.5, 0.6]
     
-    measure = Measure(reference_dataset, bands, z_lim, purity_initial_threshold=0.8)
+    measure = Measure(reference_dataset, bands, z_lim, initial_threshold=0.8)
     measure.process(cpu_number=1)
     
     return measure
@@ -366,10 +366,9 @@ class TestOptimizeProcess:
         optimize = reference_optimize_instance
 
         # Run process (iterative method)
-        purity_tot_min = 0.9
+        threshold_tot_min = 0.9
         optimize.process(
-            purity_tot_min=purity_tot_min,
-            start_purity=0.999,
+            threshold_tot_min=threshold_tot_min,
             step=0.0001,
             cpu_number=1,
             k=3
@@ -404,10 +403,9 @@ class TestSelectGalaxy:
     def test_process(self, reference_dataset, reference_optimize_instance):
         """Test process method with reference data and check the number of selected objects."""
         optimize = reference_optimize_instance
-        purity_tot_min = 0.9
+        threshold_tot_min = 0.9
         optimize.process(
-            purity_tot_min=purity_tot_min,
-            start_purity=0.999,
+            threshold_tot_min=threshold_tot_min,
             step=0.0001,
             cpu_number=1,
             k=3

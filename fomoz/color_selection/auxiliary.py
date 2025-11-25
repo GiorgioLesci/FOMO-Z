@@ -294,7 +294,7 @@ def build_nested_dict(cuts):
         containing cut parameters. Each value dictionary must contain:
         - "c" : float
             Intercept parameter of the cut
-        - "completeness" : float  
+        - "completeness" : float
             Completeness value of the cut
         - "s" : float, optional
             Slope parameter (present only for cross-color cuts)
@@ -318,12 +318,14 @@ def build_nested_dict(cuts):
     nested = {}
     for key, cut in cuts.items():
         base_pair, comp_pair, cond_index = key
-        nested.setdefault(base_pair, {}).setdefault(comp_pair, []).append({
-            "condition_index": cond_index,
-            "c": cut["c"],
-            "s": cut.get("s"),  # None for simple cuts
-            "completeness": cut["completeness"]
-        })
+        nested.setdefault(base_pair, {}).setdefault(comp_pair, []).append(
+            {
+                "condition_index": cond_index,
+                "c": cut["c"],
+                "s": cut.get("s"),  # None for simple cuts
+                "completeness": cut["completeness"],
+            }
+        )
     return nested
 
 
