@@ -143,7 +143,7 @@ class TestRestructureDict:
         z_l = [1.0]
         purity_min = [0.8]
         
-        restructure_dict(input_dict, bands, colors, z_l, purity_min)
+        restructure_dict(input_dict, bands, colors, z_l, "purity", purity_min)
         
         assert "g-r>c" in input_dict
         assert "g-r<c" in input_dict

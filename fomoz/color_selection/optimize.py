@@ -645,7 +645,12 @@ class Optimize:
 
         #
         restructure_dict(
-            self.dict_iterative, self.bands, self.colors, self.z_lim, threshold_tot_min
+            self.dict_iterative,
+            self.bands,
+            self.colors,
+            self.z_lim,
+            self.thresholded_quantity,
+            threshold_tot_min,
         )
         interpolate_parameters(self.dict_iterative, k=k)
 
