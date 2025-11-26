@@ -80,7 +80,7 @@ class SelectGalaxy:
                 knots[0] -= tol
                 knots[-1] += tol
 
-                self.dict[key]["c_interp"] = BSpline(
+                entry["c_interp"] = BSpline(
                     knots,
                     entry["c_coefficients"],
                     entry["order"],
@@ -89,7 +89,7 @@ class SelectGalaxy:
 
                 # reconstruct s interpolator if present
                 if all(k in entry for k in ("knots", "order", "s_coefficients")):
-                    self.dict[key]["s_interp"] = BSpline(
+                    entry["s_interp"] = BSpline(
                         knots,
                         entry["s_coefficients"],
                         entry["order"],
@@ -126,24 +126,24 @@ class SelectGalaxy:
         local_dict = dict(mags)
         local_dict["c"] = None
         local_dict["s"] = None
-        for expr in self.dict.keys():
+        for expr, expr_data in self.dict.items():
 
             if expr == "metadata":
                 continue
 
             if min(z_l_points) - 1.0e-6 <= z_l <= max(z_l_points) + 1.0e-6:
                 # set c
-                if "c_interp" in self.dict[expr]:
-                    local_dict["c"] = self.dict[expr]["c_interp"](z_l)
+                if "c_interp" in expr_data:
+                    local_dict["c"] = expr_data["c_interp"](z_l)
                 else:
-                    local_dict["c"] = self.dict[expr]["c_optimal"][0]
+                    local_dict["c"] = expr_data["c_optimal"][0]
 
                 # set s
-                if "s_optimal" in self.dict[expr]:
-                    if "s_interp" in self.dict[expr]:
-                        local_dict["s"] = self.dict[expr]["s_interp"](z_l)
+                if "s_optimal" in expr_data:
+                    if "s_interp" in expr_data:
+                        local_dict["s"] = expr_data["s_interp"](z_l)
                     else:
-                        local_dict["s"] = self.dict[expr]["s_optimal"][0]
+                        local_dict["s"] = expr_data["s_optimal"][0]
 
                 # evaluate the mask
                 mask |= ne.evaluate(expr, local_dict=local_dict)
