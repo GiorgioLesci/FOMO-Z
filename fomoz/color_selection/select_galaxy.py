@@ -96,9 +96,17 @@ class SelectGalaxy:
                         extrapolate=False,
                     )
 
-    def _select_objects(self, z_l, mags):
+    def _select_objects(self, z_lim, mags):
         """
         Select objects at a given redshift threshold.
+        - If calibrated limiting redshifts are lower limits:
+          - if `z_lim` is lower than the minimum limiting redshift, `z_min`,
+            the selection is applied as if `z_lim` equals `z_min`;
+          - if `z_lim` is larger than the maximum limiting redshift, `z_max`,
+            no selection is applied.
+        - If calibrated limiting redshifts are upper limits:
+          - if `z_lim` > `z_max`, then `z_lim` = `z_max` is imposed;
+          - if `z_lim` < `z_min`, then no selection is applied.
 
         For each cut expression in ``self.dict``, this method:
         1. Interpolates (or uses fixed) cut parameters ``c`` and ``s``
@@ -109,7 +117,7 @@ class SelectGalaxy:
 
         Parameters
         ----------
-        z_l : float
+        z_lim : float
             Redshift threshold at which the cuts should be evaluated.
         mags : dict
             Dictionary mapping magnitude names
@@ -122,6 +130,15 @@ class SelectGalaxy:
             that the object satisfies at least one of the color conditions.
         """
         z_l_points = self.dict["metadata"]["z_l"]
+
+        z_l = z_lim
+        if self.dict["metadata"]["z_l_is_lower_limit"] and z_lim < min(z_l_points):
+            z_l = min(z_l_points)
+        elif not self.dict["metadata"]["z_l_is_lower_limit"] and z_lim > max(
+            z_l_points
+        ):
+            z_l = max(z_l_points)
+
         mask = np.full(len(mags[list(mags.keys())[0]]), False)
         local_dict = dict(mags)
         local_dict["c"] = None
@@ -157,6 +174,14 @@ class SelectGalaxy:
         For each redshift in ``z_lim``, this method evaluates the stored
         color conditions based on the magnitudes in ``dataset`` and produces
         a boolean mask. All results are stored in ``self.mask``.
+        - If calibrated limiting redshifts are lower limits:
+          - if `z_lim` is lower than the minimum limiting redshift, `z_min`,
+            the selection is applied as if `z_lim` equals `z_min`;
+          - if `z_lim` is larger than the maximum limiting redshift, `z_max`,
+            no selection is applied.
+        - If calibrated limiting redshifts are upper limits:
+          - if `z_lim` > `z_max`, then `z_lim` = `z_max` is imposed;
+          - if `z_lim` < `z_min`, then no selection is applied.
 
         Parameters
         ----------

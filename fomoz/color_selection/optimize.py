@@ -651,6 +651,7 @@ class Optimize:
             self.z_lim,
             self.thresholded_quantity,
             threshold_tot_min,
+            is_zlim_lower=self.is_zlim_lower,
         )
         interpolate_parameters(self.dict_iterative, k=k)
 
