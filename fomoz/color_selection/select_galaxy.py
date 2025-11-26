@@ -167,7 +167,7 @@ class SelectGalaxy:
 
         return mask
 
-    def process(self, z_lim, dataset):
+    def process(self, z_lim, dataset, missing_data=-99):
         """
         Apply optimal color selections to a dataset.
 
@@ -191,6 +191,9 @@ class SelectGalaxy:
             Table containing the photometric dataset. Must have columns
             corresponding to the magnitude names stored in
             ``self.dict['metadata']['bands']``.
+        missing_data : int or float, default=-99
+            Value used in the dataset to denote missing entries. These are replaced
+            with NaN for consistency.
 
         Returns
         -------
@@ -198,6 +201,7 @@ class SelectGalaxy:
             Updates ``self.mask`` with a list of boolean arrays, one for each
             redshift in ``z_lim``.
         """
+        # First checks
         if not self.dict:
             raise ValueError(
                 "A color cut dictionary must be set",
@@ -209,11 +213,27 @@ class SelectGalaxy:
         else:
             self.z_lim = z_lim
 
+        required_bands = self.dict["metadata"]["bands"]
+        missing_bands = [band for band in required_bands if band not in dataset.columns]
+        if missing_bands:
+            raise ValueError(
+                f"Dataset is missing required bands: {missing_bands}. "
+                f"Available columns: {list(dataset.columns)}. If you want "
+                "to use this selection without a given band, create columns "
+                "in the source dataset for each missing band. Fill such columns "
+                "with magnitude missing values (see the documentation of this method)."
+            )
+
+        # Handle missing data
+        for band in required_bands:
+            dataset[band] = dataset[band].replace(missing_data, np.nan)
+
         # Magnitude mapping
         mags = {
             band: dataset[band].to_numpy() for band in self.dict["metadata"]["bands"]
         }
 
+        # Apply the selection
         self.mask = []
         for z_l in self.z_lim:
             self.mask.append(self._select_objects(float(z_l), mags))
