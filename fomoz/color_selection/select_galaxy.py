@@ -129,25 +129,28 @@ class SelectGalaxy:
             Boolean mask array of shape (n_objects,), where True indicates
             that the object satisfies at least one of the color conditions.
         """
-        z_l_points = self.dict["metadata"]["z_l"]
-
-        z_l = z_lim
-        if self.dict["metadata"]["z_l_is_lower_limit"] and z_lim < min(z_l_points):
-            z_l = min(z_l_points)
-        elif not self.dict["metadata"]["z_l_is_lower_limit"] and z_lim > max(
-            z_l_points
-        ):
-            z_l = max(z_l_points)
-
         mask = np.full(len(mags[list(mags.keys())[0]]), False)
         local_dict = dict(mags)
         local_dict["c"] = None
         local_dict["s"] = None
         for expr, expr_data in self.dict.items():
 
+            # skip meta data
             if expr == "metadata":
                 continue
 
+            # adjust z_l
+            z_l_points = expr_data["knots"]
+
+            z_l = z_lim
+            if self.dict["metadata"]["z_l_is_lower_limit"] and z_lim < min(z_l_points):
+                z_l = min(z_l_points)
+            elif not self.dict["metadata"]["z_l_is_lower_limit"] and z_lim > max(
+                z_l_points
+            ):
+                z_l = max(z_l_points)
+
+            # apply the selection
             if min(z_l_points) - 1.0e-6 <= z_l <= max(z_l_points) + 1.0e-6:
                 # set c
                 if "c_interp" in expr_data:

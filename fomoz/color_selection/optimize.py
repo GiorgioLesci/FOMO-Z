@@ -700,9 +700,7 @@ class Optimize:
 
         # Additional metadata
         dictionary["metadata"]["reference_sample"] = reference_sample_name
-        dictionary["metadata"]["notes"] = (
-            "Produced with the FOMO-Z Python code. " + notes
-        )
+        dictionary["metadata"]["notes"] = "Produced with the FOMO-Z code. " + notes
 
         # Write
         os.makedirs(output_dir, exist_ok=True)

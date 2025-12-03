@@ -192,7 +192,7 @@ class TestInterpolateParameters:
         assert "c" not in input_dict["g-r>c"]  # Old key should be gone
         assert "c_optimal" in input_dict["g-r>c"]  # New key should exist
         assert "c_coefficients" not in input_dict["g-r>c"]  # No interpolation for single point
-        assert "knots" not in input_dict["g-r>c"]
+        assert "knots" in input_dict["g-r>c"]
         assert "z_l" not in input_dict["g-r>c"]  # Should be removed
 
 

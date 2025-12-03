@@ -486,7 +486,8 @@ def interpolate_parameters(input_dict, k=1):
         # skip if there's only 1 point
         n_points = len(input_dict[key]["c_optimal"])
         if n_points <= 1:
-            del input_dict[key]["z_l"]
+            input_dict[key]["knots"] = input_dict[key].pop("z_l")
+            # del input_dict[key]["z_l"]
             continue
 
         # adjust spline degree per case
