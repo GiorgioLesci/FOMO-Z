@@ -151,7 +151,12 @@ class SelectGalaxy:
                 z_l = max(z_l_points)
 
             # apply the selection
-            if min(z_l_points) - 1.0e-6 <= z_l <= max(z_l_points) + 1.0e-6:
+            condition = (
+                z_l <= max(z_l_points) + 1.0e-6
+                if self.dict["metadata"]["z_l_is_lower_limit"]
+                else z_l >= min(z_l_points) - 1.0e-6
+            )
+            if condition:
                 # set c
                 if "c_interp" in expr_data:
                     local_dict["c"] = expr_data["c_interp"](z_l)

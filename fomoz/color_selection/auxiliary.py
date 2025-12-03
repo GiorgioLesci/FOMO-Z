@@ -629,3 +629,7 @@ def float_representer(dumper, value):
     else:
         text = f"{value:.6g}"
         return dumper.represent_scalar("tag:yaml.org,2002:float", text)
+
+
+def inline_list_representer(dumper, data):
+    return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)

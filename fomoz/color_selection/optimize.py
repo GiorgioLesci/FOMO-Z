@@ -25,15 +25,19 @@ from .auxiliary import (
     compute_metrics,
     build_nested_dict,
     float_representer,
+    inline_list_representer,
     interpolate_parameters,
     make_yaml_serializable,
     restructure_dict,
     set_plot,
 )
 
-# Register the custom float representer for both default and safe dumpers
+# Register the custom representers for both default and safe dumpers
 yaml.add_representer(float, float_representer)
 yaml.add_representer(float, float_representer, Dumper=yaml.SafeDumper)
+
+yaml.add_representer(list, inline_list_representer)
+yaml.add_representer(list, inline_list_representer, Dumper=yaml.SafeDumper)
 
 
 class Optimize:
