@@ -69,10 +69,10 @@ class SelectGalaxy:
             if key == "metadata":
                 continue
 
-            # reconstruct c interpolator if present
             entry["knots"] = np.array(entry["knots"], dtype=np.float32).round(6)
 
-            if all(k in entry for k in ("knots", "order", "c_coefficients")):
+            # reconstruct c interpolator if present
+            if "order" in entry:
 
                 entry["c_interp"] = BSpline(
                     entry["knots"],
@@ -82,7 +82,7 @@ class SelectGalaxy:
                 )
 
                 # reconstruct s interpolator if present
-                if all(k in entry for k in ("knots", "order", "s_coefficients")):
+                if "s_coefficients" in entry:
                     entry["s_interp"] = BSpline(
                         entry["knots"],
                         entry["s_coefficients"],
@@ -155,14 +155,13 @@ class SelectGalaxy:
                 if "c_interp" in expr_data:
                     local_dict["c"] = expr_data["c_interp"](z_l)
                 else:
-                    local_dict["c"] = expr_data["c_optimal"]
+                    local_dict["c"] = expr_data["c_coefficients"]
 
                 # set s
-                if "s_optimal" in expr_data:
-                    if "s_interp" in expr_data:
-                        local_dict["s"] = expr_data["s_interp"](z_l)
-                    else:
-                        local_dict["s"] = expr_data["s_optimal"]
+                if "s_interp" in expr_data:
+                    local_dict["s"] = expr_data["s_interp"](z_l)
+                elif "s_coefficients" in expr_data:
+                    local_dict["s"] = expr_data["s_coefficients"]
 
                 # evaluate the mask
                 mask |= ne.evaluate(expr, local_dict=local_dict)

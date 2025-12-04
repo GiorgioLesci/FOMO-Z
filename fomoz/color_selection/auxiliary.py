@@ -493,10 +493,8 @@ def interpolate_parameters(input_dict, k=1):
     -------
     None
         Updates ``input_dict`` in place by renaming ``"c"``
-        as ``"c_optimal"`` and ``"s"`` as ``"s_optimal"``,
-        and adding:
-        - ``"knots"``, ``"order"``, ``"c_coefficients"``
-        - ``"s_coefficients"`` (if ``s`` is present)
+        as ``"c_coefficients"`` and ``"s"`` as ``"s_coefficients"``,
+        and adding ``"knots"`` and ``"order"``
     """
     for key in input_dict.keys():
 
@@ -505,17 +503,17 @@ def interpolate_parameters(input_dict, k=1):
             continue
 
         # rename c and s keys
-        input_dict[key]["c_optimal"] = input_dict[key].pop("c")
+        input_dict[key]["c_coefficients"] = input_dict[key].pop("c")
         if "s" in input_dict[key]:
-            input_dict[key]["s_optimal"] = input_dict[key].pop("s")
+            input_dict[key]["s_coefficients"] = input_dict[key].pop("s")
 
         # skip if there's only 1 point
-        n_points = len(input_dict[key]["c_optimal"])
+        n_points = len(input_dict[key]["c_coefficients"])
         if n_points <= 1:
             input_dict[key]["knots"] = input_dict[key].pop("z_l")
-            input_dict[key]["c_optimal"] = input_dict[key]["c_optimal"][0]
-            if "s" in input_dict[key]:
-                input_dict[key]["s_optimal"] = input_dict[key]["s_optimal"][0]
+            input_dict[key]["c_coefficients"] = input_dict[key]["c_coefficients"][0]
+            if "s_coefficients" in input_dict[key]:
+                input_dict[key]["s_coefficients"] = input_dict[key]["s_coefficients"][0]
             continue
 
         # adjust spline degree per case
@@ -524,7 +522,7 @@ def interpolate_parameters(input_dict, k=1):
         # Interpolate c
         c_spline = UnivariateSpline(
             input_dict[key]["z_l"],
-            input_dict[key]["c_optimal"],
+            input_dict[key]["c_coefficients"],
             s=0.0,
             k=k_eff,
             ext=2,
@@ -535,10 +533,10 @@ def interpolate_parameters(input_dict, k=1):
         input_dict[key]["c_coefficients"] = list(c)
 
         # Interpolate s (if present)
-        if "s_optimal" in input_dict[key]:
+        if "s_coefficients" in input_dict[key]:
             s_spline = UnivariateSpline(
                 input_dict[key]["z_l"],
-                input_dict[key]["s_optimal"],
+                input_dict[key]["s_coefficients"],
                 s=0.0,
                 k=k_eff,
                 ext=2,
@@ -546,11 +544,8 @@ def interpolate_parameters(input_dict, k=1):
             t, c, order = s_spline._eval_args
             input_dict[key]["s_coefficients"] = c
 
-        # After all the interpolation is done, remove z_l, c_optimal, and s_optimal
+        # After all the interpolation is done, remove z_l
         del input_dict[key]["z_l"]
-        input_dict[key]["c_optimal"] = []
-        if "s_optimal" in input_dict[key]:
-            input_dict[key]["s_optimal"] = []
 
 
 def set_plot():
