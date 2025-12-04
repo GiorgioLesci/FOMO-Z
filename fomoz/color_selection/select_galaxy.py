@@ -15,6 +15,7 @@ import numexpr as ne
 import numpy as np
 import yaml
 from scipy.interpolate import BSpline
+from .auxiliary import set_input_variable_precision
 
 
 class SelectGalaxy:
@@ -43,7 +44,7 @@ class SelectGalaxy:
         self.dict = {}
         self.mask = []
 
-    def _reconstruct_interpolators(self, tol=1e-6):
+    def _reconstruct_interpolators(self):
         """
         Reconstruct interpolator objects.
 
@@ -55,12 +56,6 @@ class SelectGalaxy:
               The interpolator object for the intercept parameter.
           - ``s_interp`` : `scipy.interpolate.BSpline`, optional
               The interpolator object for the slope parameter (if present).
-
-        Parameters
-        ----------
-        tol : float, optional
-            Small tolerance applied to the interpolation domain boundaries
-            to safely allow evaluation near edges (default: 1e-6).
 
         Returns
         -------
@@ -75,13 +70,12 @@ class SelectGalaxy:
                 continue
 
             # reconstruct c interpolator
+            entry["knots"] = np.array(entry["knots"], dtype=np.float32).round(6)
+
             if all(k in entry for k in ("knots", "order", "c_coefficients")):
-                knots = np.array(entry["knots"], dtype=float)
-                knots[0] -= tol
-                knots[-1] += tol
 
                 entry["c_interp"] = BSpline(
-                    knots,
+                    entry["knots"],
                     entry["c_coefficients"],
                     entry["order"],
                     extrapolate=False,
@@ -90,7 +84,7 @@ class SelectGalaxy:
                 # reconstruct s interpolator if present
                 if all(k in entry for k in ("knots", "order", "s_coefficients")):
                     entry["s_interp"] = BSpline(
-                        knots,
+                        entry["knots"],
                         entry["s_coefficients"],
                         entry["order"],
                         extrapolate=False,
@@ -152,9 +146,9 @@ class SelectGalaxy:
 
             # apply the selection
             condition = (
-                z_l <= max(z_l_points) + 1.0e-6
+                z_l <= max(z_l_points)
                 if self.dict["metadata"]["z_l_is_lower_limit"]
-                else z_l >= min(z_l_points) - 1.0e-6
+                else z_l >= min(z_l_points)
             )
             if condition:
                 # set c
@@ -194,7 +188,7 @@ class SelectGalaxy:
         Parameters
         ----------
         z_lim : array-like or float
-            Redshift threshold(s) at which the cuts are be applied.
+            Redshift threshold(s) at which the cuts are applied.
         dataset : pandas.DataFrame
             Table containing the photometric dataset. Must have columns
             corresponding to the magnitude names stored in
@@ -216,10 +210,7 @@ class SelectGalaxy:
                 "before the call of this function.",
             )
 
-        if isinstance(z_lim, (float, int)):
-            self.z_lim = np.array([float(z_lim)])
-        else:
-            self.z_lim = z_lim
+        self.z_lim = set_input_variable_precision(z_lim)
 
         required_bands = self.dict["metadata"]["bands"]
         missing_bands = [band for band in required_bands if band not in dataset.columns]
@@ -244,7 +235,7 @@ class SelectGalaxy:
         # Apply the selection
         self.mask = []
         for z_l in self.z_lim:
-            self.mask.append(self._select_objects(float(z_l), mags))
+            self.mask.append(self._select_objects(z_l, mags))
 
     def load_parameters(self, optimize):
         """

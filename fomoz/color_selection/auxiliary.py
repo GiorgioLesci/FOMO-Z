@@ -14,6 +14,32 @@ import numpy as np
 from scipy.interpolate import UnivariateSpline
 
 
+def set_input_variable_precision(var, prec=6):
+    """
+    Convert input variable to float32 numpy array and apply precision rounding.
+    
+    Parameters
+    ----------
+    var : scalar, list, or numpy array
+        Input variable to convert and round.
+    prec : float, optional
+        Precision for rounding (default: 1.e-6).
+        
+    Returns
+    -------
+    numpy.ndarray
+        float32 array with values rounded to specified precision.
+    """
+    if isinstance(var, (float, int)):
+        return np.array([float(var)], dtype=np.float32).round(prec)
+    elif isinstance(var, list):
+        return np.array(var, dtype=np.float32).round(prec)
+    elif isinstance(var, np.ndarray):
+        return var.astype(np.float32).round(prec)
+    else:
+        return np.asarray(var, dtype=np.float32).round(prec)
+
+
 def get_target_mask(dataset, z_lim, is_zlim_lower, additional_rules):
     """
     Create a mask identifying galaxies that satisfy a set of conditions.

@@ -350,7 +350,7 @@ class TestMeasureProcess:
         measure = Measure(reference_dataset, bands, z_l)
         measure.process(cpu_number=1)
 
-        assert 0.3 in measure.dict_all
+        assert measure.z_lim[0] in measure.dict_all
         assert len(measure.dict_all) == 1
 
 
@@ -422,8 +422,9 @@ class TestSelectGalaxy:
         mask = sel.mask
         
         # Check the number of selected objects
-        expected_N = np.zeros(len(mask))
-        expected_N = [4389, 4353, 4327, 4302, 4277, 4246, 4213, 4186, 4155, 4122]
+        expected_N = [4389, 4353, 4327, 4302, 4277, 4246, 4213, 4186, 4155, 4122, 4093]
+
+        assert len(expected_N) == len(mask)
 
         for i in range(len(zl_new)):
             assert np.allclose(np.sum(mask[i]), expected_N[i]), \

@@ -15,6 +15,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from .auxiliary import (
+    set_input_variable_precision,
     get_target_mask,
     compute_for_cross,
     compute_for_simple,
@@ -188,12 +189,7 @@ class Measure:
         self.bands = bands
         self.colors = list(combinations(self.bands, 2))
 
-        if isinstance(z_lim, (float, int)):
-            self.z_lim = np.array([float(z_lim)])
-        elif isinstance(z_lim, list):
-            self.z_lim = np.array(z_lim)
-        else:
-            self.z_lim = z_lim
+        self.z_lim = set_input_variable_precision(z_lim)
 
         for z_l in self.z_lim:
             if z_l < 0:
