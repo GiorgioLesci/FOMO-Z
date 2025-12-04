@@ -503,8 +503,10 @@ def interpolate_parameters(input_dict, k=1):
             continue
 
         # rename c and s keys
+        input_dict[key]["c_optimal"] = input_dict[key]["c"]
         input_dict[key]["c_coefficients"] = input_dict[key].pop("c")
         if "s" in input_dict[key]:
+            input_dict[key]["s_optimal"] = input_dict[key]["s"]
             input_dict[key]["s_coefficients"] = input_dict[key].pop("s")
 
         # skip if there's only 1 point

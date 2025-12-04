@@ -698,7 +698,13 @@ class Optimize:
         if np.sum(self.C_iterative_tot) == 0.0:
             raise ValueError("No calibration is available! Run process() first.")
 
-        dictionary = self.dict_iterative
+        dictionary = copy.deepcopy(self.dict_iterative)
+
+        # Remove unnecessary keys
+        for key in dictionary:
+            if key != "metadata":
+                dictionary[key].pop("c_optimal", None)
+                dictionary[key].pop("s_optimal", None)
 
         # Make the dictionary yaml-serializable
         dictionary = make_yaml_serializable(dictionary)
