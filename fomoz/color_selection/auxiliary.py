@@ -549,7 +549,8 @@ def interpolate_parameters(input_dict, k=1):
         # After all the interpolation is done, remove z_l, c_optimal, and s_optimal
         del input_dict[key]["z_l"]
         input_dict[key]["c_optimal"] = []
-        input_dict[key]["s_optimal"] = []
+        if "s_optimal" in input_dict[key]:
+            input_dict[key]["s_optimal"] = []
 
 
 def set_plot():
