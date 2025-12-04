@@ -679,13 +679,14 @@ class Optimize:
             Path to the directory where the file will be saved.
         file_name : str
             Base name of the output file (without extension).
+            All file names start with "FOMO-Z_".
         reference_sample_name : str, optional
             Name of the reference sample, stored in the
             ``reference_sample`` entry of the dictionary.
         notes : str, optional
             Additional notes entering the metadata.
         write_also_metrics : bool, optional
-            If True, write the `{file_name}_metrics.csv` file containing
+            If True, write the `FOMO-Z_{file_name}_metrics.csv` file containing
             purity, completeness, and failure rate
             as a function of limiting redshift, and their errors.
 
@@ -708,7 +709,7 @@ class Optimize:
 
         # Write
         os.makedirs(output_dir, exist_ok=True)
-        file_path = os.path.join(output_dir, f"{file_name}.yaml")
+        file_path = os.path.join(output_dir, f"FOMO-Z_{file_name}.yaml")
 
         with open(file_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(dictionary, f, sort_keys=False, allow_unicode=True)
@@ -727,7 +728,7 @@ class Optimize:
             }
 
             metrics_df = pd.DataFrame(metrics_data)
-            file_path = os.path.join(output_dir, f"{file_name}_metrics.csv")
+            file_path = os.path.join(output_dir, f"FOMO-Z_{file_name}_metrics.csv")
             metrics_df.to_csv(file_path, index=False)
 
     def plot(self, loclegend="upper right"):
