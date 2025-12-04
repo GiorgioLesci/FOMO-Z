@@ -169,7 +169,6 @@ class TestInterpolateParameters:
         
         # Check that keys were renamed
         assert "c" not in input_dict["g-r>c"]  # Old key should be gone
-        assert "c_optimal" in input_dict["g-r>c"]  # New key should exist
         
         # Check that interpolation parameters were added
         assert "c_coefficients" in input_dict["g-r>c"]

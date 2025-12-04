@@ -513,6 +513,9 @@ def interpolate_parameters(input_dict, k=1):
         n_points = len(input_dict[key]["c_optimal"])
         if n_points <= 1:
             input_dict[key]["knots"] = input_dict[key].pop("z_l")
+            input_dict[key]["c_optimal"] = input_dict[key]["c_optimal"][0]
+            if "s" in input_dict[key]:
+                input_dict[key]["s_optimal"] = input_dict[key]["s_optimal"][0]
             continue
 
         # adjust spline degree per case
@@ -543,8 +546,10 @@ def interpolate_parameters(input_dict, k=1):
             t, c, order = s_spline._eval_args
             input_dict[key]["s_coefficients"] = c
 
-        # After all the interpolation is done, remove z_l
+        # After all the interpolation is done, remove z_l, c_optimal, and s_optimal
         del input_dict[key]["z_l"]
+        input_dict[key]["c_optimal"] = []
+        input_dict[key]["s_optimal"] = []
 
 
 def set_plot():

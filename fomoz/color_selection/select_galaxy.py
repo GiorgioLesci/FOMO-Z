@@ -69,7 +69,7 @@ class SelectGalaxy:
             if key == "metadata":
                 continue
 
-            # reconstruct c interpolator
+            # reconstruct c interpolator if present
             entry["knots"] = np.array(entry["knots"], dtype=np.float32).round(6)
 
             if all(k in entry for k in ("knots", "order", "c_coefficients")):
@@ -155,14 +155,14 @@ class SelectGalaxy:
                 if "c_interp" in expr_data:
                     local_dict["c"] = expr_data["c_interp"](z_l)
                 else:
-                    local_dict["c"] = expr_data["c_optimal"][0]
+                    local_dict["c"] = expr_data["c_optimal"]
 
                 # set s
                 if "s_optimal" in expr_data:
                     if "s_interp" in expr_data:
                         local_dict["s"] = expr_data["s_interp"](z_l)
                     else:
-                        local_dict["s"] = expr_data["s_optimal"][0]
+                        local_dict["s"] = expr_data["s_optimal"]
 
                 # evaluate the mask
                 mask |= ne.evaluate(expr, local_dict=local_dict)
