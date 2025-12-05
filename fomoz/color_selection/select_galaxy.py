@@ -63,11 +63,22 @@ class SelectGalaxy:
             Updates ``self.dict`` in place with the loaded dictionary and
             reconstructed interpolator objects.
         """
+        bands = self.dict["metadata"]["bands"]
+        if "c" in bands or "s" in bands:
+            raise ValueError("Band keys cannot equal 'c' or 's'.")
+
         for key, entry in self.dict.items():
 
             # skip metadata
             if key == "metadata":
                 continue
+
+            if "knots" not in entry:
+                raise ValueError(f"Expression '{key}' missing 'knots'")
+            if "c_coefficients" not in entry:
+                raise ValueError(f"Expression '{key}' missing 'c_coefficients'")
+            if "s*" in key and "s_coefficients" not in entry:
+                raise ValueError(f"Expression '{key}' missing 's_coefficients'")
 
             entry["knots"] = np.array(entry["knots"], dtype=np.float32).round(6)
 
