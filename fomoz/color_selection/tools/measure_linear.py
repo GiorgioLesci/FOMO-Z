@@ -1,7 +1,7 @@
 """
-Measure color cut performance.
+Auxiliary class to measure linear color cut performance.
 
-This module provides the computation of color condition metrics,
+This module provides the computation of linear color condition metrics,
 given any limit on galaxy properties and color condition parameter values.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
@@ -13,13 +13,9 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from .tools import (
-    set_input_variable_precision,
-    compute_for_cross,
-    compute_for_simple,
-    c_domain,
-    c_domain_given_s,
-)
+from .variable_handler import set_input_variable_precision
+from .statistics import compute_for_cross, compute_for_simple
+from .color_domain import c_domain, c_domain_given_s
 
 
 # Globals visible to workers
@@ -176,7 +172,7 @@ class Measure:
         for i, z_l in enumerate(
             tqdm(
                 self.z_lim,
-                desc=f"Processing the color-color spaces that include ({mag1}-{mag2})",
+                desc=f"Measuring the performance of linear cuts including ({mag1}-{mag2})",
             )
         ):
 
@@ -355,9 +351,6 @@ class Measure:
             This method updates the internal class attribute `self.dict_all`
             and does not return any value.
         """
-        # Measure color cut metrics
-        print("Computing color cuts given the following set of bands:", self.bands)
-
         for i in range(len(self.colors)):
             self._apply_cuts(
                 self.colors[i][0],

@@ -1,5 +1,5 @@
 """
-OPTIMIZE COLOR CUT COMBINATION.
+Derive optimal color selections.
 
 This module selects the optimal color conditions and the corresponding
 optimal parameters, given any limit on redshift and on other galaxy properties.
@@ -21,6 +21,7 @@ from tqdm import tqdm
 import pandas as pd
 
 from .tools import (
+    Measure,
     compute_metrics,
     combine_optimal_cuts,
     build_nested_dict,
@@ -43,74 +44,49 @@ yaml.add_representer(list, inline_list_representer, Dumper=yaml.SafeDumper)
 class Optimize:
     """Optimize color selections."""
 
-    def __init__(self, measure):
+    def __init__(self, data_model):
         """
-        Class for optimizing color cuts based on metrics computed by `Measure`.
+        Class optimizing color selections.
 
-        This class takes the results from a `Measure` instance (which stores
-        metrics for a grid of color cuts) and provides structures for ranking,
-        aggregating, and optimizing those cuts. Single color conditions having
-        failure rate equal to 1 or completeness equal to 0 are always excluded.
-        The maximized quantity (either completeness or purity) is defined by the
-        `Measure` instance given in input to this constructor.
+        This class provides structures for ranking, aggregating, and optimizing color
+        cuts. The maximized quantity (either completeness or purity) is defined by the
+        `DataModel` instance given in input to this constructor.
 
         Attributes
         ----------
-        bands : list of str
-            Photometric bands used in the analysis, copied from the input
-            `Measure` object.
-        colors : list of tuple
-            List of 2-band combinations used to form colors, copied from
-            the `Measure` object.
-        dataset : pandas.DataFrame
-            The photometric dataset containing magnitude and redshift values.
-        z_lim : numpy.ndarray
-            Array of redshift thresholds.
-        dict_all : dict
-            Dictionary of metrics for all tested color–color cuts, inherited from
-            the `Measure` object.
-        dict_iterative : dict
-            Container for storing results based on an iterative threshold.
-        P_iterative_tot : numpy.ndarray
-            Total purity values (iterative threshold).
-        C_iterative_tot : numpy.ndarray
-            Total completeness values (iterative threshold).
-        F_iterative_tot : numpy.ndarray
-            Total failure rates (iterative threshold).
+        dm : DataModel
+            `DataModel` object.
+        dict_linear : dict
+            Container for storing results based on linear color cuts.
+        P : numpy.ndarray
+            Total purity values.
+        C : numpy.ndarray
+            Total completeness values.
+        F : numpy.ndarray
+            Total failure rates.
 
         Parameters
         ----------
-        measure : Measure
-            A `Measure` object containing the dataset, band information,
+        data_model : DataModel
+            A `DataModel` object containing the dataset, band information,
             redshift thresholds, and precomputed cut metrics.
         """
-        self.dict_all = measure.dict_all
+        self.dm = data_model
 
-        self.dm = measure.dm
-
-        self.bands = self.dm.bands
-        self.colors = self.dm.colors
-        self.dataset = self.dm.dataset
-        self.z_lim = self.dm.z_lim
-        self.initial_threshold = self.dm.initial_threshold
-        self.thresholded_quantity = self.dm.thresholded_quantity
-        self.target_mask = self.dm.target_mask
-        self.is_zlim_lower = self.dm.is_zlim_lower
-
-        self.dict_iterative = {}
-        self.dict_iterative_steps = {}
-        self.P_iterative_tot = np.zeros(len(self.z_lim))
-        self.C_iterative_tot = np.zeros(len(self.z_lim))
-        self.F_iterative_tot = np.zeros(len(self.z_lim))
-        self.C_std = np.full(len(self.z_lim), np.nan)
-        self.P_std = np.full(len(self.z_lim), np.nan)
-        self.F_std = np.full(len(self.z_lim), np.nan)
+        self.dict_linear = {}
+        self.dict_linear_steps = {}
+        self.P = np.zeros(len(self.dm.z_lim))
+        self.C = np.zeros(len(self.dm.z_lim))
+        self.F = np.zeros(len(self.dm.z_lim))
+        self.C_std = np.full(len(self.dm.z_lim), np.nan)
+        self.P_std = np.full(len(self.dm.z_lim), np.nan)
+        self.F_std = np.full(len(self.dm.z_lim), np.nan)
 
     def _process_iterative_for_one_z(self, args):
         r"""
         Optimize the color cut selection for a single redshift threshold `z_l`.
 
-        See the documentation of `process` for a detailed description of the
+        See the documentation of `process_linear` for a detailed description of the
         iterative process implemented in this function.
 
         Parameters
@@ -124,7 +100,7 @@ class Optimize:
             - step : float
                 Increment step applied when scanning over purity or completeness thresholds.
             - store_iterations : bool
-                If True, store the iteration steps in self.dict_iterative_steps.
+                If True, store the iteration steps in self.dict_linear_steps.
 
         Returns
         -------
@@ -137,12 +113,12 @@ class Optimize:
         """
         z_l, threshold_tot_min, step, store_iterations = args
 
-        self.dict_iterative[z_l] = {}
+        self.dict_linear[z_l] = {}
         all_cuts = self.dict_all.get(z_l, {})
         if not all_cuts:
             return z_l, None
 
-        idx = np.where(self.z_lim == z_l)[0][0]
+        idx = np.where(self.dm.z_lim == z_l)[0][0]
 
         # Find the initial threshold
         start_threshold = 0.0
@@ -151,7 +127,7 @@ class Optimize:
             for comp_pair, conditions in comp_dict.items():
                 for cond_index, cond_data in conditions.items():
                     candidate_max = cond_data.get(
-                        self.thresholded_quantity,
+                        self.dm.thresholded_quantity,
                         [],
                     )
                     for i, candidate in enumerate(candidate_max):
@@ -165,26 +141,26 @@ class Optimize:
             )
 
         # Start the iterative process
-        if self.thresholded_quantity == "purity":
+        if self.dm.thresholded_quantity == "purity":
             maximized_quantity = "completeness"
         else:
             maximized_quantity = "purity"
 
         current_thresh = start_threshold
         best_by_key = {}
-        dict_iterative_steps = {}
+        dict_linear_steps = {}
 
-        C_tot = np.zeros_like(self.z_lim, dtype=np.float32)
-        P_tot = np.zeros_like(self.z_lim, dtype=np.float32)
-        F_tot = np.zeros_like(self.z_lim, dtype=np.float32)
+        C_tot = np.zeros_like(self.dm.z_lim, dtype=np.float32)
+        P_tot = np.zeros_like(self.dm.z_lim, dtype=np.float32)
+        F_tot = np.zeros_like(self.dm.z_lim, dtype=np.float32)
 
         iteration = 0
         while current_thresh > 0:
 
-            if current_thresh <= self.initial_threshold:
+            if current_thresh <= self.dm.initial_threshold:
                 errMsg = "The current threshold in the iterative process"
                 errMsg += " is lower than or equal to the initial"
-                errMsg += " threshold set in the Measure class! Lower the latter."
+                errMsg += " threshold set in the DataModel class! Lower the latter."
                 raise ValueError(errMsg)
 
             new_best_by_key = {}
@@ -212,7 +188,7 @@ class Optimize:
 
                                 key = (base_pair, comp_pair, cond_index)
 
-                                if self.thresholded_quantity == "purity":
+                                if self.dm.thresholded_quantity == "purity":
                                     threshold_condition = purity >= current_thresh
                                     maximization_condition = (
                                         compl
@@ -261,7 +237,7 @@ class Optimize:
 
                                 key = (base_pair, comp_pair, cond_index)
 
-                                if self.thresholded_quantity == "purity":
+                                if self.dm.thresholded_quantity == "purity":
                                     threshold_condition = purity >= current_thresh
                                     maximization_condition = (
                                         compl
@@ -295,16 +271,16 @@ class Optimize:
                                     ):
                                         new_best_by_key[key] = cut
 
-            C_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
-            P_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
-            F_tot_new = np.zeros_like(self.z_lim, dtype=np.float32)
+            C_tot_new = np.zeros_like(self.dm.z_lim, dtype=np.float32)
+            P_tot_new = np.zeros_like(self.dm.z_lim, dtype=np.float32)
+            F_tot_new = np.zeros_like(self.dm.z_lim, dtype=np.float32)
 
             nested = build_nested_dict(new_best_by_key)
 
             combine_optimal_cuts(
-                self.z_lim,
+                self.dm.z_lim,
                 self.color_cache,
-                self.target_mask,
+                self.dm.target_mask,
                 {z_l: nested},
                 C_tot_new,
                 P_tot_new,
@@ -316,7 +292,7 @@ class Optimize:
                 err_msg += f" the failure rate is 1 at z_l={z_l}."
                 raise ValueError(err_msg)
 
-            if self.thresholded_quantity == "purity":
+            if self.dm.thresholded_quantity == "purity":
                 threshold_condition = P_tot_new[idx] >= threshold_tot_min
             else:
                 threshold_condition = C_tot_new[idx] >= threshold_tot_min
@@ -329,12 +305,12 @@ class Optimize:
                 current_thresh -= step
 
                 if store_iterations:
-                    dict_iterative_steps[iteration] = nested
+                    dict_linear_steps[iteration] = nested
                     iteration += 1
             else:
                 break  # below the threshold
 
-        return z_l, best_by_key, dict_iterative_steps
+        return z_l, best_by_key, dict_linear_steps
 
     def _estimate_errors(self, n_bootstraps=1000):
         """
@@ -357,41 +333,41 @@ class Optimize:
         ValueError
             If calibration has not been run prior to error estimation.
         """
-        if np.sum(self.C_iterative_tot) == 0.0:
+        if np.sum(self.C) == 0.0:
             raise ValueError("No calibration is available! Run process() first.")
 
-        C_stats = np.zeros((2, len(self.z_lim)))  # [sum, sum_of_squares]
-        P_stats = np.zeros((2, len(self.z_lim)))
-        F_stats = np.zeros((2, len(self.z_lim)))
+        C_stats = np.zeros((2, len(self.dm.z_lim)))  # [sum, sum_of_squares]
+        P_stats = np.zeros((2, len(self.dm.z_lim)))
+        F_stats = np.zeros((2, len(self.dm.z_lim)))
 
         print("\nDeriving bootstrap errors...")
         for i in tqdm(range(n_bootstraps)):
 
             indices = np.random.choice(
-                len(self.dataset), size=len(self.dataset), replace=True
+                len(self.dm.dataset), size=len(self.dm.dataset), replace=True
             )
-            bootstrap_sample = self.dataset.iloc[indices]
+            bootstrap_sample = self.dm.dataset.iloc[indices]
 
             # Pre-compute colors
             color_cache = {}
-            for mag1, mag2 in self.colors:
+            for mag1, mag2 in self.dm.colors:
                 color_cache[(mag1, mag2)] = bootstrap_sample[mag1].values.astype(
                     np.float32
                 ) - bootstrap_sample[mag2].values.astype(np.float32)
 
-            C_temp = np.zeros(len(self.z_lim))
-            P_temp = np.zeros(len(self.z_lim))
-            F_temp = np.zeros(len(self.z_lim))
+            C_temp = np.zeros(len(self.dm.z_lim))
+            P_temp = np.zeros(len(self.dm.z_lim))
+            F_temp = np.zeros(len(self.dm.z_lim))
 
             # Get the target mask
-            target_mask = dm.get_target_mask(bootstrap_sample)
+            target_mask = self.dm.get_target_mask(bootstrap_sample)
 
             # Compute the metrics
             combine_optimal_cuts(
-                self.z_lim,
+                self.dm.z_lim,
                 color_cache,
                 target_mask,
-                self.dict_iterative,
+                self.dict_linear,
                 C_temp,
                 P_temp,
                 F_temp,
@@ -413,7 +389,7 @@ class Optimize:
         self.P_std = np.sqrt((P_stats[1] / n_bootstraps) - P_mean**2)
         self.F_std = np.sqrt((F_stats[1] / n_bootstraps) - F_mean**2)
 
-    def process(
+    def process_linear(
         self,
         threshold_tot_min,
         step=0.001,
@@ -427,7 +403,7 @@ class Optimize:
         Perform the iterative search for optimal color conditions.
 
         Here, either completeness or purity are maximized, depending on what was
-        set in the `Measure` instance given in input to the constructor of this class.
+        set in the `DataModel` instance given in input to the constructor of this class.
         This method incrementally relaxes the single color cut purity (completeness)
         threshold in order to identify a set of cuts that maximize total completeness
         (purity) while still satisfying the global threshold. The algorithm
@@ -463,6 +439,9 @@ class Optimize:
         2. Restructured into an expression-based dictionary.
         3. Interpolated across redshift bins to provide continuous cut parameters.
 
+        Single color conditions having failure rate equal to 1 or completeness equal
+        to 0 are always excluded.
+
         Parameters
         ----------
         threshold_tot_min : float or array-like
@@ -487,36 +466,41 @@ class Optimize:
         n_bootstraps : int, optional
             Number of bootstrap resamples to perform, by default 1000.
         store_iterations : bool, optional
-            If True, store the iteration steps in self.dict_iterative_steps.
+            If True, store the iteration steps in self.dict_linear_steps.
             Default is False.
 
         Returns
         -------
         None
             Updates the following instance attributes in place:
-            - ``self.dict_iterative`` : dict
+            - ``self.dict_linear`` : dict
                 Nested dictionary of optimal iterative cuts for each
                 redshift bin, restructured and interpolated.
-            - ``self.P_iterative_tot`` : numpy.ndarray
+            - ``self.P`` : numpy.ndarray
                 Total purity across all bins.
-            - ``self.C_iterative_tot`` : numpy.ndarray
+            - ``self.C`` : numpy.ndarray
                 Total completeness across all bins.
-            - ``self.F_iterative_tot`` : numpy.ndarray
+            - ``self.F`` : numpy.ndarray
                 Total failure rate across all bins.
         """
         if isinstance(threshold_tot_min, float):
-            threshold_tot_min = [threshold_tot_min] * len(self.z_lim)
+            threshold_tot_min = [threshold_tot_min] * len(self.dm.z_lim)
 
-        print("\nRunning iterative threshold search...")
-        start_time = time.time()
+        # Pre-compute color cut performance
+        measure = Measure(self.dm)
+        measure.process(cpu_number=None)
+        self.dict_all = measure.dict_all
 
         # Pre-compute colors
-        self.redshift = self.dataset["redshift"].values.astype(np.float32)
+        print("\nRunning the linear color cut optimization...")
+        start_time = time.time()
+
+        self.redshift = self.dm.dataset["redshift"].values.astype(np.float32)
         self.color_cache = {}
-        for mag1, mag2 in self.colors:
-            self.color_cache[(mag1, mag2)] = self.dataset[mag1].values.astype(
+        for mag1, mag2 in self.dm.colors:
+            self.color_cache[(mag1, mag2)] = self.dm.dataset[mag1].values.astype(
                 np.float32
-            ) - self.dataset[mag2].values.astype(np.float32)
+            ) - self.dm.dataset[mag2].values.astype(np.float32)
 
         # Parallel processing
         N_cpu = (
@@ -529,34 +513,34 @@ class Optimize:
         args_list = [
             (
                 z_l,
-                threshold_tot_min[np.where(self.z_lim == z_l)[0][0]],
+                threshold_tot_min[np.where(self.dm.z_lim == z_l)[0][0]],
                 step,
                 store_iterations,
             )
-            for z_l in self.z_lim
+            for z_l in self.dm.z_lim
         ]
         with mp.Pool(processes=N_cpu) as pool:
             results = pool.map(self._process_iterative_for_one_z, args_list)
 
         for result in results:
             z_l, cuts_dict, steps = result
-            self.dict_iterative[z_l] = build_nested_dict(cuts_dict)
-            self.dict_iterative_steps[z_l] = steps
+            self.dict_linear[z_l] = build_nested_dict(cuts_dict)
+            self.dict_linear_steps[z_l] = steps
 
         print("Combining the optimal cuts...")
         combine_optimal_cuts(
-            self.z_lim,
+            self.dm.z_lim,
             self.color_cache,
-            self.target_mask,
-            self.dict_iterative,
-            self.C_iterative_tot,
-            self.P_iterative_tot,
-            self.F_iterative_tot,
+            self.dm.target_mask,
+            self.dict_linear,
+            self.C,
+            self.P,
+            self.F,
         )
 
         total_time = time.time() - start_time
         print(
-            "Iterative thresholding complete.",
+            "Linear cut optimization complete.",
             f"Total time: {total_time:.2f} seconds.",
         )
 
@@ -568,15 +552,15 @@ class Optimize:
 
         #
         restructure_dict(
-            self.dict_iterative,
-            self.bands,
-            self.colors,
-            self.z_lim,
-            self.thresholded_quantity,
+            self.dict_linear,
+            self.dm.bands,
+            self.dm.colors,
+            self.dm.z_lim,
+            self.dm.thresholded_quantity,
             threshold_tot_min,
-            is_zlim_lower=self.is_zlim_lower,
+            is_zlim_lower=self.dm.is_zlim_lower,
         )
-        interpolate_parameters(self.dict_iterative, k=k)
+        interpolate_parameters(self.dict_linear, k=k)
 
     def write_optimal_selection(
         self,
@@ -614,10 +598,10 @@ class Optimize:
         ValueError
             If calibration has not been run.
         """
-        if np.sum(self.C_iterative_tot) == 0.0:
+        if np.sum(self.C) == 0.0:
             raise ValueError("No calibration is available! Run process() first.")
 
-        dictionary = copy.deepcopy(self.dict_iterative)
+        dictionary = copy.deepcopy(self.dict_linear)
 
         # Remove unnecessary keys
         for key in dictionary:
@@ -643,10 +627,10 @@ class Optimize:
         if write_also_metrics:
 
             metrics_data = {
-                "z_lim": self.z_lim,
-                "C": self.C_iterative_tot,
-                "P": self.P_iterative_tot,
-                "F": self.F_iterative_tot,
+                "z_lim": self.dm.z_lim,
+                "C": self.C,
+                "P": self.P,
+                "F": self.F,
                 "C_std": self.C_std,
                 "P_std": self.P_std,
                 "F_std": self.F_std,
@@ -677,23 +661,23 @@ class Optimize:
         """
         ax = set_metrics_plot()
 
-        if np.sum(self.C_iterative_tot) != 0.0:
+        if np.sum(self.C) != 0.0:
             ax[0].plot(
-                self.z_lim,
-                self.C_iterative_tot * 100.0,
+                self.dm.z_lim,
+                self.C * 100.0,
                 color="k",
                 linestyle="-",
                 label="Optimized selection",
             )
             ax[1].plot(
-                self.z_lim,
-                self.P_iterative_tot * 100.0,
+                self.dm.z_lim,
+                self.P * 100.0,
                 color="k",
                 linestyle="-",
             )
             ax[2].plot(
-                self.z_lim,
-                self.F_iterative_tot * 100.0,
+                self.dm.z_lim,
+                self.F * 100.0,
                 color="k",
                 linestyle="-",
             )
@@ -701,24 +685,24 @@ class Optimize:
         # Add error bands if available
         if not np.any(np.isnan(self.C_std)):
             ax[0].fill_between(
-                self.z_lim,
-                (self.C_iterative_tot - self.C_std) * 100.0,
-                (self.C_iterative_tot + self.C_std) * 100.0,
+                self.dm.z_lim,
+                (self.C - self.C_std) * 100.0,
+                (self.C + self.C_std) * 100.0,
                 color="k",
                 alpha=0.3,
                 label="Bootstrap error",
             )
             ax[1].fill_between(
-                self.z_lim,
-                (self.P_iterative_tot - self.P_std) * 100.0,
-                (self.P_iterative_tot + self.P_std) * 100.0,
+                self.dm.z_lim,
+                (self.P - self.P_std) * 100.0,
+                (self.P + self.P_std) * 100.0,
                 color="k",
                 alpha=0.3,
             )
             ax[2].fill_between(
-                self.z_lim,
-                (self.F_iterative_tot - self.F_std) * 100.0,
-                (self.F_iterative_tot + self.F_std) * 100.0,
+                self.dm.z_lim,
+                (self.F - self.F_std) * 100.0,
+                (self.F + self.F_std) * 100.0,
                 color="k",
                 alpha=0.3,
             )

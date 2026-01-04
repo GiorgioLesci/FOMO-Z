@@ -70,7 +70,8 @@ class DataModel:
         s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
             Array of slope values for generating linear cuts in color–color space.
             These samples must be strictly positive. Used only for linear color cuts
-            (e.g., not in the `optimize_grid` module).
+            (i.e., used by the `Optimize.process_linear` method,
+            not used by the `Optimize.process_grid` method).
         c_precision : float, default=0.05
             Precision of the c parameter sampling. Smaller values increase accuracy
             but significantly increase the number of operations. If you halve `c_precision`,
