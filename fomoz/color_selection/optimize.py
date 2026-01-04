@@ -21,8 +21,8 @@ from tqdm import tqdm
 import pandas as pd
 
 from .tools import (
-    get_target_mask,
     compute_metrics,
+    combine_optimal_cuts,
     build_nested_dict,
     float_representer,
     inline_list_representer,
@@ -84,16 +84,18 @@ class Optimize:
             A `Measure` object containing the dataset, band information,
             redshift thresholds, and precomputed cut metrics.
         """
-        self.bands = measure.bands
-        self.colors = measure.colors
-        self.dataset = measure.dataset
-        self.z_lim = measure.z_lim
         self.dict_all = measure.dict_all
-        self.initial_threshold = measure.initial_threshold
-        self.thresholded_quantity = measure.thresholded_quantity
-        self.target_mask = measure.target_mask
-        self.is_zlim_lower = measure.is_zlim_lower
-        self.additional_rules = measure.additional_rules
+
+        self.dm = measure.dm
+
+        self.bands = self.dm.bands
+        self.colors = self.dm.colors
+        self.dataset = self.dm.dataset
+        self.z_lim = self.dm.z_lim
+        self.initial_threshold = self.dm.initial_threshold
+        self.thresholded_quantity = self.dm.thresholded_quantity
+        self.target_mask = self.dm.target_mask
+        self.is_zlim_lower = self.dm.is_zlim_lower
 
         self.dict_iterative = {}
         self.dict_iterative_steps = {}
@@ -299,7 +301,8 @@ class Optimize:
 
             nested = build_nested_dict(new_best_by_key)
 
-            self._combine_optimal_cuts(
+            combine_optimal_cuts(
+                self.z_lim,
                 self.color_cache,
                 self.target_mask,
                 {z_l: nested},
@@ -332,87 +335,6 @@ class Optimize:
                 break  # below the threshold
 
         return z_l, best_by_key, dict_iterative_steps
-
-    def _combine_optimal_cuts(
-        self, color_cache, target_mask, dictionary, C_tot, P_tot, F_tot
-    ):
-        """
-        Combine optimal color cuts and compute global metrics.
-
-        This method aggregates purity, completeness, and
-        failure rates across a set of optimal cuts stored in
-        `dictionary`. The combined results are accumulated into the
-        provided arrays `C_tot`, `P_tot`, and `F_tot`.
-
-        Parameters
-        ----------
-        color_cache : dict
-            Dictionary mapping color pairs (mag1, mag2) to precomputed
-            color arrays (mag1 - mag2). Keys are tuples of band names,
-            values are numpy arrays of color values.
-        target_mask : np.ndarray
-            Boolean mask of target objects (satisfying redshift + additional rules).
-        dictionary : dict
-            Dictionary of selected optimal cuts (e.g. `self.dict_iterative`),
-            where each entry contains the metrics for a cut.
-        C_tot : numpy.ndarray
-            Array that accumulates total completeness values across cuts.
-        P_tot : numpy.ndarray
-            Array that accumulates total purity values across cuts.
-        F_tot : numpy.ndarray
-            Array that accumulates total failure rate values across cuts.
-
-        Returns
-        -------
-        None
-            Updates the input arrays (`C_tot`, `P_tot`, `F_tot`) in place
-            but does not return a value.
-        """
-        n_galaxies = len(target_mask[0])
-
-        for i, z_l in enumerate(self.z_lim):
-
-            mask_total = np.zeros(n_galaxies, dtype=bool)
-            cuts_for_zl = dictionary.get(z_l, {})
-
-            for base_pair, comp_cuts in cuts_for_zl.items():
-                mag1, mag2 = base_pair
-                color1 = color_cache[(mag1, mag2)]
-
-                for comp_pair, conditions in comp_cuts.items():
-                    if comp_pair == base_pair:
-                        for cond in conditions:
-                            c = cond["c"]
-                            if cond["condition_index"] == 0:
-                                mask = color1 > c
-                            else:
-                                mask = color1 < c
-                            mask_total |= mask
-                    else:
-                        mag3, mag4 = comp_pair
-                        color2 = color_cache[(mag3, mag4)]
-
-                        for cond in conditions:
-                            s = cond["s"]
-                            c = cond["c"]
-                            idx = cond["condition_index"]
-
-                            if idx == 0:
-                                mask = color1 > s * color2 + c
-                            elif idx == 1:
-                                mask = color1 > -s * color2 + c
-                            elif idx == 2:
-                                mask = color1 < s * color2 + c
-                            else:
-                                mask = color1 < -s * color2 + c
-
-                            mask_total |= mask
-
-            TP, FP, FN, TN = compute_metrics(mask_total, target_mask[i])
-
-            C_tot[i] = TP / (TP + FN) if TP + FN > 0 else 0.0
-            P_tot[i] = TP / (TP + FP) if TP + FP > 0 else 0.0
-            F_tot[i] = FP / (FP + TN) if FP + TN > 0 else 0.0
 
     def _estimate_errors(self, n_bootstraps=1000):
         """
@@ -462,15 +384,11 @@ class Optimize:
             F_temp = np.zeros(len(self.z_lim))
 
             # Get the target mask
-            target_mask = get_target_mask(
-                bootstrap_sample,
-                self.z_lim,
-                self.is_zlim_lower,
-                self.additional_rules,
-            )
+            target_mask = dm.get_target_mask(bootstrap_sample)
 
             # Compute the metrics
-            self._combine_optimal_cuts(
+            combine_optimal_cuts(
+                self.z_lim,
                 color_cache,
                 target_mask,
                 self.dict_iterative,
@@ -626,7 +544,8 @@ class Optimize:
             self.dict_iterative_steps[z_l] = steps
 
         print("Combining the optimal cuts...")
-        self._combine_optimal_cuts(
+        combine_optimal_cuts(
+            self.z_lim,
             self.color_cache,
             self.target_mask,
             self.dict_iterative,

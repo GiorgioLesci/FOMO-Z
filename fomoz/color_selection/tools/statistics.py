@@ -1,14 +1,15 @@
 """
-Compute masks, interpolations, true/false positives, and true/false negatives.
+Compute interpolations, true/false positives, and true/false negatives.
 
 This module provides auxiliary functions for the computation of
-masks, metrics, and interpolations.
+color selection metrics and interpolations.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
 import numpy as np
 from scipy.interpolate import UnivariateSpline
+
 
 def compute_metrics(mask, target_mask):
     """
@@ -47,6 +48,7 @@ def compute_metrics(mask, target_mask):
     TN = np.count_nonzero(~mask & ~target_mask)
 
     return TP, FP, FN, TN
+
 
 def compute_for_simple(args):
     """
@@ -87,6 +89,7 @@ def compute_for_simple(args):
         *compute_metrics(mask_up, target_mask),
         *compute_metrics(mask_low, target_mask),
     ]
+
 
 def compute_for_cross(args):
     """
@@ -134,79 +137,88 @@ def compute_for_cross(args):
 
     return [compute_metrics(mask, target_mask) for mask in cuts]
 
-def get_target_mask(dataset, z_lim, is_zlim_lower, additional_rules):
-    """
-    Create a mask identifying galaxies that satisfy a set of conditions.
 
-    This function generates a 2D boolean mask array where each row corresponds
-    to a different redshift limit and each column corresponds to a galaxy in the
-    dataset. A value of `True` indicates that a galaxy meets all selection criteria
-    for that particular redshift limit.
+def combine_optimal_cuts(
+    z_lim, color_cache, target_mask, dictionary, C_tot, P_tot, F_tot
+):
+    """
+    Combine optimal color cuts and compute global metrics.
+
+    This method aggregates purity, completeness, and
+    failure rates across a set of optimal cuts stored in
+    `dictionary`. The combined results are accumulated into the
+    provided arrays `C_tot`, `P_tot`, and `F_tot`.
 
     Parameters
     ----------
-    dataset : pandas.DataFrame
-        Input dataset containing galaxy properties. Must include a 'redshift' column
-        and any additional properties referenced in `additional_rules`.
-    z_lim : array-like of float
-        Array of redshift thresholds to apply. Each value defines a separate
-        selection criterion.
-    is_zlim_lower : bool
-        If True, `z_lim` values are treated as lower limits. If False, `z_lim`
-        values are treated as upper limits.
-    additional_rules : list of lists or None
-        Additional selection rules beyond redshift. Each rule is a list with format:
-        (property_name, operator, threshold). All rules are combined with AND logic.
-        Supported operators: ">", "<", ">=", "<=", "==", "!=".
-
-        Example:
-        [("logM", ">", 10.0), ("u", "<", 24.0)] selects galaxies with
-        stellar mass > 10^10 solar masses AND u-band magnitude < 24.0.
+    color_cache : dict
+        Dictionary mapping color pairs (mag1, mag2) to precomputed
+        color arrays (mag1 - mag2). Keys are tuples of band names,
+        values are numpy arrays of color values.
+    target_mask : np.ndarray
+        Boolean mask of target objects (satisfying redshift + additional rules).
+    dictionary : dict
+        Dictionary of selected optimal cuts,
+        where each entry contains the metrics for a cut.
+    C_tot : numpy.ndarray
+        Array that accumulates total completeness values across cuts.
+    P_tot : numpy.ndarray
+        Array that accumulates total purity values across cuts.
+    F_tot : numpy.ndarray
+        Array that accumulates total failure rate values across cuts.
 
     Returns
     -------
-    target_mask : numpy.ndarray of bool
-        2D boolean array with shape (len(z_lim), len(dataset)).
-        target_mask[i, j] = True indicates that galaxy j satisfies all selection
-        criteria for redshift limit z_lim[i].
-
-    Notes
-    -----
-    - The function applies all selection criteria with AND logic: a galaxy must
-      satisfy the redshift condition AND all additional rules to be marked as True.
-    - The returned mask can be used directly for calculating completeness, purity,
-      and other selection metrics.
+    None
+        Updates the input arrays (`C_tot`, `P_tot`, `F_tot`) in place
+        but does not return a value.
     """
-    target_mask = np.full((len(z_lim), len(dataset)), False, dtype=bool)
-    for i, zz in enumerate(z_lim):
+    n_galaxies = len(target_mask[0])
 
-        # Limiting redshift
-        if is_zlim_lower:
-            target_mask[i] = dataset["redshift"] > zz
-        else:
-            target_mask[i] = dataset["redshift"] < zz
+    for i, z_l in enumerate(z_lim):
 
-        # Additional rules
-        if additional_rules is None:
-            continue
-        for property_name, operator, threshold in additional_rules:
+        mask_total = np.zeros(n_galaxies, dtype=bool)
+        cuts_for_zl = dictionary.get(z_l, {})
 
-            data = dataset[property_name]
+        for base_pair, comp_cuts in cuts_for_zl.items():
+            mag1, mag2 = base_pair
+            color1 = color_cache[(mag1, mag2)]
 
-            if operator == ">":
-                target_mask[i] &= data > threshold
-            elif operator == "<":
-                target_mask[i] &= data < threshold
-            elif operator == ">=":
-                target_mask[i] &= data >= threshold
-            elif operator == "<=":
-                target_mask[i] &= data <= threshold
-            elif operator == "==":
-                target_mask[i] &= data == threshold
-            elif operator == "!=":
-                target_mask[i] &= data != threshold
+            for comp_pair, conditions in comp_cuts.items():
+                if comp_pair == base_pair:
+                    for cond in conditions:
+                        c = cond["c"]
+                        if cond["condition_index"] == 0:
+                            mask = color1 > c
+                        else:
+                            mask = color1 < c
+                        mask_total |= mask
+                else:
+                    mag3, mag4 = comp_pair
+                    color2 = color_cache[(mag3, mag4)]
 
-    return target_mask
+                    for cond in conditions:
+                        s = cond["s"]
+                        c = cond["c"]
+                        idx = cond["condition_index"]
+
+                        if idx == 0:
+                            mask = color1 > s * color2 + c
+                        elif idx == 1:
+                            mask = color1 > -s * color2 + c
+                        elif idx == 2:
+                            mask = color1 < s * color2 + c
+                        else:
+                            mask = color1 < -s * color2 + c
+
+                        mask_total |= mask
+
+        TP, FP, FN, TN = compute_metrics(mask_total, target_mask[i])
+
+        C_tot[i] = TP / (TP + FN) if TP + FN > 0 else 0.0
+        P_tot[i] = TP / (TP + FP) if TP + FP > 0 else 0.0
+        F_tot[i] = FP / (FP + TN) if FP + TN > 0 else 0.0
+
 
 def interpolate_parameters(input_dict, k=1):
     """

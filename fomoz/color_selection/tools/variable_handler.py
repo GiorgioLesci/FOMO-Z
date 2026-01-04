@@ -9,17 +9,18 @@ dictionary reshaping.
 
 import numpy as np
 
+
 def set_input_variable_precision(var, prec=6):
     """
     Convert input variable to float32 numpy array and apply precision rounding.
-    
+
     Parameters
     ----------
     var : scalar, list, or numpy array
         Input variable to convert and round.
     prec : float, optional
         Precision for rounding (default: 1.e-6).
-        
+
     Returns
     -------
     numpy.ndarray
@@ -33,6 +34,7 @@ def set_input_variable_precision(var, prec=6):
         return var.astype(np.float32).round(prec)
     else:
         return np.asarray(var, dtype=np.float32).round(prec)
+
 
 def build_nested_dict(cuts):
     """
@@ -83,6 +85,7 @@ def build_nested_dict(cuts):
             }
         )
     return nested
+
 
 def restructure_dict(
     input_dict,
@@ -188,6 +191,7 @@ def restructure_dict(
     input_dict.clear()
     input_dict.update(dict_restructured)
 
+
 def make_yaml_serializable(obj):
     """
     Convert complex or NumPy-based data types into YAML serializables.
@@ -231,6 +235,7 @@ def make_yaml_serializable(obj):
     else:
         return obj
 
+
 def float_representer(dumper, value):
     """
     Get custom YAML representer for floating-point numbers.
@@ -265,20 +270,21 @@ def float_representer(dumper, value):
         text = f"{value:.6g}"
         return dumper.represent_scalar("tag:yaml.org,2002:float", text)
 
+
 def inline_list_representer(dumper, data):
     """
     Get custom YAML representer for writing lists in inline/compact format.
-    
+
     This function is used as a custom representer for PyYAML to force
     sequences (lists) to be written in inline/compact format.
-    
+
     Parameters
     ----------
     dumper : yaml.Dumper
         PyYAML Dumper instance handling the serialization.
     data : list
         Python list to be serialized to YAML.
-        
+
     Returns
     -------
     yaml.nodes.SequenceNode

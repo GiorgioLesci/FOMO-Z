@@ -1,5 +1,5 @@
 """
-OBJECT SELECTION CLASS.
+Object selection class.
 
 This class selects objects in an input photometric sample,
 applying a calibrated color selection for any redshift threshold.
@@ -103,6 +103,8 @@ class SelectGalaxy:
 
     def _select_objects(self, z_lim, mags):
         """
+        Select based on linear color cuts.
+
         Select objects at a given redshift threshold.
         - If calibrated limiting redshifts are lower limits:
           - if `z_lim` is lower than the minimum limiting redshift, `z_min`,

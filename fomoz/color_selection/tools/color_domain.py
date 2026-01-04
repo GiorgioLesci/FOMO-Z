@@ -8,6 +8,7 @@ This module provides auxiliary functions to assess optimal color domains.
 
 import numpy as np
 
+
 def c_domain(color, q_low=0.01, q_high=0.99):
     """
     Get the domain of `c`.
@@ -35,6 +36,7 @@ def c_domain(color, q_low=0.01, q_high=0.99):
         Lower and upper bounds for the valid c domain.
     """
     return np.quantile(color[np.isfinite(color)], [q_low, q_high])
+
 
 def c_domain_given_s(color1, color2, s, q_low=0.01, q_high=0.99):
     """

@@ -8,6 +8,7 @@ This module provides auxiliary functions for data visualization.
 
 import matplotlib.pyplot as plt
 
+
 def set_metrics_plot():
     """
     Create a figure with three side-by-side subplots.

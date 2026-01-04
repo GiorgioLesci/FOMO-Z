@@ -20,6 +20,7 @@ from fomoz.color_selection.tools import (
     make_yaml_serializable,
     float_representer
 )
+from fomoz.color_selection.data_model import DataModel
 from fomoz.color_selection.measure import Measure
 from fomoz.color_selection.optimize import Optimize
 from fomoz.color_selection.select_galaxy import SelectGalaxy
@@ -47,7 +48,8 @@ def reference_measure_instance(reference_dataset):
     bands = ['g', 'r', 'i']
     z_lim = [0.5, 0.6]
     
-    measure = Measure(reference_dataset, bands, z_lim, initial_threshold=0.8)
+    dm = DataModel(reference_dataset, bands, z_lim, initial_threshold=0.8)
+    measure = Measure(dm)
     measure.process(cpu_number=1)
     
     return measure
@@ -345,7 +347,8 @@ class TestMeasureProcess:
         z_l = [0.3]  # Single z limit
 
         # Create a new Measure instance with single z limit
-        measure = Measure(reference_dataset, bands, z_l)
+        dm = DataModel(reference_dataset, bands, z_l)
+        measure = Measure(dm)
         measure.process(cpu_number=1)
 
         assert measure.z_lim[0] in measure.dict_all
