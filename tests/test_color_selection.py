@@ -10,7 +10,7 @@ import yaml
 import pandas as pd
 import os
 
-from fomoz.color_selection.auxiliary import (
+from fomoz.color_selection.tools import (
     compute_metrics,
     compute_for_simple,
     compute_for_cross,

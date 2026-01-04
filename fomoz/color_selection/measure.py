@@ -14,11 +14,12 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from .auxiliary import (
+from .tools import (
     set_input_variable_precision,
     get_target_mask,
     compute_for_cross,
     compute_for_simple,
+    c_domain,
     c_domain_given_s,
 )
 
@@ -299,7 +300,7 @@ class Measure:
             mag2
         ].values.astype(np.float32)
 
-        vmin, vmax = np.quantile(color1[np.isfinite(color1)], [0.01, 0.99])
+        vmin, vmax = c_domain(color1)
         n_steps = int((vmax - vmin) / self.c_precision) + 1
         test_colors = np.linspace(vmin, vmax, n_steps, dtype=np.float32)
 

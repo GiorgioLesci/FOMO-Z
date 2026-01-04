@@ -20,7 +20,7 @@ import yaml
 from tqdm import tqdm
 import pandas as pd
 
-from .auxiliary import (
+from .tools import (
     get_target_mask,
     compute_metrics,
     build_nested_dict,
@@ -29,7 +29,7 @@ from .auxiliary import (
     interpolate_parameters,
     make_yaml_serializable,
     restructure_dict,
-    set_plot,
+    set_metrics_plot,
 )
 
 # Register the custom representers for both default and safe dumpers
@@ -756,7 +756,7 @@ class Optimize:
         None
             Displays the matplotlib figure.
         """
-        ax = set_plot()
+        ax = set_metrics_plot()
 
         if np.sum(self.C_iterative_tot) != 0.0:
             ax[0].plot(

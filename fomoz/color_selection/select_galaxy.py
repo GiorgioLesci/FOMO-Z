@@ -15,7 +15,7 @@ import numexpr as ne
 import numpy as np
 import yaml
 from scipy.interpolate import BSpline
-from .auxiliary import set_input_variable_precision
+from .tools import set_input_variable_precision
 
 
 class SelectGalaxy:
