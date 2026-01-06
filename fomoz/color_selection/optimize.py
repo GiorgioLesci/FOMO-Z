@@ -82,9 +82,9 @@ class Optimize:
         self.P_std = np.full(len(self.dm.z_lim), np.nan)
         self.F_std = np.full(len(self.dm.z_lim), np.nan)
 
-    def _process_iterative_for_one_z(self, args):
+    def _process_linear_for_one_z(self, args):
         r"""
-        Optimize the color cut selection for a single redshift threshold `z_l`.
+        Optimize the linear color cut selection for a single redshift threshold `z_l`.
 
         See the documentation of `process_linear` for a detailed description of the
         iterative process implemented in this function.
@@ -400,7 +400,7 @@ class Optimize:
         store_iterations=False,
     ):
         r"""
-        Perform the iterative search for optimal color conditions.
+        Perform the iterative search for optimal linear color conditions.
 
         Here, either completeness or purity are maximized, depending on what was
         set in the `DataModel` instance given in input to the constructor of this class.
@@ -488,7 +488,7 @@ class Optimize:
 
         # Pre-compute color cut performance
         measure = Measure(self.dm)
-        measure.process(cpu_number=None)
+        measure.process(cpu_number=cpu_number)
         self.dict_all = measure.dict_all
 
         # Pre-compute colors
@@ -520,7 +520,7 @@ class Optimize:
             for z_l in self.dm.z_lim
         ]
         with mp.Pool(processes=N_cpu) as pool:
-            results = pool.map(self._process_iterative_for_one_z, args_list)
+            results = pool.map(self._process_linear_for_one_z, args_list)
 
         for result in results:
             z_l, cuts_dict, steps = result
