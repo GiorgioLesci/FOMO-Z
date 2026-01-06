@@ -41,22 +41,60 @@ yaml.add_representer(list, inline_list_representer)
 yaml.add_representer(list, inline_list_representer, Dumper=yaml.SafeDumper)
 
 
-class Optimize:
-    """Optimize color selections."""
+class OptimizeLinear:
+    """Optimize linear color selections."""
 
     def __init__(self, data_model):
-        """
-        Class optimizing color selections.
+        r"""
+        Class optimizing linear color selections.
 
         This class provides structures for ranking, aggregating, and optimizing color
         cuts. The maximized quantity (either completeness or purity) is defined by the
         `DataModel` instance given in input to this constructor.
+        The method implemented here incrementally relaxes the single color cut purity (completeness)
+        threshold in order to identify a set of cuts that maximize total completeness
+        (purity) while still satisfying the global threshold. The algorithm
+        proceeds iteratively, starting from a strict initial threshold and reducing
+        it by `DataModel.step` until the total purity (or completeness) remains above
+        `DataModel.thresholded_quantity_min`.
+        The starting threshold corresponds to the maximum
+        purity (or completeness) attained across all single color conditions.
+        Also bootstrap errors on the metrics are derived.
+
+        Constraints
+        -----------
+        For each redshift value, this method searches for the set of
+        cuts that ($\mathcal{P}_{\rm iter}^{\rm ini}$: initial threshold,
+        $\delta\mathcal{P}_{\rm iter}$: `DataModel.step`, $z_{\rm l}$: `z_l`,
+        $\mathcal{P}_{\rm min}$: `DataModel.thresholded_quantity_min`):
+        - Update $\mathcal{P}_{\rm iter}^k = \mathcal{P}_{\rm iter}^{\rm ini} -
+          k\,\delta\mathcal{P}_{\rm iter}$, where $k$ is the iteration index,
+          starting from 0.
+        - For any $(x,y)$ color pair, select the $j$th condition
+          if there exists at least one parameter set $\vec{p}$ that yields
+          $\mathcal{P}_j(z_{\rm l}\,|\,\vec{p},x,y)>\mathcal{P}_{\rm iter}^k$.
+        - Among those selected at step 2, define the optimal $j$th condition
+          in the $(x,y)$ space as the one having $\vec{p}$ parameters that
+          maximize $\mathcal{C}_j(z_{\rm l}\,|\,\vec{p},x,y)$.
+        - Combine the selected conditions in all $(x,y)$ spaces through the
+          $\lor$ logical operator, and evaluate the global purity,
+          $\mathcal{P}(z_{\rm l})$.
+        - Repeat from point 1 as long as
+          $\mathcal{P}(z_{\rm l})>\mathcal{P}_{\rm min}$.
+
+        After the optimal cuts are found for all redshift bins, the results are:
+        1. Combined into global purity, completeness, and failure rate metrics.
+        2. Restructured into an expression-based dictionary.
+        3. Interpolated across redshift bins to provide continuous cut parameters.
+
+        Single color conditions having failure rate equal to 1 or completeness equal
+        to 0 are always excluded.
 
         Attributes
         ----------
         dm : DataModel
             `DataModel` object.
-        dict_linear : dict
+        dict : dict
             Container for storing results based on linear color cuts.
         P : numpy.ndarray
             Total purity values.
@@ -64,6 +102,12 @@ class Optimize:
             Total completeness values.
         F : numpy.ndarray
             Total failure rates.
+        P_std : numpy.ndarray
+            Total purity error.
+        C_std : numpy.ndarray
+            Total completeness error.
+        F_std : numpy.ndarray
+            Total failure rate error.
 
         Parameters
         ----------
@@ -73,8 +117,8 @@ class Optimize:
         """
         self.dm = data_model
 
-        self.dict_linear = {}
-        self.dict_linear_steps = {}
+        self.dict = {}
+        self.dict_steps = {}
         self.P = np.zeros(len(self.dm.z_lim))
         self.C = np.zeros(len(self.dm.z_lim))
         self.F = np.zeros(len(self.dm.z_lim))
@@ -82,11 +126,11 @@ class Optimize:
         self.P_std = np.full(len(self.dm.z_lim), np.nan)
         self.F_std = np.full(len(self.dm.z_lim), np.nan)
 
-    def _process_linear_for_one_z(self, args):
+    def _process_for_one_z(self, args):
         r"""
         Optimize the linear color cut selection for a single redshift threshold `z_l`.
 
-        See the documentation of `process_linear` for a detailed description of the
+        See the documentation of `process` for a detailed description of the
         iterative process implemented in this function.
 
         Parameters
@@ -95,12 +139,10 @@ class Optimize:
             A 4-element tuple containing:
             - z_l : float
                 The redshift threshold being processed.
-            - threshold_tot_min : float
-                Minimum required total purity or completeness for the optimized set of cuts.
-            - step : float
-                Increment step applied when scanning over purity or completeness thresholds.
             - store_iterations : bool
-                If True, store the iteration steps in self.dict_linear_steps.
+                If True, store the iteration steps in self.dict_steps.
+            - cpu_number : int
+                Number of CPU cores to use for parallel processing.
 
         Returns
         -------
@@ -111,14 +153,21 @@ class Optimize:
              performance metrics (purity, completeness, failure rate)
              for the given redshift threshold.
         """
-        z_l, threshold_tot_min, step, store_iterations = args
+        z_l, store_iterations, cpu_number = args
 
-        self.dict_linear[z_l] = {}
-        all_cuts = self.dict_all.get(z_l, {})
+        # Minimum required total purity or completeness for the optimized set of cuts
+        idx = np.where(self.dm.z_lim == z_l)[0][0]
+        threshold_tot_min = self.dm.thresholded_quantity_min[idx]
+
+        # Pre-compute color cut performance
+        measure = Measure(self.dm)
+        measure.process(z_l, cpu_number=cpu_number)
+
+        # Get the correct dictionary
+        self.dict[z_l] = {}
+        all_cuts = measure.dict_all.get(z_l, {})
         if not all_cuts:
             return z_l, None
-
-        idx = np.where(self.dm.z_lim == z_l)[0][0]
 
         # Find the initial threshold
         start_threshold = 0.0
@@ -148,7 +197,7 @@ class Optimize:
 
         current_thresh = start_threshold
         best_by_key = {}
-        dict_linear_steps = {}
+        dict_steps = {}
 
         C_tot = np.zeros_like(self.dm.z_lim, dtype=np.float32)
         P_tot = np.zeros_like(self.dm.z_lim, dtype=np.float32)
@@ -157,10 +206,10 @@ class Optimize:
         iteration = 0
         while current_thresh > 0:
 
-            if current_thresh <= self.dm.initial_threshold:
-                errMsg = "The current threshold in the iterative process"
-                errMsg += " is lower than or equal to the initial"
-                errMsg += " threshold set in the DataModel class! Lower the latter."
+            if current_thresh <= self.dm.buffered_threshold:
+                errMsg = "The current threshold in the iterative process is lower"
+                errMsg += " than or equal to the buffered threshold set in the"
+                errMsg += " DataModel class. Increase threshold_buffer in DataModel."
                 raise ValueError(errMsg)
 
             new_best_by_key = {}
@@ -302,15 +351,15 @@ class Optimize:
                 C_tot = C_tot_new
                 P_tot = P_tot_new
                 F_tot = F_tot_new
-                current_thresh -= step
+                current_thresh -= self.dm.step
 
                 if store_iterations:
-                    dict_linear_steps[iteration] = nested
+                    dict_steps[iteration] = nested
                     iteration += 1
             else:
                 break  # below the threshold
 
-        return z_l, best_by_key, dict_linear_steps
+        return z_l, best_by_key, dict_steps
 
     def _estimate_errors(self, n_bootstraps=1000):
         """
@@ -340,8 +389,7 @@ class Optimize:
         P_stats = np.zeros((2, len(self.dm.z_lim)))
         F_stats = np.zeros((2, len(self.dm.z_lim)))
 
-        print("\nDeriving bootstrap errors...")
-        for i in tqdm(range(n_bootstraps)):
+        for i in tqdm(range(n_bootstraps), desc="Deriving bootstrap errors"):
 
             indices = np.random.choice(
                 len(self.dm.dataset), size=len(self.dm.dataset), replace=True
@@ -367,7 +415,7 @@ class Optimize:
                 self.dm.z_lim,
                 color_cache,
                 target_mask,
-                self.dict_linear,
+                self.dict,
                 C_temp,
                 P_temp,
                 F_temp,
@@ -389,13 +437,8 @@ class Optimize:
         self.P_std = np.sqrt((P_stats[1] / n_bootstraps) - P_mean**2)
         self.F_std = np.sqrt((F_stats[1] / n_bootstraps) - F_mean**2)
 
-    def process_linear(
+    def process(
         self,
-        threshold_tot_min,
-        step=0.001,
-        k=1,
-        do_bootstrap=False,
-        n_bootstraps=1000,
         cpu_number=None,
         store_iterations=False,
     ):
@@ -404,76 +447,21 @@ class Optimize:
 
         Here, either completeness or purity are maximized, depending on what was
         set in the `DataModel` instance given in input to the constructor of this class.
-        This method incrementally relaxes the single color cut purity (completeness)
-        threshold in order to identify a set of cuts that maximize total completeness
-        (purity) while still satisfying the global threshold. The algorithm
-        proceeds iteratively, starting from a strict initial threshold and reducing
-        it by `step` until the total purity (or completeness) remains above
-        `threshold_tot_min`. The starting threshold corresponds to the maximum
-        purity (or completeness) attained across all single color conditions.
-        Also bootstrap errors on the metrics are derived.
-
-        Constraints
-        -----------
-        For each redshift value, this method searches for the set of
-        cuts that ($\mathcal{P}_{\rm iter}^{\rm ini}$: initial threshold,
-        $\delta\mathcal{P}_{\rm iter}$: `step`, $z_{\rm l}$: `z_l`,
-        $\mathcal{P}_{\rm min}$: `threshold_tot_min`):
-        - Update $\mathcal{P}_{\rm iter}^k = \mathcal{P}_{\rm iter}^{\rm ini} -
-          k\,\delta\mathcal{P}_{\rm iter}$, where $k$ is the iteration index,
-          starting from 0.
-        - For any $(x,y)$ color pair, select the $j$th condition
-          if there exists at least one parameter set $\vec{p}$ that yields
-          $\mathcal{P}_j(z_{\rm l}\,|\,\vec{p},x,y)>\mathcal{P}_{\rm iter}^k$.
-        - Among those selected at step 2, define the optimal $j$th condition
-          in the $(x,y)$ space as the one having $\vec{p}$ parameters that
-          maximize $\mathcal{C}_j(z_{\rm l}\,|\,\vec{p},x,y)$.
-        - Combine the selected conditions in all $(x,y)$ spaces through the
-          $\lor$ logical operator, and evaluate the global purity,
-          $\mathcal{P}(z_{\rm l})$.
-        - Repeat from point 1 as long as
-          $\mathcal{P}(z_{\rm l})>\mathcal{P}_{\rm min}$.
-
-        After the optimal cuts are found for all redshift bins, the results are:
-        1. Combined into global purity, completeness, and failure rate metrics.
-        2. Restructured into an expression-based dictionary.
-        3. Interpolated across redshift bins to provide continuous cut parameters.
-
-        Single color conditions having failure rate equal to 1 or completeness equal
-        to 0 are always excluded.
 
         Parameters
         ----------
-        threshold_tot_min : float or array-like
-            Required minimum global purity or completeness across all redshift bins.
-            If float, the same threshold is applied at any limiting redshift point.
-            If array-like, a different threshold is used at each limiting
-            redshift.
-        step : float, optional
-            Increment by which the single-cut threshold is reduced
-            during the search. Default is 0.001.
         cpu_number : int or None, optional
             Number of CPU cores to use for parallel processing. If None,
             defaults to using all available cores minus two.
-        k : int, optional
-            Requested degree of the spline interpolation. Default is 1 (linear).
-            The actual degree is adjusted case by case:
-            - If there are fewer than ``k+1`` points, the degree is reduced
-              to ``n_points - 1``.
-            - If there is only one point, interpolation is skipped.
-        do_bootstrap : bool, optional
-            If True, derive uncertainties on C, P, and F through bootstrap.
-        n_bootstraps : int, optional
-            Number of bootstrap resamples to perform, by default 1000.
         store_iterations : bool, optional
-            If True, store the iteration steps in self.dict_linear_steps.
-            Default is False.
+            If True, store the iteration steps in self.dict_steps.
+            Default is False. For advanced users.
 
         Returns
         -------
         None
             Updates the following instance attributes in place:
-            - ``self.dict_linear`` : dict
+            - ``self.dict`` : dict
                 Nested dictionary of optimal iterative cuts for each
                 redshift bin, restructured and interpolated.
             - ``self.P`` : numpy.ndarray
@@ -482,19 +470,16 @@ class Optimize:
                 Total completeness across all bins.
             - ``self.F`` : numpy.ndarray
                 Total failure rate across all bins.
+            - ``self.P_std`` : numpy.ndarray
+                Total purity error across all bins.
+            - ``self.C_std`` : numpy.ndarray
+                Total completeness error across all bins.
+            - ``self.F_std`` : numpy.ndarray
+                Total failure rate error across all bins.
         """
-        if isinstance(threshold_tot_min, float):
-            threshold_tot_min = [threshold_tot_min] * len(self.dm.z_lim)
-
-        # Pre-compute color cut performance
-        measure = Measure(self.dm)
-        measure.process(cpu_number=cpu_number)
-        self.dict_all = measure.dict_all
+        print("\nRunning the linear color cut optimization...")
 
         # Pre-compute colors
-        print("\nRunning the linear color cut optimization...")
-        start_time = time.time()
-
         self.redshift = self.dm.dataset["redshift"].values.astype(np.float32)
         self.color_cache = {}
         for mag1, mag2 in self.dm.colors:
@@ -502,65 +487,45 @@ class Optimize:
                 np.float32
             ) - self.dm.dataset[mag2].values.astype(np.float32)
 
-        # Parallel processing
-        N_cpu = (
-            min(cpu_number, mp.cpu_count() - 2)
-            if cpu_number
-            else max(mp.cpu_count() - 2, 1)
-        )
-        N_cpu = max(1, N_cpu)  # Ensure at least 1 process
-
-        args_list = [
-            (
-                z_l,
-                threshold_tot_min[np.where(self.dm.z_lim == z_l)[0][0]],
-                step,
-                store_iterations,
-            )
-            for z_l in self.dm.z_lim
+        # Optimized selection
+        results = [
+            self._process_for_one_z((z_l, store_iterations, cpu_number))
+            for z_l in tqdm(self.dm.z_lim, desc="Looping over z_lim points")
         ]
-        with mp.Pool(processes=N_cpu) as pool:
-            results = pool.map(self._process_linear_for_one_z, args_list)
 
         for result in results:
             z_l, cuts_dict, steps = result
-            self.dict_linear[z_l] = build_nested_dict(cuts_dict)
-            self.dict_linear_steps[z_l] = steps
+            self.dict[z_l] = build_nested_dict(cuts_dict)
+            self.dict_steps[z_l] = steps
 
-        print("Combining the optimal cuts...")
         combine_optimal_cuts(
             self.dm.z_lim,
             self.color_cache,
             self.dm.target_mask,
-            self.dict_linear,
+            self.dict,
             self.C,
             self.P,
             self.F,
         )
 
-        total_time = time.time() - start_time
-        print(
-            "Linear cut optimization complete.",
-            f"Total time: {total_time:.2f} seconds.",
-        )
-
         del self.redshift, self.color_cache
 
         # Bootstrap errors
-        if do_bootstrap:
-            self._estimate_errors(n_bootstraps=n_bootstraps)
+        if self.dm.do_bootstrap:
+            self._estimate_errors(n_bootstraps=self.dm.n_bootstraps)
 
         #
         restructure_dict(
-            self.dict_linear,
+            self.dict,
             self.dm.bands,
             self.dm.colors,
             self.dm.z_lim,
             self.dm.thresholded_quantity,
-            threshold_tot_min,
+            self.dm.thresholded_quantity_min,
             is_zlim_lower=self.dm.is_zlim_lower,
         )
-        interpolate_parameters(self.dict_linear, k=k)
+        interpolate_parameters(self.dict, k=self.dm.k)
+        print("Linear cut optimization complete.")
 
     def write_optimal_selection(
         self,
@@ -601,7 +566,7 @@ class Optimize:
         if np.sum(self.C) == 0.0:
             raise ValueError("No calibration is available! Run process() first.")
 
-        dictionary = copy.deepcopy(self.dict_linear)
+        dictionary = copy.deepcopy(self.dict)
 
         # Remove unnecessary keys
         for key in dictionary:

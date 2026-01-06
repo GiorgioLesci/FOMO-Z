@@ -267,7 +267,7 @@ class SelectGalaxy:
             Updates ``self.dict`` in place with the loaded dictionary and
             reconstructed interpolator objects.
         """
-        dictionary = optimize.dict_linear
+        dictionary = optimize.dict
         self.dict = copy.deepcopy(dictionary)
         self._reconstruct_interpolators()
 

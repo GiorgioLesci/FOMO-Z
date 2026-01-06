@@ -98,18 +98,9 @@ class Measure:
             redshift thresholds, and precomputed cut metrics.
         """
         self.dict_all = {}
-
         self.dm = data_model
-        self.dataset = self.dm.dataset
-        self.bands = self.dm.bands
-        self.colors = self.dm.colors
-        self.z_lim = self.dm.z_lim
-        self.s_samples = self.dm.s_samples
-        self.c_precision = self.dm.c_precision
-        self.initial_threshold = self.dm.initial_threshold
-        self.thresholded_quantity = self.dm.thresholded_quantity
 
-    def _apply_cuts(self, mag1, mag2, cross_colors=[], cpu_number=None):
+    def _apply_cuts(self, z_lim, mag1, mag2, cross_colors=[], cpu_number=None):
         """
         Apply linear color–color cuts in parallel across a dataset.
 
@@ -119,6 +110,8 @@ class Measure:
 
         Parameters
         ----------
+        z_lim : array-like
+            Limiting redshift points.
         mag1 : array-like of float
             First magnitude or color feature used in the cuts.
         mag2 : array-like of float
@@ -147,12 +140,12 @@ class Measure:
         N_cpu = max(1, N_cpu)  # Ensure at least 1 process
 
         # Precompute base arrays
-        color1 = self.dataset[mag1].values.astype(np.float32) - self.dataset[
+        color1 = self.dm.dataset[mag1].values.astype(np.float32) - self.dm.dataset[
             mag2
         ].values.astype(np.float32)
 
         vmin, vmax = c_domain(color1)
-        n_steps = int((vmax - vmin) / self.c_precision) + 1
+        n_steps = int((vmax - vmin) / self.dm.c_precision) + 1
         test_colors = np.linspace(vmin, vmax, n_steps, dtype=np.float32)
 
         # Create shared arrays
@@ -162,23 +155,18 @@ class Measure:
         cross_shared_arrays = {}
         if cross_colors:
             for mag3, mag4 in cross_colors:
-                color2 = self.dataset[mag3].values.astype(np.float32) - self.dataset[
-                    mag4
-                ].values.astype(np.float32)
+                color2 = self.dm.dataset[mag3].values.astype(
+                    np.float32
+                ) - self.dm.dataset[mag4].values.astype(np.float32)
                 cross_color_arrays[(mag3, mag4)] = color2
                 cross_shared_arrays[(mag3, mag4)] = mp.Array("f", color2)
 
         # Loop over limiting redshift points
-        for i, z_l in enumerate(
-            tqdm(
-                self.z_lim,
-                desc=f"Measuring the performance of linear cuts including ({mag1}-{mag2})",
-            )
-        ):
+        for z_l in z_lim:
 
-            shared_target_mask = mp.Array(
-                "b", [bool(x) for x in self.dm.target_mask[i]]
-            )
+            idx = np.where(self.dm.z_lim == z_l)[0][0]
+            target_mask = self.dm.target_mask[idx]
+            shared_target_mask = mp.Array("b", [bool(x) for x in target_mask])
 
             if z_l not in self.dict_all:
                 self.dict_all[z_l] = {}
@@ -217,21 +205,27 @@ class Measure:
             failure_up = fp_up / np.maximum(fp_up + tn_up, 1e-12)
             failure_low = fp_low / np.maximum(fp_low + tn_low, 1e-12)
 
-            if self.thresholded_quantity == "purity":
-                mask_threshold_up = purity_up > self.initial_threshold
-                mask_threshold_low = purity_low > self.initial_threshold
+            if self.dm.thresholded_quantity == "purity":
+                mask_threshold_up = purity_up > self.dm.buffered_threshold
+                mask_threshold_low = purity_low > self.dm.buffered_threshold
+                mask_maximized_up = compl_up > self.dm.maximized_quantity_min
+                mask_maximized_low = compl_low > self.dm.maximized_quantity_min
             else:
-                mask_threshold_up = compl_up > self.initial_threshold
-                mask_threshold_low = compl_low > self.initial_threshold
+                mask_threshold_up = compl_up > self.dm.buffered_threshold
+                mask_threshold_low = compl_low > self.dm.buffered_threshold
+                mask_maximized_up = purity_up > self.dm.maximized_quantity_min
+                mask_maximized_low = purity_low > self.dm.maximized_quantity_min
 
             mask_up = (
                 (mask_threshold_up)
+                & (mask_maximized_up)
                 & (compl_up > 0.0)
                 & (purity_up > 0.0)
                 & (failure_up < 1.0)
             )
             mask_low = (
                 (mask_threshold_low)
+                & (mask_maximized_low)
                 & (compl_low > 0.0)
                 & (purity_low > 0.0)
                 & (failure_low < 1.0)
@@ -260,9 +254,9 @@ class Measure:
                     color2 = cross_color_arrays[(mag3, mag4)]
 
                     sc_grid = []
-                    for s in self.s_samples:
+                    for s in self.dm.s_samples:
                         c_min, c_max = c_domain_given_s(color1, color2, s)
-                        n_c = int((c_max - c_min) / self.c_precision) + 1
+                        n_c = int((c_max - c_min) / self.dm.c_precision) + 1
                         c_grid = np.linspace(c_min, c_max, n_c, dtype=np.float32)
 
                         for c in c_grid:
@@ -297,13 +291,16 @@ class Measure:
                     compl = tp_all / np.maximum(tp_all + fn_all, 1e-12)
                     failure = fp_all / np.maximum(fp_all + tn_all, 1e-12)
 
-                    if self.thresholded_quantity == "purity":
-                        mask_threshold = purity > self.initial_threshold
+                    if self.dm.thresholded_quantity == "purity":
+                        mask_threshold = purity > self.dm.buffered_threshold
+                        mask_maximized = compl > self.dm.maximized_quantity_min
                     else:
-                        mask_threshold = compl > self.initial_threshold
+                        mask_threshold = compl > self.dm.buffered_threshold
+                        mask_maximized = purity > self.dm.maximized_quantity_min
 
                     mask_per_condition = (
                         (mask_threshold)
+                        & (mask_maximized)
                         & (compl > 0.0)
                         & (purity > 0.0)
                         & (failure < 1.0)
@@ -329,7 +326,7 @@ class Measure:
 
                     self.dict_all[z_l][(mag1, mag2)][(mag3, mag4)] = sub_dict
 
-    def process(self, cpu_number=None):
+    def process(self, z_lim, cpu_number=None):
         """
         Apply all color cuts and compute summary statistics.
 
@@ -339,6 +336,8 @@ class Measure:
 
         Parameters
         ----------
+        z_lim : float
+            Limiting redshift.
         cpu_number : int or None, optional
             Number of CPUs to use for parallel processing when applying cuts.
             - If `None`, defaults to `max(mp.cpu_count() - 2, 1)`.
@@ -351,10 +350,14 @@ class Measure:
             This method updates the internal class attribute `self.dict_all`
             and does not return any value.
         """
-        for i in range(len(self.colors)):
+        if z_lim not in self.dm.z_lim:
+            raise ValueError("z_lim must be one of the elements of DataModel's z_lim")
+
+        for i in range(len(self.dm.colors)):
             self._apply_cuts(
-                self.colors[i][0],
-                self.colors[i][1],
-                cross_colors=self.colors[i + 1 : len(self.colors)],
+                [z_lim],
+                self.dm.colors[i][0],
+                self.dm.colors[i][1],
+                cross_colors=self.dm.colors[i + 1 : len(self.dm.colors)],
                 cpu_number=cpu_number,
             )

@@ -23,14 +23,20 @@ class DataModel:
         dataset,
         bands,
         z_lim,
+        thresholded_quantity_min,
+        maximized_quantity="completeness",
+        maximized_quantity_min=0.05,
         z_gal_string="redshift",
         is_zlim_lower=True,
         additional_rules=None,
         missing_data=-99,
         s_samples=np.linspace(0.3, 1.7, 30),
         c_precision=0.05,
-        initial_threshold=0.9,
-        maximized_quantity="completeness",
+        step=0.0001,
+        threshold_buffer=0.05,
+        k=1,
+        do_bootstrap=False,
+        n_bootstraps=1000,
     ):
         """
         Set the data model for color selections.
@@ -52,6 +58,25 @@ class DataModel:
             Array of redshift limits/thresholds to be used in selection tests.
             It can represent either lower of higher limit values, depending on
             the value of `is_zlim_lower`.
+        thresholded_quantity_min : float or array-like
+            Required minimum for the thresholded quantity, namely
+            global purity (if `maximized_quantity == "completeness"`)
+            or completeness (if `maximized_quantity == "purity"`) across all redshift bins.
+            If float, the same threshold is applied at any limiting redshift point.
+            If array-like, a different threshold is used at each limiting
+            redshift.
+        maximized_quantity : str, default="completeness"
+            The quantity to maximize. Possibilities are either "completeness" or
+            "purity".
+        maximized_quantity_min : float, default=0.05
+            Required minimum for the maximized completeness (if `maximized_quantity == "completeness"`)
+            or purity (if `maximized_quantity == "purity"`) across all redshift bins.
+            This is not a threshold on the global value of the maximized quantity.
+            In `OptimizeLinear`, only single color conditions that meet the requirement on
+            this parameter are considered. In `OptimizeGrid`, only color-color spaces that
+            yield a maximized quantity larger than this parameter are considered. The default
+            value is 0.05, namely 5%. This threshold is useful to exclude random fluctuations
+            and reduce statistical uncertainties on selection purity and completeness.
         z_gal_string : str, default='redshift'
             Column name in `dataset` that contains the galaxy redshift values.
         is_zlim_lower : bool, default = True
@@ -70,21 +95,32 @@ class DataModel:
         s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
             Array of slope values for generating linear cuts in color–color space.
             These samples must be strictly positive. Used only for linear color cuts
-            (i.e., used by the `Optimize.process_linear` method,
-            not used by the `Optimize.process_grid` method).
+            (i.e., used by `OptimizeLinear`, not used by `OptimizeGrid`).
         c_precision : float, default=0.05
             Precision of the c parameter sampling. Smaller values increase accuracy
             but significantly increase the number of operations. If you halve `c_precision`,
             expect about 2 times more c steps per s (also runtime and RAM roughly double).
-        initial_threshold : float, default=0.9
-            Initial threshold on purity or completeness, depending on the value of
-            `maximized_quantity`. Color conditions not satisfying this threshold are
-            not stored. This is useful to avoid filling memory with unused information.
-        maximized_quantity : str, default="completeness"
-            The quantity to maximize. Possibilities are either "completeness" or
-            "purity". If "completeness", `initial_threshold` acts on the purity. If
-            "purity", `initial_threshold` acts on completeness. This parameter defines
-            what is maximized in the `Optimize` class.
+        step : float, default=0.0001
+            Defines the threshold reduction (i) on single color conditions in `OptimizeLinear`,
+            and (ii) on grid elements in `OptimizeGrid`. Default is 0.0001.
+        threshold_buffer : float, default=0.05
+            Used only in `OptimizeLinear`. Quantity subtracted from `thresholded_quantity_min`.
+            Color conditions not satisfying the final threshold, namely
+            `thresholded_quantity_min - threshold_buffer`, are not
+            considered in the optimization process. This is useful to avoid filling memory
+            with unused information. The default value is 0.05, namely a 5 percentage point
+            subtraction.
+        k : int, default=1
+            Used only in `OptimizeLinear`.
+            Requested degree of the spline interpolation. Default is 1 (linear).
+            The actual degree is adjusted case by case:
+            - If there are fewer than ``k+1`` points, the degree is reduced
+              to ``n_points - 1``.
+            - If there is only one point, interpolation is skipped.
+        do_bootstrap : bool, default=False
+            If True, derive uncertainties on C, P, and F through bootstrap.
+        n_bootstraps : int, default=1000
+            Number of bootstrap resamples to perform, by default 1000.
         """
         assert isinstance(
             dataset, pd.DataFrame
@@ -129,6 +165,28 @@ class DataModel:
             if z_l < 0:
                 raise ValueError("z_lim values cannot be negative")
 
+        if isinstance(thresholded_quantity_min, float):
+            self.thresholded_quantity_min = [thresholded_quantity_min] * len(self.z_lim)
+        else:
+            if len(thresholded_quantity_min) != len(self.z_lim):
+                raise ValueError(
+                    f"thresholded_quantity_min length ({len(thresholded_quantity_min)}) "
+                    f"must match z_lim length ({len(self.z_lim)})"
+                )
+            self.thresholded_quantity_min = thresholded_quantity_min
+        for t in self.thresholded_quantity_min:
+            if not (0.0 <= t < 1.0):
+                raise ValueError(
+                    "thresholded_quantity_min accepted values lie in the range [0, 1)."
+                )
+
+        if isinstance(maximized_quantity_min, (float, int)):
+            if not (0.0 <= maximized_quantity_min <= 1.0):
+                raise ValueError("maximized_quantity_min must range from 0 to 1.")
+            self.maximized_quantity_min = maximized_quantity_min
+        else:
+            raise TypeError("maximized_quantity_min must be a float or integer.")
+
         if np.any(s_samples <= 0):
             raise ValueError(
                 "All slope values in s_samples must be strictly positive. "
@@ -140,9 +198,13 @@ class DataModel:
         self.is_zlim_lower = is_zlim_lower
         self.additional_rules = additional_rules
 
-        if initial_threshold <= 0.0:
-            raise ValueError("initial_threshold must be strictly larger than 0.")
-        self.initial_threshold = initial_threshold
+        self.step = step
+
+        if threshold_buffer > thresholded_quantity_min:
+            raise ValueError(
+                "threshold_buffer must be strictly smaller than thresholded_quantity_min."
+            )
+        self.buffered_threshold = thresholded_quantity_min - threshold_buffer
 
         if maximized_quantity not in ["completeness", "purity"]:
             errMsg = "maximized_quantity must be either 'completeness' or 'purity'."
@@ -151,6 +213,10 @@ class DataModel:
             self.thresholded_quantity = "purity"
         else:
             self.thresholded_quantity = "completeness"
+
+        self.k = k
+        self.do_bootstrap = do_bootstrap
+        self.n_bootstraps = n_bootstraps
 
         # Check the format of the additional rules
         if additional_rules is not None:

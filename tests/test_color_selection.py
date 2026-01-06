@@ -22,7 +22,7 @@ from fomoz.color_selection.tools import (
     float_representer,
 )
 from fomoz.color_selection.data_model import DataModel
-from fomoz.color_selection.optimize import Optimize
+from fomoz.color_selection.optimize_linear import OptimizeLinear
 from fomoz.color_selection.select_galaxy import SelectGalaxy
 
 
@@ -47,8 +47,17 @@ def reference_data_model_instance(reference_dataset):
     """Create a Measure instance with reference.csv data for testing."""
     bands = ["g", "r", "i"]
     z_lim = [0.5, 0.6]
+    thresholded_quantity_min = 0.9
 
-    data_model = DataModel(reference_dataset, bands, z_lim, initial_threshold=0.8)
+    data_model = DataModel(
+        reference_dataset,
+        bands,
+        z_lim,
+        thresholded_quantity_min,
+        maximized_quantity_min=0.0,
+        step=0.0001,
+        k=3,
+    )
 
     return data_model
 
@@ -58,16 +67,17 @@ def reference_data_model_instance(reference_dataset):
 def reference_measure_instance(reference_data_model_instance):
     """Create a Measure instance with reference.csv data for testing."""
     measure = Measure(reference_data_model_instance)
-    measure.process(cpu_number=1)
+    for z_l in reference_data_model_instance.z_lim:
+        measure.process(z_l, cpu_number=1)
 
     return measure
 
 
 # Shared fixture for optimize instance
 @pytest.fixture
-def reference_optimize_instance(reference_data_model_instance):
-    """Create an Optimize instance with reference.csv data for testing."""
-    optimize = Optimize(reference_data_model_instance)
+def reference_optimize_linear_instance(reference_data_model_instance):
+    """Create an OptimizeLinear instance with reference.csv data for testing."""
+    optimize = OptimizeLinear(reference_data_model_instance)
 
     return optimize
 
@@ -282,7 +292,7 @@ class TestMeasureProcess:
         """Test process() method with actual reference data."""
 
         measure = reference_measure_instance
-        z_lim = measure.z_lim
+        z_lim = measure.dm.z_lim
 
         # Top-level structure: one dict entry per z_l
         assert len(measure.dict_all) == len(z_lim)
@@ -343,11 +353,11 @@ class TestMeasureProcess:
         z_l = [0.3]  # Single z limit
 
         # Create a new Measure instance with single z limit
-        dm = DataModel(reference_dataset, bands, z_l)
+        dm = DataModel(reference_dataset, bands, z_l, 0.9, maximized_quantity_min=0.0)
         measure = Measure(dm)
-        measure.process(cpu_number=1)
+        measure.process(dm.z_lim[0], cpu_number=1)
 
-        assert measure.z_lim[0] in measure.dict_all
+        assert measure.dm.z_lim[0] in measure.dict_all
         assert len(measure.dict_all) == 1
 
 
@@ -359,15 +369,12 @@ class TestMeasureProcess:
 class TestOptimizeProcess:
     """Test cases for the process() method with reference.csv."""
 
-    def test_process(self, reference_optimize_instance):
+    def test_process(self, reference_optimize_linear_instance):
         """Test process method with reference data and check C, P, F values."""
-        optimize = reference_optimize_instance
+        optimize = reference_optimize_linear_instance
 
         # Run process (iterative method)
-        threshold_tot_min = 0.9
-        optimize.process_linear(
-            threshold_tot_min=threshold_tot_min, step=0.0001, cpu_number=1, k=3
-        )
+        optimize.process(cpu_number=1)
 
         # Check that C_tot and P_tot arrays are populated correctly
         assert len(optimize.C) == len(optimize.dm.z_lim)
@@ -399,13 +406,10 @@ class TestOptimizeProcess:
 class TestSelectGalaxy:
     """Test cases for SelectGalaxy.process() method with reference.csv."""
 
-    def test_process(self, reference_dataset, reference_optimize_instance):
+    def test_process(self, reference_dataset, reference_optimize_linear_instance):
         """Test process method with reference data and check the number of selected objects."""
-        optimize = reference_optimize_instance
-        threshold_tot_min = 0.9
-        optimize.process_linear(
-            threshold_tot_min=threshold_tot_min, step=0.0001, cpu_number=1, k=3
-        )
+        optimize = reference_optimize_linear_instance
+        optimize.process(cpu_number=1)
 
         # "Test" sample and test z_l points
         test_sample = reference_dataset
