@@ -407,7 +407,7 @@ class CalibrateLinear:
             F_temp = np.zeros(len(self.dm.z_lim))
 
             # Get the target mask
-            target_mask = self.dm.get_target_mask(bootstrap_sample)
+            target_mask = self.dm.get_target_mask(bootstrap_sample, self.dm.z_lim)
 
             # Compute the metrics
             combine_optimal_cuts(
@@ -476,7 +476,7 @@ class CalibrateLinear:
             - ``self.F_std`` : numpy.ndarray
                 Total failure rate error across all bins.
         """
-        print("\nRunning the linear color cut optimization...")
+        print("\nRunning the linear color cut calibration...")
 
         # Pre-compute colors
         self.redshift = self.dm.dataset["redshift"].values.astype(np.float32)
@@ -524,7 +524,7 @@ class CalibrateLinear:
             is_zlim_lower=self.dm.is_zlim_lower,
         )
         interpolate_parameters(self.dict, k=self.dm.k)
-        print("Linear cut optimization complete.")
+        print("Linear cut calibration complete.")
 
     def write_optimal_selection(
         self,

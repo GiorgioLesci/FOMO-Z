@@ -257,9 +257,9 @@ class DataModel:
                     raise ValueError(errMsg)
 
         # Create the target mask
-        self.target_mask = self.get_target_mask(self.dataset)
+        self.target_mask = self.get_target_mask(self.dataset, self.z_lim)
 
-    def get_target_mask(self, dataset):
+    def get_target_mask(self, dataset, z_lim):
         """
         Create a mask identifying galaxies that satisfy a set of conditions.
 
@@ -273,13 +273,15 @@ class DataModel:
         dataset : pandas.DataFrame
             Input dataset containing galaxy properties. Must include a 'redshift' column
             and any additional properties referenced in `self.additional_rules`.
+        z_lim : numpy.array of float
+            Limiting redshift points.
 
         Returns
         -------
         target_mask : numpy.ndarray of bool
-            2D boolean array with shape (len(self.z_lim), len(dataset)).
+            2D boolean array with shape (len(z_lim), len(dataset)).
             target_mask[i, j] = True indicates that galaxy j satisfies all selection
-            criteria for redshift limit self.z_lim[i].
+            criteria for redshift limit z_lim[i].
 
         Notes
         -----
@@ -288,8 +290,8 @@ class DataModel:
         - The returned mask can be used directly for calculating completeness, purity,
           and other selection metrics.
         """
-        target_mask = np.full((len(self.z_lim), len(dataset)), False, dtype=bool)
-        for i, zz in enumerate(self.z_lim):
+        target_mask = np.full((len(z_lim), len(dataset)), False, dtype=bool)
+        for i, zz in enumerate(z_lim):
 
             # Limiting redshift
             if self.is_zlim_lower:

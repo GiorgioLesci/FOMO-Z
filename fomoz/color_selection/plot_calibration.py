@@ -11,6 +11,10 @@ from typing import Union, List, Tuple, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
+from .tools import compute_metrics
+from .calibrate_linear import CalibrateLinear
+from .select_object import SelectObject
+
 
 class PlotCalibration:
     """Plot the outputs of calibrated color selections."""
@@ -57,9 +61,11 @@ class PlotCalibration:
                     f"Number of labels ({len(labels)}) must match "
                     f"number of calibrations ({self.n_calibrations})."
                 )
-        elif labels is not None:
+            self.labels = labels
+        elif labels is None:
+            self.labels = [labels] * self.n_calibrations
+        else:
             raise TypeError("labels can be either None, list, or tuple.")
-        self.labels = labels
 
     def _normalize_plot_style(self, value, name):
         """
@@ -90,7 +96,14 @@ class PlotCalibration:
             raise TypeError("{name} must be either string, list, or tuple.")
 
     def plot_metric(
-        self, metric, ax, show_legend_label=False, linestyle="-", color="k", alpha=0.3
+        self,
+        metric,
+        ax,
+        show_legend=False,
+        linestyle="-",
+        color="k",
+        alpha=0.3,
+        interp_points=None,
     ):
         """
         Plot a metric of the optimized color cuts.
@@ -105,7 +118,7 @@ class PlotCalibration:
             "P" (purity), "F" (failure rate).
         ax : matplotlib.axes.Axes
             Axis object.
-        show_legend_label : bool, optional
+        show_legend : bool, optional
             If True, show the legend label. Default is False.
         linestyle : list or str, optional
             Line style. Default is "-".
@@ -113,14 +126,17 @@ class PlotCalibration:
             Line color. Default is "k".
         alpha : float, optional
             alpha parameter of the 68% confidence interval. Default is 0.3.
+        interp_points : array-like, optional
+            Limiting redshift points. If not None, derive the metrics at these points
+            using interpolations. Valid only for CalibrateLinear instances. Default is None.
         """
         if metric not in ["C", "P", "F"]:
             raise ValueError(
                 "The metric parameter can only take the following values: 'C', 'P', 'F'."
             )
 
-        linestyle = _normalize_plot_style(linestyle, "linestyle")
-        color = _normalize_plot_style(color, "color")
+        linestyle = self._normalize_plot_style(linestyle, "linestyle")
+        color = self._normalize_plot_style(color, "color")
 
         for i, calibration in enumerate(self.calibrations):
             z_lim = calibration.dm.z_lim
@@ -139,8 +155,9 @@ class PlotCalibration:
                 y * 100.0,
                 color=color[i],
                 linestyle=linestyle[i],
-                label=self.labels[i] if show_legend_label else None,
+                label=self.labels[i] if show_legend else None,
             )
+
             if not np.any(np.isnan(y_std)):  # Add error bands if available
                 ax.fill_between(
                     z_lim,
@@ -150,12 +167,42 @@ class PlotCalibration:
                     alpha=0.3,
                 )
 
+            if interp_points is not None and isinstance(calibration, CalibrateLinear):
+                sel = SelectObject()
+                sel.load_parameters(calibration)
+
+                dataset = calibration.dm.dataset
+                sel.process(interp_points, dataset)
+
+                y = []
+                for j, z_l in enumerate(interp_points):
+                    target_mask = calibration.dm.get_target_mask(dataset, [z_l])
+                    TP, FP, FN, TN = compute_metrics(
+                        np.array(sel.mask[j]), np.array(target_mask[0])
+                    )
+                    if metric == "C":
+                        y.append(TP / (TP + FN) * 100.0 if TP + FN > 0 else 0.0)
+                    elif metric == "P":
+                        y.append(TP / (TP + FP) * 100.0 if TP + FP > 0 else 0.0)
+                    else:
+                        y.append(FP / (FP + TN) * 100.0 if FP + TN > 0 else 0.0)
+
+                ax.plot(
+                    interp_points,
+                    y,
+                    label=(
+                        self.labels[i] + " - interpolation"
+                        if show_legend and self.labels[i] is not None
+                        else None
+                    ),
+                )
+
     def plot_all_metrics(
         self,
         figsize=(15, 4.5),
         wspace=0.35,
         loclegend="upper right",
-        show_legend_label=True,
+        show_legend=False,
         legend_fontsize=13,
         labelsize=13,
         xlabel=r"$z_{\rm l}$",
@@ -165,6 +212,7 @@ class PlotCalibration:
         color="k",
         show_grid=False,
         alpha=0.3,
+        interp_points=None,
     ):
         r"""
         Plot the performance metrics of the optimized color cuts.
@@ -184,8 +232,8 @@ class PlotCalibration:
             Space between the subplots. Default is 0.35.
         loclegend : str, optional
             Location of the legend in the first panel. Default is "upper right".
-        show_legend_label : bool, optional
-            If True, show the legend labels. Default is False.
+        show_legend : bool, optional
+            If True, show the legend. Default is False.
         legend_fontsize : float, optional
             Size of the legend entries. Default is 15.
         labelsize : float, optional
@@ -204,6 +252,9 @@ class PlotCalibration:
             If True, show the axis tick grid. Default is False.
         alpha : float, optional
             alpha parameter of the 68% confidence interval. Default is 0.3.
+        interp_points : array-like, optional
+            Limiting redshift points. If not None, derive the metrics at these points
+            using interpolations. Valid only for CalibrateLinear instances. Default is None.
         """
         # Set up the plot
         fig, ax = plt.subplots(
@@ -235,10 +286,13 @@ class PlotCalibration:
             self.plot_metric(
                 metric,
                 ax[i],
-                show_legend_label=show_legend_label if i == 0 else False,
+                show_legend=show_legend if i == 0 else False,
                 linestyle=linestyle,
+                color=color,
+                alpha=alpha,
+                interp_points=interp_points,
             )
 
-        if show_legend_label is not None:
+        if show_legend:
             ax[0].legend(loc=loclegend, fontsize=legend_fontsize)
         plt.show()

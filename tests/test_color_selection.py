@@ -399,7 +399,7 @@ class TestCalibrationProcess:
 
 
 ############################
-### select_galaxy.py ###
+### select_object.py ###
 ############################
 
 
