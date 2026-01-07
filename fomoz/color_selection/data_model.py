@@ -72,8 +72,8 @@ class DataModel:
             Required minimum for the maximized completeness (if `maximized_quantity == "completeness"`)
             or purity (if `maximized_quantity == "purity"`) across all redshift bins.
             This is not a threshold on the global value of the maximized quantity.
-            In `OptimizeLinear`, only single color conditions that meet the requirement on
-            this parameter are considered. In `OptimizeGrid`, only color-color spaces that
+            In `CalibrateLinear`, only single color conditions that meet the requirement on
+            this parameter are considered. In `CalibrateGrid`, only color-color spaces that
             yield a maximized quantity larger than this parameter are considered. The default
             value is 0.05, namely 5%. This threshold is useful to exclude random fluctuations
             and reduce statistical uncertainties on selection purity and completeness.
@@ -95,23 +95,23 @@ class DataModel:
         s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
             Array of slope values for generating linear cuts in color–color space.
             These samples must be strictly positive. Used only for linear color cuts
-            (i.e., used by `OptimizeLinear`, not used by `OptimizeGrid`).
+            (i.e., used by `CalibrateLinear`, not used by `CalibrateGrid`).
         c_precision : float, default=0.05
             Precision of the c parameter sampling. Smaller values increase accuracy
             but significantly increase the number of operations. If you halve `c_precision`,
             expect about 2 times more c steps per s (also runtime and RAM roughly double).
         step : float, default=0.0001
-            Defines the threshold reduction (i) on single color conditions in `OptimizeLinear`,
-            and (ii) on grid elements in `OptimizeGrid`. Default is 0.0001.
+            Defines the threshold reduction (i) on single color conditions in `CalibrateLinear`,
+            and (ii) on grid elements in `CalibrateGrid`. Default is 0.0001.
         threshold_buffer : float, default=0.05
-            Used only in `OptimizeLinear`. Quantity subtracted from `thresholded_quantity_min`.
+            Used only in `CalibrateLinear`. Quantity subtracted from `thresholded_quantity_min`.
             Color conditions not satisfying the final threshold, namely
             `thresholded_quantity_min - threshold_buffer`, are not
             considered in the optimization process. This is useful to avoid filling memory
             with unused information. The default value is 0.05, namely a 5 percentage point
             subtraction.
         k : int, default=1
-            Used only in `OptimizeLinear`.
+            Used only in `CalibrateLinear`.
             Requested degree of the spline interpolation. Default is 1 (linear).
             The actual degree is adjusted case by case:
             - If there are fewer than ``k+1`` points, the degree is reduced

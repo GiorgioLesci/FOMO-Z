@@ -1,6 +1,7 @@
 """Color selection module of FOMO-Z."""
 
 from .tools import *
+from .calibrate_linear import *
 from .data_model import *
-from .optimize_linear import *
-from .select_galaxy import *
+from .plot_calibration import *
+from .select_object import *

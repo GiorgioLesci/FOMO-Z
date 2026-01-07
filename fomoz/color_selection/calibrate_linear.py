@@ -30,7 +30,6 @@ from .tools import (
     interpolate_parameters,
     make_yaml_serializable,
     restructure_dict,
-    set_metrics_plot,
 )
 
 # Register the custom representers for both default and safe dumpers
@@ -41,12 +40,12 @@ yaml.add_representer(list, inline_list_representer)
 yaml.add_representer(list, inline_list_representer, Dumper=yaml.SafeDumper)
 
 
-class OptimizeLinear:
-    """Optimize linear color selections."""
+class CalibrateLinear:
+    """Calibrate linear color selections."""
 
     def __init__(self, data_model):
         r"""
-        Class optimizing linear color selections.
+        Class calibrating optimal linear color selections.
 
         This class provides structures for ranking, aggregating, and optimizing color
         cuts. The maximized quantity (either completeness or purity) is defined by the
@@ -128,7 +127,7 @@ class OptimizeLinear:
 
     def _process_for_one_z(self, args):
         r"""
-        Optimize the linear color cut selection for a single redshift threshold `z_l`.
+        Calibrate the linear color cut selection for a single redshift threshold `z_l`.
 
         See the documentation of `process` for a detailed description of the
         iterative process implemented in this function.
@@ -604,73 +603,3 @@ class OptimizeLinear:
             metrics_df = pd.DataFrame(metrics_data)
             file_path = os.path.join(output_dir, f"FOMO-Z_{file_name}_metrics.csv")
             metrics_df.to_csv(file_path, index=False)
-
-    def plot(self, loclegend="upper right"):
-        """
-        Plot the performance metrics for the optimized color cuts.
-
-        This method produces a three-panel figure showing:
-        1. Completeness as a function of redshift threshold.
-        2. Purity as a function of redshift threshold.
-        3. Failure rate as a function of redshift threshold.
-
-        Parameters
-        ----------
-        loclegend : str, optional
-            Location of the legend in the first panel. Default is "upper right".
-
-        Returns
-        -------
-        None
-            Displays the matplotlib figure.
-        """
-        ax = set_metrics_plot()
-
-        if np.sum(self.C) != 0.0:
-            ax[0].plot(
-                self.dm.z_lim,
-                self.C * 100.0,
-                color="k",
-                linestyle="-",
-                label="Optimized selection",
-            )
-            ax[1].plot(
-                self.dm.z_lim,
-                self.P * 100.0,
-                color="k",
-                linestyle="-",
-            )
-            ax[2].plot(
-                self.dm.z_lim,
-                self.F * 100.0,
-                color="k",
-                linestyle="-",
-            )
-
-        # Add error bands if available
-        if not np.any(np.isnan(self.C_std)):
-            ax[0].fill_between(
-                self.dm.z_lim,
-                (self.C - self.C_std) * 100.0,
-                (self.C + self.C_std) * 100.0,
-                color="k",
-                alpha=0.3,
-                label="Bootstrap error",
-            )
-            ax[1].fill_between(
-                self.dm.z_lim,
-                (self.P - self.P_std) * 100.0,
-                (self.P + self.P_std) * 100.0,
-                color="k",
-                alpha=0.3,
-            )
-            ax[2].fill_between(
-                self.dm.z_lim,
-                (self.F - self.F_std) * 100.0,
-                (self.F + self.F_std) * 100.0,
-                color="k",
-                alpha=0.3,
-            )
-
-        ax[0].legend(loc=loclegend, fontsize=13)
-        plt.show()

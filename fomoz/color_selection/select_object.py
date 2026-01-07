@@ -18,7 +18,7 @@ from scipy.interpolate import BSpline
 from .tools import set_input_variable_precision
 
 
-class SelectGalaxy:
+class SelectObject:
     """Apply precomputed optimal color selections to datasets."""
 
     def __init__(self):
@@ -249,17 +249,17 @@ class SelectGalaxy:
         for z_l in self.z_lim:
             self.mask.append(self._select_objects(z_l, mags))
 
-    def load_parameters(self, optimize):
+    def load_parameters(self, calibration):
         """
-        Load selection parameters from an ``Optimize`` instance.
+        Load selection parameters from a ``CalibrateLinear`` instance.
 
         Load precomputed optimal color cut parameters
         and reconstruct interpolator objects.
 
         Parameters
         ----------
-        optimize : Optimize
-            `Optimize` object.
+        calibration : CalibrateLinear
+            `CalibrateLinear` object.
 
         Returns
         -------
@@ -267,7 +267,7 @@ class SelectGalaxy:
             Updates ``self.dict`` in place with the loaded dictionary and
             reconstructed interpolator objects.
         """
-        dictionary = optimize.dict
+        dictionary = calibration.dict
         self.dict = copy.deepcopy(dictionary)
         self._reconstruct_interpolators()
 

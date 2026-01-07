@@ -22,8 +22,8 @@ from fomoz.color_selection.tools import (
     float_representer,
 )
 from fomoz.color_selection.data_model import DataModel
-from fomoz.color_selection.optimize_linear import OptimizeLinear
-from fomoz.color_selection.select_galaxy import SelectGalaxy
+from fomoz.color_selection.calibrate_linear import CalibrateLinear
+from fomoz.color_selection.select_object import SelectObject
 
 
 # Shared fixture for reference dataset
@@ -73,13 +73,13 @@ def reference_measure_instance(reference_data_model_instance):
     return measure
 
 
-# Shared fixture for optimize instance
+# Shared fixture for calibration instance
 @pytest.fixture
-def reference_optimize_linear_instance(reference_data_model_instance):
-    """Create an OptimizeLinear instance with reference.csv data for testing."""
-    optimize = OptimizeLinear(reference_data_model_instance)
+def reference_calibration_linear_instance(reference_data_model_instance):
+    """Create an CalibrateLinear instance with reference.csv data for testing."""
+    calibration = CalibrateLinear(reference_data_model_instance)
 
-    return optimize
+    return calibration
 
 
 ####################
@@ -362,23 +362,23 @@ class TestMeasureProcess:
 
 
 ###################
-### optimize.py ###
+### calibration_*.py ###
 ###################
 
 
-class TestOptimizeProcess:
+class TestCalibrationProcess:
     """Test cases for the process() method with reference.csv."""
 
-    def test_process(self, reference_optimize_linear_instance):
+    def test_process(self, reference_calibration_linear_instance):
         """Test process method with reference data and check C, P, F values."""
-        optimize = reference_optimize_linear_instance
+        calibration = reference_calibration_linear_instance
 
         # Run process (iterative method)
-        optimize.process(cpu_number=1)
+        calibration.process(cpu_number=1)
 
         # Check that C_tot and P_tot arrays are populated correctly
-        assert len(optimize.C) == len(optimize.dm.z_lim)
-        assert len(optimize.P) == len(optimize.dm.z_lim)
+        assert len(calibration.C) == len(calibration.dm.z_lim)
+        assert len(calibration.P) == len(calibration.dm.z_lim)
 
         # Check against known expected values
         expected_C = [0.9294421, 0.93034951]
@@ -386,16 +386,16 @@ class TestOptimizeProcess:
         expected_F = [0.43983402, 0.31364725]
 
         assert np.allclose(
-            optimize.C, expected_C
-        ), f"Completeness mismatch: expected {expected_C}, got {optimize.C}"
+            calibration.C, expected_C
+        ), f"Completeness mismatch: expected {expected_C}, got {calibration.C}"
 
         assert np.allclose(
-            optimize.P, expected_P
-        ), f"Purity mismatch: expected {expected_P}, got {optimize.P}"
+            calibration.P, expected_P
+        ), f"Purity mismatch: expected {expected_P}, got {calibration.P}"
 
         assert np.allclose(
-            optimize.F, expected_F
-        ), f"Failure rate mismatch: expected {expected_F}, got {optimize.F}"
+            calibration.F, expected_F
+        ), f"Failure rate mismatch: expected {expected_F}, got {calibration.F}"
 
 
 ############################
@@ -403,21 +403,21 @@ class TestOptimizeProcess:
 ############################
 
 
-class TestSelectGalaxy:
-    """Test cases for SelectGalaxy.process() method with reference.csv."""
+class TestSelectObject:
+    """Test cases for SelectObject.process() method with reference.csv."""
 
-    def test_process(self, reference_dataset, reference_optimize_linear_instance):
+    def test_process(self, reference_dataset, reference_calibration_linear_instance):
         """Test process method with reference data and check the number of selected objects."""
-        optimize = reference_optimize_linear_instance
-        optimize.process(cpu_number=1)
+        calibration = reference_calibration_linear_instance
+        calibration.process(cpu_number=1)
 
         # "Test" sample and test z_l points
         test_sample = reference_dataset
-        zl_new = np.arange(min(optimize.dm.z_lim), max(optimize.dm.z_lim), 0.01)
+        zl_new = np.arange(min(calibration.dm.z_lim), max(calibration.dm.z_lim), 0.01)
 
         # Select
-        sel = SelectGalaxy()
-        sel.load_parameters(optimize)
+        sel = SelectObject()
+        sel.load_parameters(calibration)
         sel.process(zl_new, test_sample)
         mask = sel.mask
 
