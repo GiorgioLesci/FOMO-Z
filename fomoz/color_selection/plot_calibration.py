@@ -7,11 +7,13 @@ This module provides functions for data visualization.
 """
 
 from typing import Union, List, Tuple, Optional
+from itertools import combinations
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numexpr as ne
 
-from .tools import compute_metrics
+from .tools import compute_metrics, distribution_contours
 from .calibrate_linear import CalibrateLinear
 from .select_object import SelectObject
 
@@ -94,6 +96,118 @@ class PlotCalibration:
             return [value]
         else:
             raise TypeError("{name} must be either string, list, or tuple.")
+
+    def _plot_distribution_contours(
+        self, ax, x, y, nbins, levels_2D, color, label, linestyle
+    ):
+        """
+        Plot 2D density contours on a matplotlib axis.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            Axis object to plot on.
+        x, y : array-like
+            Data coordinates for contour computation.
+        nbins : int
+            Number of bins for the 2D histogram.
+        levels_2D : list of float
+            Probability levels for contours (e.g., [0.68, 0.95]).
+        color : str
+            Color for the contour lines.
+        label : str
+            Label for the legend entry.
+        linestyle : str or list of str
+            Line style(s) for the contours.
+
+        Notes
+        -----
+        Adds a dummy vertical line at x=1e16 for legend purposes only.
+        The actual data is displayed as density contours.
+        """
+        X, Y, H_norm, level_density = distribution_contours(x, y, nbins, levels_2D)
+        ax.contour(
+            X, Y, H_norm.T, levels=level_density, colors=color, linestyles=linestyle
+        )
+        ax.axvline(1.0e16, linewidth=2, color=color, label=label)  # for legend only
+
+    def _plot_distribution_scatter(self, ax, x, y, color, label):
+        """
+        Plot data points as a scatter plot on a matplotlib axis.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            Axis object to plot on.
+        x, y : array-like
+            Data coordinates to scatter.
+        color : str
+            Color for the scatter points.
+        label : str
+            Label for the legend entry.
+
+        Notes
+        -----
+        Adds a dummy point at (1e16, 1e16) for legend purposes only.
+        This point is placed far outside typical data ranges to be invisible.
+        """
+        ax.scatter(x, y, c=color, s=2)
+        ax.scatter(1.0e16, 1.0e16, s=20, c=color, label=label)  # for legend only
+
+    def _check_plot_type(self, plot_type, var_name):
+        """
+        Validate plot type parameter.
+
+        Parameters
+        ----------
+        plot_type : any
+            Plot type value to validate.
+        var_name : str
+            Name of the variable being checked (for error message).
+
+        Raises
+        ------
+        ValueError
+            If plot_type is not None, "curve", or "scatter".
+
+        Notes
+        -----
+        This function checks that plot_type is one of the supported values
+        and provides a descriptive error message if not.
+        """
+        if plot_type not in [None, "curve", "scatter"]:
+            raise ValueError(
+                f"The {var_name} input variable equals a not upported value ({plot_type})."
+            )
+
+    def _check_ax_limits(self, limits, name, expected_length):
+        """
+        Normalize axis limits to list format for multiple subplots.
+
+        Parameters
+        ----------
+        limits : tuple or list
+            Single tuple (min, max) for all subplots, or list of tuples.
+        name : str
+            Variable name for error messages.
+        expected_length : int
+            Number of subplots.
+
+        Returns
+        -------
+        list
+            List of limit tuples.
+        """
+        if isinstance(limits, tuple) and len(limits) == 2:
+            return [limits] * expected_length
+        elif isinstance(limits, list):
+            if len(limits) != expected_length:
+                raise ValueError(
+                    f"{name} list length ({len(limits)}) must match number of subplots ({expected_length})"
+                )
+            return limits
+        else:
+            raise TypeError("{name} must be a tuple (min, max) or list of tuples.")
 
     def plot_metric(
         self,
@@ -213,6 +327,8 @@ class PlotCalibration:
         show_grid=False,
         alpha=0.3,
         interp_points=None,
+        output_file_path=None,
+        dpi=300,
     ):
         r"""
         Plot the performance metrics of the optimized color cuts.
@@ -255,6 +371,11 @@ class PlotCalibration:
         interp_points : array-like, optional
             Limiting redshift points. If not None, derive the metrics at these points
             using interpolations. Valid only for CalibrateLinear instances. Default is None.
+        output_file_path : str, optional
+            Concatenation of the output file path and name.
+            If None, the plot is not saved to file. Default is None.
+        dpi : int, optional
+            dpi parameter of `plt.savefig`.
         """
         # Set up the plot
         fig, ax = plt.subplots(
@@ -295,4 +416,514 @@ class PlotCalibration:
 
         if show_legend:
             ax[0].legend(loc=loclegend, fontsize=legend_fontsize)
+        if output_file_path is not None:
+            plt.savefig(
+                output_file_path, bbox_inches="tight", transparent=True, dpi=dpi
+            )
+        plt.show()
+
+    def plot_color_distribution(
+        self,
+        ax,
+        color1,
+        color2,
+        calibration_index,
+        zl_index,
+        xlim=(-1.5, 3.0),
+        ylim=(-1.5, 4.5),
+        plot_selection_criteria=True,
+        plot_all_objects=None,
+        plot_all_selected_objects="curve",
+        plot_selected_objects="scatter",
+        color_selection_criteria="b",
+        color_all_objects="k",
+        color_all_selected_objects="red",
+        color_selected_objects="g",
+        style_selection_criteria="--",
+        style_all_objects="-",
+        style_all_selected_objects="-",
+        style_selected_objects="-",
+        label_selection_criteria="Selection criteria",
+        label_all_objects="All galaxies",
+        label_all_selected_objects="All selected galaxies",
+        label_selected_objects="Galaxies selected\nin this space",
+        levels_2D=[0.68, 0.95],
+        loclegend="lower right",
+        legend_fontsize=13,
+        zl_precision_in_legend="3",
+        show_grid=False,
+        output_file_path=None,
+        dpi=300,
+    ):
+        """
+        Plot color-color distribution with selection criteria and object selection.
+
+        This function creates a color-color plot showing:
+        - The distribution of all objects.
+        - Selection criteria (linear cuts or grid regions) at a specific redshift threshold.
+        - Selected objects based on all criteria (from all selection criteria in all color-color spaces).
+        - Objects selected specifically in the current color-color space.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            Axis object to plot on.
+        color1, color2 : str
+            Color names for x and y axes (e.g., 'g-r', 'g-i').
+        calibration_index : int
+            Index of the calibration object to use from self.calibrations.
+        zl_index : int
+            Index of the redshift threshold in DataModel.z_lim.
+        xlim, ylim : tuple of float, optional
+            Axis limits for the plot.
+        plot_selection_criteria : bool, optional
+            Whether to plot the selection criteria lines.
+        plot_all_objects : {None, "curve", "scatter"}, optional
+            How to plot all objects from the entire calibration sample:
+            None (don't plot), "curve" (density contours), or "scatter" (individual points).
+        plot_all_selected_objects : {None, "curve", "scatter"}, optional
+            How to plot all selected objects
+            (from all selection criteria in all color-color spaces).
+        plot_selected_objects : {None, "curve", "scatter"}, optional
+            How to plot objects selected in the current color-color space.
+        color_selection_criteria : str, optional
+            Color for selection criteria lines/regions.
+        color_all_objects : str, optional
+            Color for all objects distribution.
+        color_all_selected_objects : str, optional
+            Color for all selected objects distribution.
+        color_selected_objects : str, optional
+            Color for objects selected in current space.
+        style_selection_criteria : str, optional
+            Either line style or marker style for selection criteria.
+        style_all_objects : str, optional
+            Either line style or marker style for all objects in the calibration sample.
+        style_all_selected_objects : str, optional
+            Either line style or marker style for all selected objects.
+        style_selected_objects : str, optional
+            Either line style or marker style for selected objects in current space.
+        label_selection_criteria : str, optional
+            Legend label for selection criteria.
+        label_all_objects : str, optional
+            Legend label for all objects.
+        label_all_selected_objects : str, optional
+            Legend label for all selected objects.
+        label_selected_objects : str, optional
+            Legend label for objects selected in current space.
+        levels_2D : list of float, optional
+            Probability levels for density contours (e.g., [0.68, 0.95]).
+        loclegend : str, optional
+            Location of the legend.
+        legend_fontsize : int, optional
+            Font size for legend text.
+        zl_precision_in_legend : str, optional
+            Number of decimal places for redshift value in legend title.
+        show_grid : bool, optional
+            If True, show the axis tick grid. Default is False.
+        output_file_path : str, optional
+            Concatenation of the output file path and name.
+            If None, the plot is not saved to file. Default is None.
+        dpi : int, optional
+            dpi parameter of `plt.savefig`.
+
+        Notes
+        -----
+        The function computes color values from the calibration dataset and
+        applies selection criteria from the calibration dictionary at the
+        specified redshift threshold.
+
+        The legend includes the redshift threshold value with specified precision.
+        """
+        self._check_plot_type(plot_all_objects, "plot_all_objects")
+        self._check_plot_type(plot_all_selected_objects, "plot_all_selected_objects")
+        self._check_plot_type(plot_selected_objects, "plot_selected_objects")
+
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        if show_grid:
+            ax.grid()
+
+        calib = self.calibrations[calibration_index]
+
+        z_l = calib.dm.z_lim[zl_index]
+
+        c1 = calib.dm.dataset[color1[0]] - calib.dm.dataset[color1[2]]
+        c2 = calib.dm.dataset[color2[0]] - calib.dm.dataset[color2[2]]
+
+        all_colors = [color[0] + "-" + color[1] for color in calib.dm.colors]
+        other_colors = [c for c in all_colors if c not in [color1, color2]]
+
+        x_min, x_max = ax.get_xlim()
+
+        if plot_selection_criteria or (plot_selected_objects is not None):
+
+            label1_is_plotted = False
+            label2_is_plotted = False
+
+            mask_selection = np.full(len(c1), False)
+
+            bands = set([color1[0], color1[2], color2[0], color2[2]])
+            mags = {band: calib.dm.dataset[band].to_numpy() for band in bands}
+            local_dict = dict(mags)
+
+            for key, entry in calib.dict.items():
+
+                if key == "metadata":  # Skip metadata
+                    continue
+
+                contains_color1 = color1 in key
+                contains_color2 = color2 in key
+                contains_other = any(other_color in key for other_color in other_colors)
+
+                # Only color1 OR color2, no other colors
+                if (
+                    contains_color1 ^ contains_color2
+                ) and not contains_other:  # XOR operator
+
+                    if z_l in entry["knots"]:
+
+                        idx = np.where(np.unique(entry["knots"]) == z_l)[0][0]
+                        c = entry["c_optimal"][idx]
+
+                        # Mask
+                        local_dict["c"] = c
+                        mask_selection |= ne.evaluate(key, local_dict=local_dict)
+
+                        # Selection criteria
+                        if plot_selection_criteria:
+                            if color1 in key:
+                                ax.axvline(
+                                    x=c,
+                                    color=color_selection_criteria,
+                                    linestyle=style_selection_criteria,
+                                    label=(
+                                        label_selection_criteria
+                                        if not label1_is_plotted
+                                        else None
+                                    ),
+                                )
+                                label1_is_plotted = True
+                            else:
+                                ax.axhline(
+                                    y=c,
+                                    color=color_selection_criteria,
+                                    linestyle=style_selection_criteria,
+                                    label=(
+                                        label_selection_criteria
+                                        if not label1_is_plotted
+                                        else None
+                                    ),
+                                )
+                                label1_is_plotted = True
+
+                # Both color1 AND color2
+                if contains_color1 and contains_color2:
+
+                    if z_l in entry["knots"]:
+
+                        idx = np.where(np.unique(entry["knots"]) == z_l)[0][0]
+                        c = entry["c_optimal"][idx]
+                        s = entry["s_optimal"][idx]
+
+                        # Mask
+                        local_dict["c"] = c
+                        local_dict["s"] = s
+                        mask_selection |= ne.evaluate(key, local_dict=local_dict)
+
+                        # Selection criteria
+                        if plot_selection_criteria:
+
+                            x_line = np.linspace(x_min, x_max, 200)
+                            if ">" in key:
+                                if "-s*" in key:  # color1 > -s*(color2) + c
+                                    y_line = (c - x_line) / s
+                                else:  # color1 > s*(color2) + c
+                                    y_line = (x_line - c) / s
+
+                            else:  # '<' in key
+                                if "-s*" in key:  # color1 < -s*(color2) + c
+                                    y_line = (c - x_line) / s
+                                else:  # color1 < s*(color2) + c
+                                    y_line = (x_line - c) / s
+
+                            ax.plot(
+                                x_line,
+                                y_line,
+                                color=color_selection_criteria,
+                                linestyle=style_selection_criteria,
+                                label=(
+                                    label_selection_criteria
+                                    if not label1_is_plotted
+                                    else None
+                                ),
+                            )
+                            label1_is_plotted = True
+
+            if plot_selected_objects is not None:
+                c1_sel = c1[mask_selection]
+                c2_sel = c2[mask_selection]
+                if plot_selected_objects == "curve":
+                    self._plot_distribution_contours(
+                        ax,
+                        c1_sel,
+                        c2_sel,
+                        50,
+                        levels_2D,
+                        color_selected_objects,
+                        label_selected_objects,
+                        style_selected_objects,
+                    )
+                else:
+                    self._plot_distribution_scatter(
+                        ax,
+                        c1_sel,
+                        c2_sel,
+                        color_selected_objects,
+                        label_selected_objects,
+                    )
+
+        if plot_all_selected_objects is not None:
+            sel = SelectObject()
+            sel.load_parameters(calib)
+            sel.process(z_l, calib.dm.dataset)
+
+            c1_sel = c1[sel.mask[0]]
+            c2_sel = c2[sel.mask[0]]
+
+            if plot_all_selected_objects == "curve":
+                self._plot_distribution_contours(
+                    ax,
+                    c1_sel,
+                    c2_sel,
+                    50,
+                    levels_2D,
+                    color_all_selected_objects,
+                    label_all_selected_objects,
+                    style_all_selected_objects,
+                )
+            else:
+                self._plot_distribution_scatter(
+                    ax,
+                    c1_sel,
+                    c2_sel,
+                    color_all_selected_objects,
+                    label_all_selected_objects,
+                )
+
+        if plot_all_objects == "curve":
+            self._plot_distribution_contours(
+                ax,
+                c1,
+                c2,
+                50,
+                levels_2D,
+                color_all_objects,
+                label_all_objects,
+                style_all_objects,
+            )
+        elif plot_all_objects == "scatter":
+            self._plot_distribution_scatter(
+                ax, c1, c2, color_all_objects, label_all_objects
+            )
+
+        handles, _ = ax.get_legend_handles_labels()
+        if handles:  # Only create legend if there are handles
+            ax.legend(
+                loc=loclegend,
+                title=r"$z_{\rm l} " + f"= {z_l:.{zl_precision_in_legend}f}$",
+                fontsize=legend_fontsize,
+                title_fontsize=legend_fontsize,
+            )
+
+        if output_file_path is not None:
+            plt.savefig(
+                output_file_path, bbox_inches="tight", transparent=True, dpi=dpi
+            )
+
+    def plot_all_color_distributions(
+        self,
+        calibration_index,
+        zl_index,
+        n_columns=3,
+        figsize=(15, 20),
+        wspace=0.35,
+        hspace=0.35,
+        xlim=(-1.5, 3.0),
+        ylim=(-1.5, 4.5),
+        plot_selection_criteria=True,
+        plot_all_objects=None,
+        plot_all_selected_objects="curve",
+        plot_selected_objects="scatter",
+        color_selection_criteria="b",
+        color_all_objects="k",
+        color_all_selected_objects="red",
+        color_selected_objects="g",
+        style_selection_criteria="--",
+        style_all_objects="-",
+        style_all_selected_objects="-",
+        style_selected_objects="-",
+        label_selection_criteria="Selection criteria",
+        label_all_objects="All galaxies",
+        label_all_selected_objects="All selected galaxies",
+        label_selected_objects="Galaxies selected\nin this space",
+        levels_2D=[0.68, 0.95],
+        loclegend="lower right",
+        legend_fontsize=10,
+        labelsize=13,
+        fontsize=15,
+        zl_precision_in_legend="3",
+        show_grid=False,
+        output_file_path=None,
+        dpi=300,
+    ):
+        """
+        Plot color-color distribution with selection criteria and object selection.
+
+        This function creates a color-color plot showing:
+        - The distribution of all objects.
+        - Selection criteria (linear cuts or grid regions) at a specific redshift threshold.
+        - Selected objects based on all criteria (from all selection criteria in all color-color spaces).
+        - Objects selected specifically in the current color-color space.
+
+        Parameters
+        ----------
+        calibration_index : int
+            Index of the calibration object to use from self.calibrations.
+        zl_index : int
+            Index of the redshift threshold in DataModel.z_lim.
+        n_columns : int, optional
+            Number of subplot columns. Default is 3.
+        figsize : tuple, optional
+            Figure size. Default is (15, 4.5).
+        wspace : float, optional
+            Width space between the subplots. Default is 0.35.
+        hspace : float, optional
+            Height space between the subplots. Default is 0.35.
+        xlim, ylim : tuple of float, or list thereof, optional
+            Axis limits for the plot. If list, each element
+            refers to the elements of the flattened axis array.
+        plot_selection_criteria : bool, optional
+            Whether to plot the selection criteria lines.
+        plot_all_objects : {None, "curve", "scatter"}, optional
+            How to plot all objects from the entire calibration sample:
+            None (don't plot), "curve" (density contours), or "scatter" (individual points).
+        plot_all_selected_objects : {None, "curve", "scatter"}, optional
+            How to plot all selected objects
+            (from all selection criteria in all color-color spaces).
+        plot_selected_objects : {None, "curve", "scatter"}, optional
+            How to plot objects selected in the current color-color space.
+        color_selection_criteria : str, optional
+            Color for selection criteria lines/regions.
+        color_all_objects : str, optional
+            Color for all objects distribution.
+        color_all_selected_objects : str, optional
+            Color for all selected objects distribution.
+        color_selected_objects : str, optional
+            Color for objects selected in current space.
+        style_selection_criteria : str, optional
+            Either line style or marker style for selection criteria.
+        style_all_objects : str, optional
+            Either line style or marker style for all objects in the calibration sample.
+        style_all_selected_objects : str, optional
+            Either line style or marker style for all selected objects.
+        style_selected_objects : str, optional
+            Either line style or marker style for selected objects in current space.
+        label_selection_criteria : str, optional
+            Legend label for selection criteria.
+        label_all_objects : str, optional
+            Legend label for all objects.
+        label_all_selected_objects : str, optional
+            Legend label for all selected objects.
+        label_selected_objects : str, optional
+            Legend label for objects selected in current space.
+        levels_2D : list of float, optional
+            Probability levels for density contours (e.g., [0.68, 0.95]).
+        loclegend : str, optional
+            Location of the legend.
+        legend_fontsize : int, optional
+            Font size for legend text.
+        labelsize : float, optional
+            Size of the tick labels.
+        fontsize : int, optional
+            Base font size for axis labels.
+        zl_precision_in_legend : str, optional
+            Number of decimal places for redshift value in legend title.
+        show_grid : bool, optional
+            If True, show the axis tick grid. Default is False.
+        output_file_path : str, optional
+            Concatenation of the output file path and name.
+            If None, the plot is not saved to file. Default is None.
+        dpi : int, optional
+            dpi parameter of `plt.savefig`.
+        """
+        calib = self.calibrations[calibration_index]
+
+        color_spaces = list(combinations(calib.dm.colors, 2))
+
+        n_color_spaces = len(color_spaces)
+        n_rows = int(np.ceil(n_color_spaces / n_columns))
+        fig, ax = plt.subplots(
+            n_rows,
+            n_columns,
+            figsize=figsize,
+            gridspec_kw={"wspace": wspace, "hspace": hspace},
+        )
+
+        ax_flat = np.array(ax).flatten()
+        xlim = self._check_ax_limits(xlim, "xlim", len(ax_flat))
+        ylim = self._check_ax_limits(ylim, "ylim", len(ax_flat))
+
+        for i in range(len(ax_flat)):
+
+            ax_flat[i].xaxis.set_tick_params(
+                direction="in", which="both", labelsize=labelsize
+            )
+            ax_flat[i].yaxis.set_tick_params(
+                direction="in", which="both", labelsize=labelsize
+            )
+
+            color1 = color_spaces[i][0][0] + "-" + color_spaces[i][0][1]
+            color2 = color_spaces[i][1][0] + "-" + color_spaces[i][1][1]
+            ax_flat[i].set_xlabel(f"$({color1})$", fontsize=fontsize)
+            ax_flat[i].set_ylabel(f"$({color2})$", fontsize=fontsize)
+
+            self.plot_color_distribution(
+                ax_flat[i],
+                color1,
+                color2,
+                calibration_index,
+                zl_index,
+                xlim=xlim[i],
+                ylim=ylim[i],
+                plot_selection_criteria=plot_selection_criteria,
+                plot_all_objects=plot_all_objects,
+                plot_all_selected_objects=plot_all_selected_objects,
+                plot_selected_objects=plot_selected_objects,
+                color_selection_criteria=color_selection_criteria,
+                color_all_objects=color_all_objects,
+                color_all_selected_objects=color_all_selected_objects,
+                color_selected_objects=color_selected_objects,
+                style_selection_criteria=style_selection_criteria,
+                style_all_objects=style_all_objects,
+                style_all_selected_objects=style_all_selected_objects,
+                style_selected_objects=style_selected_objects,
+                label_selection_criteria=label_selection_criteria if i == 0 else None,
+                label_all_objects=label_all_objects if i == 0 else None,
+                label_all_selected_objects=(
+                    label_all_selected_objects if i == 0 else None
+                ),
+                label_selected_objects=label_selected_objects if i == 0 else None,
+                levels_2D=levels_2D,
+                loclegend=loclegend,
+                legend_fontsize=legend_fontsize,
+                zl_precision_in_legend=zl_precision_in_legend,
+                show_grid=show_grid,
+                output_file_path=None,
+            )
+
+        if output_file_path is not None:
+            plt.savefig(
+                output_file_path, bbox_inches="tight", transparent=True, dpi=dpi
+            )
+
         plt.show()

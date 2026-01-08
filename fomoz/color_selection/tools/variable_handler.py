@@ -19,21 +19,15 @@ def set_input_variable_precision(var, prec=6):
     var : scalar, list, or numpy array
         Input variable to convert and round.
     prec : float, optional
-        Precision for rounding (default: 1.e-6).
+        Decimal places for rounding (default: 6).
 
     Returns
     -------
     numpy.ndarray
         float32 array with values rounded to specified precision.
+        Always returns at least 1D array.
     """
-    if isinstance(var, (float, int)):
-        return np.array([float(var)], dtype=np.float32).round(prec)
-    elif isinstance(var, list):
-        return np.array(var, dtype=np.float32).round(prec)
-    elif isinstance(var, np.ndarray):
-        return var.astype(np.float32).round(prec)
-    else:
-        return np.asarray(var, dtype=np.float32).round(prec)
+    return np.atleast_1d(np.asarray(var, dtype=np.float32)).round(prec)
 
 
 def build_nested_dict(cuts):

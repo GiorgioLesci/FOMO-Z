@@ -306,3 +306,58 @@ def interpolate_parameters(input_dict, k=1):
 
         # After all the interpolation is done, remove z_l
         del input_dict[key]["z_l"]
+
+
+def distribution_contours(x, y, nbins, levels):
+    """
+    Compute 2D density contours for a given distribution of points.
+
+    This function creates a 2D histogram of (x, y) data and computes
+    density thresholds corresponding to specified probability levels.
+    The contours represent iso-density lines that enclose the given
+    percentages of the total probability mass.
+
+    Parameters
+    ----------
+    x : array-like
+        1D array of x-coordinates of data points.
+    y : array-like
+        1D array of y-coordinates of data points. Must have same length as x.
+    nbins : int or tuple of int
+        Number of bins for the 2D histogram. If int, same number of bins
+        for both dimensions. If tuple, (nxbins, nybins).
+    levels : array-like
+        Probability levels for which to compute contours, expressed as
+        fractions between 0 and 1 (e.g., [0.68, 0.95] for 68% and 95%
+        confidence intervals).
+
+    Returns
+    -------
+    X : ndarray
+        2D array of x-coordinates for grid points (shape: (nbins, nbins)).
+    Y : ndarray
+        2D array of y-coordinates for grid points (shape: (nbins, nbins)).
+    H_norm : ndarray
+        2D array of normalized histogram values representing probability
+        density (shape: (nbins, nbins)). Values sum to 1.
+    level_density : list
+        Density thresholds corresponding to each input level, sorted from
+        highest to lowest probability (e.g., [density_95, density_68] for
+        input levels [0.68, 0.95]). These can be used as `levels` parameter
+        in matplotlib's `contour` function.
+    """
+    H, xedges, yedges = np.histogram2d(x, y, bins=nbins)
+
+    xcenters = (xedges[:-1] + xedges[1:]) / 2
+    ycenters = (yedges[:-1] + yedges[1:]) / 2
+    X, Y = np.meshgrid(xcenters, ycenters)
+
+    H_norm = H / H.sum()
+    sorted_vals = np.sort(H_norm.ravel())[::-1]
+    cumsum = np.cumsum(sorted_vals)
+
+    level_density = [
+        sorted_vals[np.searchsorted(cumsum, level)] for level in np.sort(levels)[::-1]
+    ]
+
+    return X, Y, H_norm, level_density
