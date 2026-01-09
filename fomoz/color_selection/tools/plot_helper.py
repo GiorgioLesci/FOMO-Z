@@ -109,14 +109,14 @@ def check_plot_type(plot_type, var_name):
     Raises
     ------
     ValueError
-        If plot_type is not None, "curve", or "scatter".
+        If plot_type is not None, "contour", or "scatter".
 
     Notes
     -----
     This function checks that plot_type is one of the supported values
     and provides a descriptive error message if not.
     """
-    if plot_type not in [None, "curve", "scatter"]:
+    if plot_type not in [None, "contour", "scatter"]:
         raise ValueError(
             f"The {var_name} input variable equals a not upported value ({plot_type})."
         )

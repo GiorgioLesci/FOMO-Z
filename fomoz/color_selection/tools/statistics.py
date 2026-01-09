@@ -346,7 +346,11 @@ def distribution_contours(x, y, nbins, levels):
         input levels [0.68, 0.95]). These can be used as `levels` parameter
         in matplotlib's `contour` function.
     """
-    H, xedges, yedges = np.histogram2d(x, y, bins=nbins)
+    x_valid = np.isfinite(x)
+    y_valid = np.isfinite(y)
+    valid_mask = x_valid & y_valid
+
+    H, xedges, yedges = np.histogram2d(x[valid_mask], y[valid_mask], bins=nbins)
 
     xcenters = (xedges[:-1] + xedges[1:]) / 2
     ycenters = (yedges[:-1] + yedges[1:]) / 2

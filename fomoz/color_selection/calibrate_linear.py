@@ -95,18 +95,21 @@ class CalibrateLinear:
             `DataModel` object.
         dict : dict
             Container for storing results based on linear color cuts.
-        P : numpy.ndarray
+        P : numpy.array
             Total purity values.
-        C : numpy.ndarray
+        C : numpy.array
             Total completeness values.
-        F : numpy.ndarray
+        F : numpy.array
             Total failure rates.
-        P_std : numpy.ndarray
+        P_std : numpy.array
             Total purity error.
-        C_std : numpy.ndarray
+        C_std : numpy.array
             Total completeness error.
-        F_std : numpy.ndarray
+        F_std : numpy.array
             Total failure rate error.
+        attained_threshold : np.array
+            Single-cut threshold attained in the optimization process.
+            Each element corresponds to a limiting redshift value.
 
         Parameters
         ----------
@@ -124,6 +127,7 @@ class CalibrateLinear:
         self.C_std = np.full(len(self.dm.z_lim), np.nan)
         self.P_std = np.full(len(self.dm.z_lim), np.nan)
         self.F_std = np.full(len(self.dm.z_lim), np.nan)
+        self.attained_threshold = np.zeros(len(self.dm.z_lim))
 
     def _process_for_one_z(self, args):
         r"""
@@ -358,6 +362,7 @@ class CalibrateLinear:
             else:
                 break  # below the threshold
 
+        self.attained_threshold[idx] = current_thresh
         return z_l, best_by_key, dict_steps
 
     def _estimate_errors(self, n_bootstraps=1000):

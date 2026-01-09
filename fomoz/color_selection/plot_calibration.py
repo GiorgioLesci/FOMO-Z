@@ -296,7 +296,7 @@ class PlotCalibration:
         ylim=(-1.5, 4.5),
         plot_selection_criteria=True,
         plot_all_objects=None,
-        plot_all_selected_objects="curve",
+        plot_all_selected_objects="contour",
         plot_selected_objects="scatter",
         color_selection_criteria="b",
         color_all_objects="k",
@@ -341,13 +341,13 @@ class PlotCalibration:
             Axis limits for the plot.
         plot_selection_criteria : bool, optional
             Whether to plot the selection criteria lines.
-        plot_all_objects : {None, "curve", "scatter"}, optional
+        plot_all_objects : {None, "contour", "scatter"}, optional
             How to plot all objects from the entire calibration sample:
-            None (don't plot), "curve" (density contours), or "scatter" (individual points).
-        plot_all_selected_objects : {None, "curve", "scatter"}, optional
+            None (don't plot), "contour" (density contours), or "scatter" (individual points).
+        plot_all_selected_objects : {None, "contour", "scatter"}, optional
             How to plot all selected objects
             (from all selection criteria in all color-color spaces).
-        plot_selected_objects : {None, "curve", "scatter"}, optional
+        plot_selected_objects : {None, "contour", "scatter"}, optional
             How to plot objects selected in the current color-color space.
         color_selection_criteria : str, optional
             Color for selection criteria lines/regions.
@@ -525,7 +525,7 @@ class PlotCalibration:
             if plot_selected_objects is not None:
                 c1_sel = c1[mask_selection]
                 c2_sel = c2[mask_selection]
-                if plot_selected_objects == "curve":
+                if plot_selected_objects == "contour":
                     plot_distribution_contours(
                         ax,
                         c1_sel,
@@ -553,7 +553,7 @@ class PlotCalibration:
             c1_sel = c1[sel.mask[0]]
             c2_sel = c2[sel.mask[0]]
 
-            if plot_all_selected_objects == "curve":
+            if plot_all_selected_objects == "contour":
                 plot_distribution_contours(
                     ax,
                     c1_sel,
@@ -573,7 +573,7 @@ class PlotCalibration:
                     label_all_selected_objects,
                 )
 
-        if plot_all_objects == "curve":
+        if plot_all_objects == "contour":
             plot_distribution_contours(
                 ax,
                 c1,
@@ -613,7 +613,7 @@ class PlotCalibration:
         ylim=(-1.5, 4.5),
         plot_selection_criteria=True,
         plot_all_objects=None,
-        plot_all_selected_objects="curve",
+        plot_all_selected_objects="contour",
         plot_selected_objects="scatter",
         color_selection_criteria="b",
         color_all_objects="k",
@@ -665,13 +665,13 @@ class PlotCalibration:
             refers to the elements of the flattened axis array.
         plot_selection_criteria : bool, optional
             Whether to plot the selection criteria lines.
-        plot_all_objects : {None, "curve", "scatter"}, optional
+        plot_all_objects : {None, "contour", "scatter"}, optional
             How to plot all objects from the entire calibration sample:
-            None (don't plot), "curve" (density contours), or "scatter" (individual points).
-        plot_all_selected_objects : {None, "curve", "scatter"}, optional
+            None (don't plot), "contour" (density contours), or "scatter" (individual points).
+        plot_all_selected_objects : {None, "contour", "scatter"}, optional
             How to plot all selected objects
             (from all selection criteria in all color-color spaces).
-        plot_selected_objects : {None, "curve", "scatter"}, optional
+        plot_selected_objects : {None, "contour", "scatter"}, optional
             How to plot objects selected in the current color-color space.
         color_selection_criteria : str, optional
             Color for selection criteria lines/regions.
