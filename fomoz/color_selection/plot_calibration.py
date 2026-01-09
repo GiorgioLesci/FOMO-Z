@@ -12,8 +12,16 @@ from itertools import combinations
 import matplotlib.pyplot as plt
 import numpy as np
 import numexpr as ne
+from scipy.interpolate import BSpline
 
-from .tools import compute_metrics, distribution_contours
+from .tools import (
+    compute_metrics,
+    normalize_plot_style,
+    plot_distribution_contours,
+    plot_distribution_scatter,
+    check_plot_type,
+    check_ax_limits,
+)
 from .calibrate_linear import CalibrateLinear
 from .select_object import SelectObject
 
@@ -69,146 +77,6 @@ class PlotCalibration:
         else:
             raise TypeError("labels can be either None, list, or tuple.")
 
-    def _normalize_plot_style(self, value, name):
-        """
-        Normalize plot style parameters to a list of appropriate length.
-
-        Parameters
-        ----------
-        value : Any
-            The style value to normalize (color, linestyle, etc.).
-        name : str
-            Name of the parameter for error messages.
-
-        Returns
-        -------
-        List
-            List of values with length matching number of calibrations.
-        """
-        if isinstance(value, (list, tuple)):
-            if len(value) != self.n_calibrations:
-                raise ValueError(
-                    f"Number of {name}s ({len(value)}) must match "
-                    f"the number of calibrations ({self.n_calibrations})."
-                )
-            return value
-        elif isinstance(value, str):
-            return [value]
-        else:
-            raise TypeError("{name} must be either string, list, or tuple.")
-
-    def _plot_distribution_contours(
-        self, ax, x, y, nbins, levels_2D, color, label, linestyle
-    ):
-        """
-        Plot 2D density contours on a matplotlib axis.
-
-        Parameters
-        ----------
-        ax : matplotlib.axes.Axes
-            Axis object to plot on.
-        x, y : array-like
-            Data coordinates for contour computation.
-        nbins : int
-            Number of bins for the 2D histogram.
-        levels_2D : list of float
-            Probability levels for contours (e.g., [0.68, 0.95]).
-        color : str
-            Color for the contour lines.
-        label : str
-            Label for the legend entry.
-        linestyle : str or list of str
-            Line style(s) for the contours.
-
-        Notes
-        -----
-        Adds a dummy vertical line at x=1e16 for legend purposes only.
-        The actual data is displayed as density contours.
-        """
-        X, Y, H_norm, level_density = distribution_contours(x, y, nbins, levels_2D)
-        ax.contour(
-            X, Y, H_norm.T, levels=level_density, colors=color, linestyles=linestyle
-        )
-        ax.axvline(1.0e16, linewidth=2, color=color, label=label)  # for legend only
-
-    def _plot_distribution_scatter(self, ax, x, y, color, label):
-        """
-        Plot data points as a scatter plot on a matplotlib axis.
-
-        Parameters
-        ----------
-        ax : matplotlib.axes.Axes
-            Axis object to plot on.
-        x, y : array-like
-            Data coordinates to scatter.
-        color : str
-            Color for the scatter points.
-        label : str
-            Label for the legend entry.
-
-        Notes
-        -----
-        Adds a dummy point at (1e16, 1e16) for legend purposes only.
-        This point is placed far outside typical data ranges to be invisible.
-        """
-        ax.scatter(x, y, c=color, s=2)
-        ax.scatter(1.0e16, 1.0e16, s=20, c=color, label=label)  # for legend only
-
-    def _check_plot_type(self, plot_type, var_name):
-        """
-        Validate plot type parameter.
-
-        Parameters
-        ----------
-        plot_type : any
-            Plot type value to validate.
-        var_name : str
-            Name of the variable being checked (for error message).
-
-        Raises
-        ------
-        ValueError
-            If plot_type is not None, "curve", or "scatter".
-
-        Notes
-        -----
-        This function checks that plot_type is one of the supported values
-        and provides a descriptive error message if not.
-        """
-        if plot_type not in [None, "curve", "scatter"]:
-            raise ValueError(
-                f"The {var_name} input variable equals a not upported value ({plot_type})."
-            )
-
-    def _check_ax_limits(self, limits, name, expected_length):
-        """
-        Normalize axis limits to list format for multiple subplots.
-
-        Parameters
-        ----------
-        limits : tuple or list
-            Single tuple (min, max) for all subplots, or list of tuples.
-        name : str
-            Variable name for error messages.
-        expected_length : int
-            Number of subplots.
-
-        Returns
-        -------
-        list
-            List of limit tuples.
-        """
-        if isinstance(limits, tuple) and len(limits) == 2:
-            return [limits] * expected_length
-        elif isinstance(limits, list):
-            if len(limits) != expected_length:
-                raise ValueError(
-                    f"{name} list length ({len(limits)}) must match number of subplots ({expected_length})"
-                )
-            return limits
-        else:
-            raise TypeError("{name} must be a tuple (min, max) or list of tuples.")
-
     def plot_metric(
         self,
         metric,
@@ -249,8 +117,8 @@ class PlotCalibration:
                 "The metric parameter can only take the following values: 'C', 'P', 'F'."
             )
 
-        linestyle = self._normalize_plot_style(linestyle, "linestyle")
-        color = self._normalize_plot_style(color, "color")
+        linestyle = normalize_plot_style(linestyle, "linestyle", self.n_calibrations)
+        color = normalize_plot_style(color, "color", self.n_calibrations)
 
         for i, calibration in enumerate(self.calibrations):
             z_lim = calibration.dm.z_lim
@@ -382,12 +250,7 @@ class PlotCalibration:
             1, 3, figsize=figsize, sharex="row", gridspec_kw={"wspace": wspace}
         )
         for i in range(len(ax)):
-            ax[i].xaxis.set_tick_params(
-                direction="in", which="both", labelsize=labelsize
-            )
-            ax[i].yaxis.set_tick_params(
-                direction="in", which="both", labelsize=labelsize
-            )
+            ax[i].tick_params(direction="in", which="both", labelsize=labelsize)
             if show_grid:
                 ax[i].grid()
             ax[i].set_xlabel(xlabel, fontsize=fontsize)
@@ -429,7 +292,7 @@ class PlotCalibration:
         color2,
         calibration_index,
         zl_index,
-        xlim=(-1.5, 3.0),
+        xlim=(-1.5, 4.5),
         ylim=(-1.5, 4.5),
         plot_selection_criteria=True,
         plot_all_objects=None,
@@ -534,9 +397,9 @@ class PlotCalibration:
 
         The legend includes the redshift threshold value with specified precision.
         """
-        self._check_plot_type(plot_all_objects, "plot_all_objects")
-        self._check_plot_type(plot_all_selected_objects, "plot_all_selected_objects")
-        self._check_plot_type(plot_selected_objects, "plot_selected_objects")
+        check_plot_type(plot_all_objects, "plot_all_objects")
+        check_plot_type(plot_all_selected_objects, "plot_all_selected_objects")
+        check_plot_type(plot_selected_objects, "plot_selected_objects")
 
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
@@ -663,7 +526,7 @@ class PlotCalibration:
                 c1_sel = c1[mask_selection]
                 c2_sel = c2[mask_selection]
                 if plot_selected_objects == "curve":
-                    self._plot_distribution_contours(
+                    plot_distribution_contours(
                         ax,
                         c1_sel,
                         c2_sel,
@@ -674,7 +537,7 @@ class PlotCalibration:
                         style_selected_objects,
                     )
                 else:
-                    self._plot_distribution_scatter(
+                    plot_distribution_scatter(
                         ax,
                         c1_sel,
                         c2_sel,
@@ -691,7 +554,7 @@ class PlotCalibration:
             c2_sel = c2[sel.mask[0]]
 
             if plot_all_selected_objects == "curve":
-                self._plot_distribution_contours(
+                plot_distribution_contours(
                     ax,
                     c1_sel,
                     c2_sel,
@@ -702,7 +565,7 @@ class PlotCalibration:
                     style_all_selected_objects,
                 )
             else:
-                self._plot_distribution_scatter(
+                plot_distribution_scatter(
                     ax,
                     c1_sel,
                     c2_sel,
@@ -711,7 +574,7 @@ class PlotCalibration:
                 )
 
         if plot_all_objects == "curve":
-            self._plot_distribution_contours(
+            plot_distribution_contours(
                 ax,
                 c1,
                 c2,
@@ -722,9 +585,7 @@ class PlotCalibration:
                 style_all_objects,
             )
         elif plot_all_objects == "scatter":
-            self._plot_distribution_scatter(
-                ax, c1, c2, color_all_objects, label_all_objects
-            )
+            plot_distribution_scatter(ax, c1, c2, color_all_objects, label_all_objects)
 
         handles, _ = ax.get_legend_handles_labels()
         if handles:  # Only create legend if there are handles
@@ -748,7 +609,7 @@ class PlotCalibration:
         figsize=(15, 20),
         wspace=0.35,
         hspace=0.35,
-        xlim=(-1.5, 3.0),
+        xlim=(-1.5, 4.5),
         ylim=(-1.5, 4.5),
         plot_selection_criteria=True,
         plot_all_objects=None,
@@ -870,17 +731,12 @@ class PlotCalibration:
         )
 
         ax_flat = np.array(ax).flatten()
-        xlim = self._check_ax_limits(xlim, "xlim", len(ax_flat))
-        ylim = self._check_ax_limits(ylim, "ylim", len(ax_flat))
+        xlim = check_ax_limits(xlim, "xlim", len(ax_flat))
+        ylim = check_ax_limits(ylim, "ylim", len(ax_flat))
 
         for i in range(len(ax_flat)):
 
-            ax_flat[i].xaxis.set_tick_params(
-                direction="in", which="both", labelsize=labelsize
-            )
-            ax_flat[i].yaxis.set_tick_params(
-                direction="in", which="both", labelsize=labelsize
-            )
+            ax_flat[i].tick_params(direction="in", which="both", labelsize=labelsize)
 
             color1 = color_spaces[i][0][0] + "-" + color_spaces[i][0][1]
             color2 = color_spaces[i][1][0] + "-" + color_spaces[i][1][1]
@@ -925,5 +781,145 @@ class PlotCalibration:
             plt.savefig(
                 output_file_path, bbox_inches="tight", transparent=True, dpi=dpi
             )
+        plt.show()
 
+    def plot_linear_cut_parameters(
+        self,
+        calibration_index,
+        cut_key,
+        interp_points=None,
+        figsize=(14, 4.5),
+        wspace=0.35,
+        color_measure="k",
+        color_interp="r",
+        style_measure="o",
+        style_interp="--",
+        label_measure="Optimal values",
+        label_interp="Interpolation",
+        loclegend="upper right",
+        legend_fontsize=13,
+        labelsize=13,
+        fontsize=17,
+        output_file_path=None,
+        dpi=300,
+    ):
+        """
+        Plot color condition parameters as a function of limiting redshift.
+
+        One subplot is produced in the slope parameter is not present
+        in the chosen color condition. Two subplots are produced otherwise.
+
+        Parameters
+        ----------
+        calibration_index : int
+            Index of the calibration object to use from self.calibrations.
+        cut_key : str
+            Key corresponding to the optimal color condition.
+            The list of optimal color conditions can be obtained
+            using `CalibrateLinear.get_keys()`.
+        interp_points : array-like, optional
+            Limiting redshift points. If not None, derive the parameters
+            at these points using interpolations. Default is None.
+        figsize : tuple, optional
+            Figure size. Default is (14, 4.5).
+        wspace : float, optional
+            Width space between the subplots. Default is 0.35.
+        color_measure : str, optional
+            Color of the optimal parameter measurements.
+        color_interp : str, optional
+            Color of the interpolated line (if `interp_points` is not None).
+        style_measure : str, optional
+            Marker style of the measured optimal values.
+        style_interp : str, optional
+            Line style of the interpolated values.
+        label_measure : str, optional
+            Legend label of the measurement points.
+        loclegend : str, optional
+            Location of the legend.
+        legend_fontsize : int, optional
+            Font size for legend text.
+        labelsize : float, optional
+            Size of the tick labels.
+        fontsize : int, optional
+            Base font size for axis labels.
+        output_file_path : str, optional
+            Concatenation of the output file path and name.
+            If None, the plot is not saved to file. Default is None.
+        dpi : int, optional
+            dpi parameter of `plt.savefig`.
+        """
+        calib = self.calibrations[calibration_index]
+        assert isinstance(
+            calib, CalibrateLinear
+        ), f"Expected CalibrateLinear, got {type(calib).__name__}"
+
+        entry = calib.dict[cut_key]
+        z_lim = np.unique(entry["knots"])
+
+        if "s" in cut_key:
+            fig, ax = plt.subplots(
+                1, 2, figsize=figsize, gridspec_kw={"wspace": wspace}
+            )
+            ax[1].set_ylabel(r"$s$", fontsize=fontsize)
+            ax[1].scatter(
+                z_lim,
+                entry["s_optimal"],
+                c=color_measure,
+                marker=style_measure,
+            )
+            if interp_points is not None:
+                s_interp = BSpline(
+                    entry["knots"],
+                    entry["s_coefficients"],
+                    entry["order"],
+                    extrapolate=False,
+                )
+                ax[1].plot(
+                    interp_points,
+                    s_interp(interp_points),
+                    color=color_interp,
+                    linestyle=style_interp,
+                )
+        else:
+            fig, ax = plt.subplots(figsize=figsize, gridspec_kw={"wspace": wspace})
+
+        ax_flat = np.array(ax).flatten()
+        for ax in ax_flat:
+            ax.tick_params(direction="in", which="both", labelsize=labelsize)
+            ax.set_xlabel(r"$z_{\rm l}$", fontsize=fontsize)
+        ax_flat[0].set_ylabel(r"$c$", fontsize=fontsize)
+
+        ax_flat[0].scatter(
+            z_lim,
+            entry["c_optimal"],
+            c=color_measure,
+            marker=style_measure,
+            label=label_measure,
+        )
+        if interp_points is not None:
+            c_interp = BSpline(
+                entry["knots"],
+                entry["c_coefficients"],
+                entry["order"],
+                extrapolate=False,
+            )
+            ax_flat[0].plot(
+                interp_points,
+                c_interp(interp_points),
+                color=color_interp,
+                linestyle=style_interp,
+                label=label_interp,
+            )
+
+        ax_flat[0].legend(
+            loc=loclegend,
+            fontsize=legend_fontsize,
+            title_fontsize=legend_fontsize,
+            title=r"$" + cut_key.replace("*", "\,") + "$",
+        )
+
+        if output_file_path is not None:
+            plt.savefig(
+                output_file_path, bbox_inches="tight", transparent=True, dpi=dpi
+            )
         plt.show()

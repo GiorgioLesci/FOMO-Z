@@ -526,7 +526,7 @@ class CalibrateLinear:
         interpolate_parameters(self.dict, k=self.dm.k)
         print("Linear cut calibration complete.")
 
-    def write_optimal_selection(
+    def write(
         self,
         output_dir,
         file_name,
@@ -603,3 +603,25 @@ class CalibrateLinear:
             metrics_df = pd.DataFrame(metrics_data)
             file_path = os.path.join(output_dir, f"FOMO-Z_{file_name}_metrics.csv")
             metrics_df.to_csv(file_path, index=False)
+
+    def get_keys(self):
+        """
+        Get the optimal color condition keys.
+
+        Returns the list of optimal color condition keys contained
+        in `self.dict`.
+
+        Returns
+        ------
+        keys : list of str
+            List of optimal color condition keys.
+
+        Raises
+        ------
+        ValueError
+            If calibration has not been run.
+        """
+        if np.sum(self.C) == 0.0:
+            raise ValueError("No calibration is available! Run process() first.")
+
+        return [key for key in list(self.dict.keys()) if key != "metadata"]
