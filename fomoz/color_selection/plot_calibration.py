@@ -292,6 +292,7 @@ class PlotCalibration:
         color2,
         calibration_index,
         zl_index,
+        show_ax_labels=True,
         xlim=(-1.5, 4.5),
         ylim=(-1.5, 4.5),
         plot_selection_criteria=True,
@@ -313,6 +314,8 @@ class PlotCalibration:
         levels_2D=[0.68, 0.95],
         loclegend="lower right",
         legend_fontsize=13,
+        labelsize=13,
+        fontsize=15,
         zl_precision_in_legend="3",
         show_grid=False,
         output_file_path=None,
@@ -321,7 +324,7 @@ class PlotCalibration:
         """
         Plot color-color distribution with selection criteria and object selection.
 
-        This function creates a color-color plot showing:
+        This function plots a color-color space containing:
         - The distribution of all objects.
         - Selection criteria (linear cuts or grid regions) at a specific redshift threshold.
         - Selected objects based on all criteria (from all selection criteria in all color-color spaces).
@@ -337,6 +340,8 @@ class PlotCalibration:
             Index of the calibration object to use from self.calibrations.
         zl_index : int
             Index of the redshift threshold in DataModel.z_lim.
+        show_ax_labels : bool, optional
+            If true, show the ax labels.
         xlim, ylim : tuple of float, optional
             Axis limits for the plot.
         plot_selection_criteria : bool, optional
@@ -379,6 +384,10 @@ class PlotCalibration:
             Location of the legend.
         legend_fontsize : int, optional
             Font size for legend text.
+        labelsize : float, optional
+            Size of the tick labels.
+        fontsize : int, optional
+            Font size for axis labels.
         zl_precision_in_legend : str, optional
             Number of decimal places for redshift value in legend title.
         show_grid : bool, optional
@@ -401,8 +410,12 @@ class PlotCalibration:
         check_plot_type(plot_all_selected_objects, "plot_all_selected_objects")
         check_plot_type(plot_selected_objects, "plot_selected_objects")
 
+        ax.tick_params(direction="in", which="both", labelsize=labelsize)
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
+        if show_ax_labels:
+            ax.set_xlabel(f"$({color1})$", fontsize=fontsize)
+            ax.set_ylabel(f"$({color2})$", fontsize=fontsize)
         if show_grid:
             ax.grid()
 
@@ -425,10 +438,6 @@ class PlotCalibration:
 
             mask_selection = np.full(len(c1), False)
 
-            bands = set([color1[0], color1[2], color2[0], color2[2]])
-            mags = {band: calib.dm.dataset[band].to_numpy() for band in bands}
-            local_dict = dict(mags)
-
             for key, entry in calib.dict.items():
 
                 if key == "metadata":  # Skip metadata
@@ -449,8 +458,7 @@ class PlotCalibration:
                         c = entry["c_optimal"][idx]
 
                         # Mask
-                        local_dict["c"] = c
-                        mask_selection |= ne.evaluate(key, local_dict=local_dict)
+                        mask_selection |= calib.get_mask(zl_index, key)
 
                         # Selection criteria
                         if plot_selection_criteria:
@@ -489,9 +497,7 @@ class PlotCalibration:
                         s = entry["s_optimal"][idx]
 
                         # Mask
-                        local_dict["c"] = c
-                        local_dict["s"] = s
-                        mask_selection |= ne.evaluate(key, local_dict=local_dict)
+                        mask_selection |= calib.get_mask(zl_index, key)
 
                         # Selection criteria
                         if plot_selection_criteria:
@@ -546,12 +552,9 @@ class PlotCalibration:
                     )
 
         if plot_all_selected_objects is not None:
-            sel = SelectObject()
-            sel.load_parameters(calib)
-            sel.process(z_l, calib.dm.dataset)
-
-            c1_sel = c1[sel.mask[0]]
-            c2_sel = c2[sel.mask[0]]
+            mask_selection = calib.get_mask(zl_index, "all")
+            c1_sel = c1[mask_selection]
+            c2_sel = c2[mask_selection]
 
             if plot_all_selected_objects == "contour":
                 plot_distribution_contours(
@@ -706,7 +709,7 @@ class PlotCalibration:
         labelsize : float, optional
             Size of the tick labels.
         fontsize : int, optional
-            Base font size for axis labels.
+            Font size for axis labels.
         zl_precision_in_legend : str, optional
             Number of decimal places for redshift value in legend title.
         show_grid : bool, optional
@@ -731,17 +734,16 @@ class PlotCalibration:
         )
 
         ax_flat = np.array(ax).flatten()
-        xlim = check_ax_limits(xlim, "xlim", len(ax_flat))
-        ylim = check_ax_limits(ylim, "ylim", len(ax_flat))
+        for i in range(n_color_spaces, len(ax_flat)):
+            fig.delaxes(ax_flat[i])  # delete unused axes
 
-        for i in range(len(ax_flat)):
+        xlim = check_ax_limits(xlim, "xlim", n_color_spaces)
+        ylim = check_ax_limits(ylim, "ylim", n_color_spaces)
 
-            ax_flat[i].tick_params(direction="in", which="both", labelsize=labelsize)
+        for i in range(n_color_spaces):
 
             color1 = color_spaces[i][0][0] + "-" + color_spaces[i][0][1]
             color2 = color_spaces[i][1][0] + "-" + color_spaces[i][1][1]
-            ax_flat[i].set_xlabel(f"$({color1})$", fontsize=fontsize)
-            ax_flat[i].set_ylabel(f"$({color2})$", fontsize=fontsize)
 
             self.plot_color_distribution(
                 ax_flat[i],
@@ -772,6 +774,8 @@ class PlotCalibration:
                 levels_2D=levels_2D,
                 loclegend=loclegend,
                 legend_fontsize=legend_fontsize,
+                labelsize=labelsize,
+                fontsize=fontsize,
                 zl_precision_in_legend=zl_precision_in_legend,
                 show_grid=show_grid,
                 output_file_path=None,
@@ -808,6 +812,9 @@ class PlotCalibration:
 
         One subplot is produced in the slope parameter is not present
         in the chosen color condition. Two subplots are produced otherwise.
+
+        NOTE: the sign of the slope parameter is always positive in the plot.
+        The minus sign, if present, is reported in the legend.
 
         Parameters
         ----------

@@ -19,6 +19,7 @@ import numpy as np
 import yaml
 from tqdm import tqdm
 import pandas as pd
+import numexpr as ne
 
 from .tools import (
     Measure,
@@ -630,3 +631,56 @@ class CalibrateLinear:
             raise ValueError("No calibration is available! Run process() first.")
 
         return [key for key in list(self.dict.keys()) if key != "metadata"]
+
+    def get_mask(self, zl_index, color_condition="all"):
+        """
+        Get the calibration mask.
+
+        Returns the calibration mask relative to the input limiting redshift.
+
+        Parameters
+        ------
+        zl_index : int
+            Index of the redshift threshold in DataModel.z_lim.
+        color_condition : str, optional
+            It can be either "all" (all optimal color conditions) or one of
+            the optimal color conditions. The latter can be obtained from `self.get_keys()`.
+
+        Returns
+        -------
+        mask : numpy.array
+            Array of booleans.
+        """
+        assert isinstance(
+            color_condition, str
+        ), f"color_condition must be a string, got {type(color_condition).__name__}"
+
+        if color_condition == "all":
+            color_condition = self.get_keys()
+        else:
+            if color_condition not in self.get_keys():
+                raise ValueError(
+                    f"Not allowed color_condition value {color_condition}."
+                )
+            color_condition = [color_condition]
+
+        z_l = self.dm.z_lim[zl_index]
+        mags = {
+            band: self.dm.dataset[band].to_numpy()
+            for band in self.dict["metadata"]["bands"]
+        }
+        mask = np.full(len(self.dm.dataset), False)
+        local_dict = dict(mags)
+
+        for key in color_condition:
+            entry = self.dict[key]
+            knots = np.unique(entry["knots"])
+            if z_l not in knots:
+                continue
+            idx = np.where(knots == z_l)[0][0]
+            local_dict["c"] = entry["c_optimal"][idx]
+            if "s_optimal" in entry:
+                local_dict["s"] = entry["s_optimal"][idx]
+            mask |= ne.evaluate(key, local_dict=local_dict)
+
+        return mask
