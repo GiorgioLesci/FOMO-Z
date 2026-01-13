@@ -32,6 +32,7 @@ class DataModel:
         missing_data=-99,
         s_samples=np.linspace(0.3, 1.7, 30),
         c_precision=0.05,
+        grid_precision=0.15,
         step=0.0001,
         threshold_buffer=0.05,
         k=1,
@@ -97,9 +98,15 @@ class DataModel:
             These samples must be strictly positive. Used only for linear color cuts
             (i.e., used by `CalibrateLinear`, not used by `CalibrateGrid`).
         c_precision : float, default=0.05
-            Precision of the c parameter sampling. Smaller values increase accuracy
-            but significantly increase the number of operations. If you halve `c_precision`,
-            expect about 2 times more c steps per s (also runtime and RAM roughly double).
+            Precision of the c parameter sampling in `CalibrateLinear`. Smaller values
+            increase accuracy but significantly increase the number of operations.
+            If `c_precision` is halved, expect about 2 times more c steps per s
+            (also runtime and RAM roughly double). Used only for linear color cuts
+            (i.e., used by `CalibrateLinear`, not used by `CalibrateGrid`).
+        grid_precision : float, default=0.15
+            Precision of the grid in `CalibrateGrid`. A smaller value yields a finer,
+            more accurate grid at the cost of increased computation, RAM usage, and
+            storage requirements.
         step : float, default=0.0001
             Defines the threshold reduction (i) on single color conditions in `CalibrateLinear`,
             and (ii) on grid elements in `CalibrateGrid`. Default is 0.0001.
@@ -194,6 +201,7 @@ class DataModel:
             )
         self.s_samples = s_samples.astype(np.float32)
         self.c_precision = float(c_precision)
+        self.grid_precision = float(grid_precision)
 
         self.is_zlim_lower = is_zlim_lower
         self.additional_rules = additional_rules

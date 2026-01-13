@@ -192,7 +192,7 @@ class PlotCalibration:
         fontsize=15,
         linestyle="-",
         color="k",
-        show_grid=False,
+        show_axes_grid=False,
         alpha=0.3,
         interp_points=None,
         output_file_path=None,
@@ -232,8 +232,8 @@ class PlotCalibration:
             Line style. Default is "-".
         color : list or str, optional
             Line color. Default is "k".
-        show_grid : bool, optional
-            If True, show the axis tick grid. Default is False.
+        show_axes_grid : bool, optional
+            If True, show the axes tick grid. Default is False.
         alpha : float, optional
             alpha parameter of the 68% confidence interval. Default is 0.3.
         interp_points : array-like, optional
@@ -251,7 +251,7 @@ class PlotCalibration:
         )
         for i in range(len(ax)):
             ax[i].tick_params(direction="in", which="both", labelsize=labelsize)
-            if show_grid:
+            if show_axes_grid:
                 ax[i].grid()
             ax[i].set_xlabel(xlabel, fontsize=fontsize)
 
@@ -317,7 +317,7 @@ class PlotCalibration:
         labelsize=13,
         fontsize=15,
         zl_precision_in_legend="3",
-        show_grid=False,
+        show_axes_grid=False,
         output_file_path=None,
         dpi=300,
     ):
@@ -390,8 +390,8 @@ class PlotCalibration:
             Font size for axis labels.
         zl_precision_in_legend : str, optional
             Number of decimal places for redshift value in legend title.
-        show_grid : bool, optional
-            If True, show the axis tick grid. Default is False.
+        show_axes_grid : bool, optional
+            If True, show the axes tick grid. Default is False.
         output_file_path : str, optional
             Concatenation of the output file path and name.
             If None, the plot is not saved to file. Default is None.
@@ -416,7 +416,7 @@ class PlotCalibration:
         if show_ax_labels:
             ax.set_xlabel(f"$({color1})$", fontsize=fontsize)
             ax.set_ylabel(f"$({color2})$", fontsize=fontsize)
-        if show_grid:
+        if show_axes_grid:
             ax.grid()
 
         calib = self.calibrations[calibration_index]
@@ -636,7 +636,7 @@ class PlotCalibration:
         labelsize=13,
         fontsize=15,
         zl_precision_in_legend="3",
-        show_grid=False,
+        show_axes_grid=False,
         output_file_path=None,
         dpi=300,
     ):
@@ -712,8 +712,8 @@ class PlotCalibration:
             Font size for axis labels.
         zl_precision_in_legend : str, optional
             Number of decimal places for redshift value in legend title.
-        show_grid : bool, optional
-            If True, show the axis tick grid. Default is False.
+        show_axes_grid : bool, optional
+            If True, show the axes tick grid. Default is False.
         output_file_path : str, optional
             Concatenation of the output file path and name.
             If None, the plot is not saved to file. Default is None.
@@ -777,7 +777,7 @@ class PlotCalibration:
                 labelsize=labelsize,
                 fontsize=fontsize,
                 zl_precision_in_legend=zl_precision_in_legend,
-                show_grid=show_grid,
+                show_axes_grid=show_axes_grid,
                 output_file_path=None,
             )
 

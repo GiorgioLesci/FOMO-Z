@@ -100,3 +100,28 @@ def c_domain_given_s(color1, color2, s, q_low=0.01, q_high=0.99):
     hi = float(np.quantile(vals, q_high))
 
     return lo, hi
+
+def color_bin_edges(color_min, color_max, precision):
+    """
+    Generate evenly spaced bin edges for color values.
+    
+    Parameters
+    ----------
+    color_min : float
+        Minimum color value.
+    color_max : float
+        Maximum color value.
+    precision : float
+        Bin width (spacing between edges).
+    
+    Returns
+    -------
+    numpy.ndarray
+        Array of bin edges from color_min to color_max inclusive,
+        spaced by precision.
+    """
+    return np.linspace(
+        color_min,
+        color_max,
+        int((color_max - color_min) / precision) + 1,
+    )

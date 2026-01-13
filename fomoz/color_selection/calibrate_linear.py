@@ -1,5 +1,5 @@
 """
-Derive optimal color selections.
+Derive optimal color selections based on linear cuts.
 
 This module selects the optimal color conditions and the corresponding
 optimal parameters, given any limit on redshift and on other galaxy properties.
@@ -10,11 +10,8 @@ optimal parameters, given any limit on redshift and on other galaxy properties.
 import copy
 import multiprocessing as mp
 import os
-import time
 import pickle
-from typing import Dict
 
-import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 from tqdm import tqdm
@@ -23,7 +20,6 @@ import numexpr as ne
 
 from .tools import (
     Measure,
-    compute_metrics,
     combine_optimal_cuts,
     build_nested_dict,
     float_representer,
@@ -134,7 +130,7 @@ class CalibrateLinear:
         r"""
         Calibrate the linear color cut selection for a single redshift threshold `z_l`.
 
-        See the documentation of `process` for a detailed description of the
+        See the documentation of the class constructor for a detailed description of the
         iterative process implemented in this function.
 
         Parameters
@@ -515,11 +511,11 @@ class CalibrateLinear:
 
         del self.redshift, self.color_cache
 
-        # Bootstrap errors
+        # Compute bootstrap errors
         if self.dm.do_bootstrap:
             self._estimate_errors(n_bootstraps=self.dm.n_bootstraps)
 
-        #
+        # Restructure self.dict and interpolate the color cut parameters
         restructure_dict(
             self.dict,
             self.dm.bands,
@@ -614,8 +610,7 @@ class CalibrateLinear:
         """
         Get the optimal color condition keys.
 
-        Returns the list of optimal color condition keys contained
-        in `self.dict`.
+        Returns the list of optimal color condition keys contained in `self.dict`.
 
         Returns
         ------
