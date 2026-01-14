@@ -101,10 +101,11 @@ def c_domain_given_s(color1, color2, s, q_low=0.01, q_high=0.99):
 
     return lo, hi
 
+
 def color_bin_edges(color_min, color_max, precision):
     """
     Generate evenly spaced bin edges for color values.
-    
+
     Parameters
     ----------
     color_min : float
@@ -113,7 +114,7 @@ def color_bin_edges(color_min, color_max, precision):
         Maximum color value.
     precision : float
         Bin width (spacing between edges).
-    
+
     Returns
     -------
     numpy.ndarray

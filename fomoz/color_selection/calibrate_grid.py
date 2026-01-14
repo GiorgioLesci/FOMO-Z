@@ -84,7 +84,7 @@ class CalibrateGrid:
 
         # Color ranges and self.dict structure
         self.color_spaces = list(combinations(self.dm.colors, 2))
-        for color_space in color_spaces:
+        for color_space in self.color_spaces:
             color1 = self.dict_colors[color_space[0]]
             color2 = self.dict_colors[color_space[1]]
             color1_min, color1_max = c_domain(color1, q_low=0.0001, q_high=0.9999)
@@ -149,11 +149,6 @@ class CalibrateGrid:
 
         # Loop over color-color spaces to pre-compute statistics on the grids
         dict_stats = {}
-
-
-        self.color_spaces = [('B', 'z'), ('z', 'K')]
-
-
         for color_space in self.color_spaces:
 
             # Initializations
@@ -164,12 +159,18 @@ class CalibrateGrid:
             # Grid points and total number of galaxies per bin
             color1_min, color1_max = self.dict[color_space]["color1_limits"]
             color2_min, color2_max = self.dict[color_space]["color2_limits"]
-            color1_bins = color_bin_edges(color1_min, color1_max, self.dm.grid_precision)
-            color2_bins = color_bin_edges(color2_min, color2_max, self.dm.grid_precision)
+            color1_bins = color_bin_edges(
+                color1_min, color1_max, self.dm.grid_precision
+            )
+            color2_bins = color_bin_edges(
+                color2_min, color2_max, self.dm.grid_precision
+            )
 
             color1 = self.dict_colors[color_space[0]]
             color2 = self.dict_colors[color_space[1]]
-            dict_stats[color_space]["N_total"], _, _ = np.histogram2d(color1, color2, bins=[color1_bins, color2_bins])
+            dict_stats[color_space]["N_total"], _, _ = np.histogram2d(
+                color1, color2, bins=[color1_bins, color2_bins]
+            )
 
             # Per-bin number of galaxies fulfilling the input conditions
             # and per-bin probability to get good objects
@@ -181,7 +182,10 @@ class CalibrateGrid:
 
             prob = np.zeros_like(dict_stats[color_space]["N_good"])
             nonzero = dict_stats[color_space]["N_total"] > 0
-            prob[nonzero] = dict_stats[color_space]["N_good"][nonzero] / dict_stats[color_space]["N_total"][nonzero]
+            prob[nonzero] = (
+                dict_stats[color_space]["N_good"][nonzero]
+                / dict_stats[color_space]["N_total"][nonzero]
+            )
             dict_stats[color_space]["prob"] = prob
 
         # Remove bins with prob below a fixed threshold iteratively
@@ -203,7 +207,7 @@ class CalibrateGrid:
 
             # Total completeness
             if N_good_tot > 0:
-                self.C[i_z] = N_good_sel / N_good_tot
+                C = N_good_sel / N_good_tot
 
             # Total purity
             if N_tot_sel > 0:
@@ -223,7 +227,9 @@ class CalibrateGrid:
                 self.P[i_z] = P
                 self.C[i_z] = C
                 for color_space in self.color_spaces:
-                    self.dict[color_space]["mask"][i_z] = dict_stats[color_space]["mask"]
+                    self.dict[color_space]["mask"][i_z] = dict_stats[color_space][
+                        "mask"
+                    ]
                 break
 
             # Increase bin-level threshold
@@ -283,8 +289,12 @@ class CalibrateGrid:
 
             color1_min, color1_max = self.dict[cs]["color1_limits"]
             color2_min, color2_max = self.dict[cs]["color2_limits"]
-            color1_bins = color_bin_edges(color1_min, color1_max, self.dm.grid_precision)
-            color2_bins = color_bin_edges(color2_min, color2_max, self.dm.grid_precision)
+            color1_bins = color_bin_edges(
+                color1_min, color1_max, self.dm.grid_precision
+            )
+            color2_bins = color_bin_edges(
+                color2_min, color2_max, self.dm.grid_precision
+            )
             color1 = self.dict_colors[cs[0]]
             color2 = self.dict_colors[cs[1]]
 
@@ -295,8 +305,10 @@ class CalibrateGrid:
             # Guard against out-of-range points
             good_bins = self.dict[cs]["mask"][zl_index]
             valid = (
-                (i1 >= 0) & (i1 < good_bins.shape[0]) &
-                (i2 >= 0) & (i2 < good_bins.shape[1])
+                (i1 >= 0)
+                & (i1 < good_bins.shape[0])
+                & (i2 >= 0)
+                & (i2 < good_bins.shape[1])
             )
 
             # Select
