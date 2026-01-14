@@ -82,11 +82,11 @@ class CalibrateGrid:
         ]
         self.dict["metadata"]["grid_precision"] = self.dm.grid_precision
 
-        # Color ranges and self.dict structure. Loop over color spaces.
-        for color_space in list(combinations(self.dm.colors, 2)):
+        # Color ranges and self.dict structure
+        self.color_spaces = list(combinations(self.dm.colors, 2))
+        for color_space in color_spaces:
             color1 = self.dict_colors[color_space[0]]
             color2 = self.dict_colors[color_space[1]]
-
             color1_min, color1_max = c_domain(color1, q_low=0.0001, q_high=0.9999)
             color2_min, color2_max = c_domain(color2, q_low=0.0001, q_high=0.9999)
 
@@ -142,76 +142,99 @@ class CalibrateGrid:
         """
         print("\nRunning the grid color selection calibration...")
 
-        color_space = (("B", "z"), ("z", "K"))
         i_z = 0
-        self.dict[color_space]["mask"] = {}
-        self.dict[color_space]["mask"][i_z] = {}
 
-        # Grid points and total number of galaxies per bin
-        color1_min, color1_max = self.dict[color_space]["color1_limits"]
-        color2_min, color2_max = self.dict[color_space]["color2_limits"]
+        # Total number of good galaxies in the sample
+        N_good_tot = np.count_nonzero(self.dm.target_mask[i_z])
 
-        color1_bins = color_bin_edges(color1_min, color1_max, self.dm.grid_precision)
-        color2_bins = color_bin_edges(color2_min, color2_max, self.dm.grid_precision)
+        # Loop over color-color spaces to pre-compute statistics on the grids
+        dict_stats = {}
 
-        color1 = self.dict_colors[color_space[0]]
-        color2 = self.dict_colors[color_space[1]]
-        N_total, _, _ = np.histogram2d(color1, color2, bins=[color1_bins, color2_bins])
 
-        # Per-bin number of galaxies fulfilling the input conditions
-        # and per-bin probability to get good objects
-        N_good = np.histogram2d(
-            color1[self.dm.target_mask[i_z]],
-            color2[self.dm.target_mask[i_z]],
-            bins=[color1_bins, color2_bins],
-        )[0]
+        self.color_spaces = [('B', 'z'), ('z', 'K')]
 
-        prob = np.zeros_like(N_good)
-        nonzero = N_total > 0
-        prob[nonzero] = N_good[nonzero] / N_total[nonzero]
+
+        for color_space in self.color_spaces:
+
+            # Initializations
+            self.dict[color_space]["mask"] = {}
+            self.dict[color_space]["mask"][i_z] = {}
+            dict_stats[color_space] = {}
+
+            # Grid points and total number of galaxies per bin
+            color1_min, color1_max = self.dict[color_space]["color1_limits"]
+            color2_min, color2_max = self.dict[color_space]["color2_limits"]
+            color1_bins = color_bin_edges(color1_min, color1_max, self.dm.grid_precision)
+            color2_bins = color_bin_edges(color2_min, color2_max, self.dm.grid_precision)
+
+            color1 = self.dict_colors[color_space[0]]
+            color2 = self.dict_colors[color_space[1]]
+            dict_stats[color_space]["N_total"], _, _ = np.histogram2d(color1, color2, bins=[color1_bins, color2_bins])
+
+            # Per-bin number of galaxies fulfilling the input conditions
+            # and per-bin probability to get good objects
+            dict_stats[color_space]["N_good"] = np.histogram2d(
+                color1[self.dm.target_mask[i_z]],
+                color2[self.dm.target_mask[i_z]],
+                bins=[color1_bins, color2_bins],
+            )[0]
+
+            prob = np.zeros_like(dict_stats[color_space]["N_good"])
+            nonzero = dict_stats[color_space]["N_total"] > 0
+            prob[nonzero] = dict_stats[color_space]["N_good"][nonzero] / dict_stats[color_space]["N_total"][nonzero]
+            dict_stats[color_space]["prob"] = prob
 
         # Remove bins with prob below a fixed threshold iteratively
-        N_good_tot = np.count_nonzero(self.dm.target_mask[i_z])
         prob_min_bin = 0.0  # starting bin-level probability
-        P_tot, C_tot, thresholded_quantity = 0.0, 0.0, 0.0
+        thresholded_quantity, P, C = 0.0, 0.0, 0.0
 
         while thresholded_quantity < self.dm.thresholded_quantity_min[i_z]:
 
-            # Mask bins below the bin-level prob threshold
-            good_bins = prob >= prob_min_bin
-            # good_bins = significant & (prob >= prob_min_bin)
+            N_good_sel, N_tot_sel = 0.0, 0.0
+            for color_space in self.color_spaces:
+
+                # Mask bins below the bin-level prob threshold
+                mask = dict_stats[color_space]["prob"] >= prob_min_bin
+
+                N_good_sel += dict_stats[color_space]["N_good"][mask].sum()
+                N_tot_sel += dict_stats[color_space]["N_total"][mask].sum()
+
+                dict_stats[color_space]["mask"] = mask
 
             # Total completeness
             if N_good_tot > 0:
-                C_tot = N_good[good_bins].sum() / N_good_tot
+                self.C[i_z] = N_good_sel / N_good_tot
 
             # Total purity
-            N_tot = N_total[good_bins].sum()
-            if N_tot > 0:
-                P_tot = N_good[good_bins].sum() / N_tot
+            if N_tot_sel > 0:
+                P = N_good_sel / N_tot_sel
 
             # Check convergence
             if self.dm.thresholded_quantity == "purity":
-                thresholded_quantity = P_tot
+                thresholded_quantity = P
             elif self.dm.thresholded_quantity == "completeness":
-                thresholded_quantity = C_tot
+                thresholded_quantity = C
             else:
                 raise ValueError(
                     f"Not allowed value for thresholded_quantity ({self.dm.thresholded_quantity})."
                 )
 
             if thresholded_quantity >= self.dm.thresholded_quantity_min:
-                self.dict[color_space]["mask"][i_z] = good_bins
+                self.P[i_z] = P
+                self.C[i_z] = C
+                for color_space in self.color_spaces:
+                    self.dict[color_space]["mask"][i_z] = dict_stats[color_space]["mask"]
                 break
 
             # Increase bin-level threshold
             prob_min_bin += self.dm.step
 
+        del dict_stats
+
         print(f"Converged!")
         print(f"P_min_bin = {prob_min_bin:.3f}")
-        print(f"P_tot     = {P_tot:.3f}")
-        print(f"C_tot     = {C_tot:.3f}")
-        print(f"Selected bins: {good_bins.sum()} / {prob.size}")
+        print(f"P_tot     = {self.P[i_z]:.3f}")
+        print(f"C_tot     = {self.C[i_z]:.3f}")
 
         print("Grid calibration complete.")
 
@@ -224,7 +247,7 @@ class CalibrateGrid:
         Returns
         ------
         keys : list of str
-            List of optimal color condition keys.
+            List of color-color space keys.
         """
         return [key for key in list(self.dict.keys()) if key != "metadata"]
 
