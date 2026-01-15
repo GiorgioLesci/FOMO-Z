@@ -55,6 +55,7 @@ class CalibrateGrid:
             redshift thresholds, and precomputed cut metrics.
         """
         self.dm = data_model
+        self.color_spaces = list(combinations(self.dm.colors, 2))
 
         self.dict_steps = {}
         self.P = np.zeros(len(self.dm.z_lim))
@@ -64,41 +65,215 @@ class CalibrateGrid:
         self.P_std = np.full(len(self.dm.z_lim), np.nan)
         self.F_std = np.full(len(self.dm.z_lim), np.nan)
 
-        # Pre-computed color dictionary
-        self.dict_colors = {}
-        for color in self.dm.colors:
-            self.dict_colors[color] = (
-                self.dm.dataset[color[0]].values - self.dm.dataset[color[1]].values
-            )
-
-        # self.dict metadata
         self.dict = {}
-        self.dict["metadata"] = {}
-        self.dict["metadata"]["bands"] = self.dm.bands
-        self.dict["metadata"]["z_l"] = [float(z) for z in self.dm.z_lim]
-        self.dict["metadata"]["z_l_is_lower_limit"] = self.dm.is_zlim_lower
-        self.dict["metadata"][f"{self.dm.thresholded_quantity}_min"] = [
+        self._update_dict_metadata(self.dict, self.dm.dataset)
+        self._update_dict(self.dict, self.dm.dataset)
+
+    def _update_dict_metadata(self, dictionary, dataset):
+        r"""
+        Update the input dictionary's metadata, given the input data set.
+
+        Parameters
+        ----------
+        dictionary : dict
+            Dictionary.
+        dataset : pandas.DataFrame
+            Input dataset containing photometric bands.
+        """
+        dictionary["metadata"] = {}
+        dictionary["metadata"]["bands"] = self.dm.bands
+        dictionary["metadata"]["z_l"] = [float(z) for z in self.dm.z_lim]
+        dictionary["metadata"]["z_l_is_lower_limit"] = self.dm.is_zlim_lower
+        dictionary["metadata"][f"{self.dm.thresholded_quantity}_min"] = [
             float(T) for T in self.dm.thresholded_quantity_min
         ]
-        self.dict["metadata"]["grid_precision"] = self.dm.grid_precision
+        dictionary["metadata"]["grid_precision"] = self.dm.grid_precision
 
-        # Color ranges and self.dict structure
-        self.color_spaces = list(combinations(self.dm.colors, 2))
+        dictionary["metadata"]["color_limits"] = {}
         for color_space in self.color_spaces:
-            color1 = self.dict_colors[color_space[0]]
-            color2 = self.dict_colors[color_space[1]]
-            color1_min, color1_max = c_domain(color1, q_low=0.0001, q_high=0.9999)
-            color2_min, color2_max = c_domain(color2, q_low=0.0001, q_high=0.9999)
+            value1 = (
+                dataset[color_space[0][0]].values - dataset[color_space[0][1]].values
+            )
+            value2 = (
+                dataset[color_space[1][0]].values - dataset[color_space[1][1]].values
+            )
+            color1_min, color1_max = c_domain(value1, q_low=0.0001, q_high=0.9999)
+            color2_min, color2_max = c_domain(value2, q_low=0.0001, q_high=0.9999)
 
-            self.dict[color_space[0], color_space[1]] = {}
-            self.dict[color_space[0], color_space[1]]["color1_limits"] = [
+            # These are used to reconstruct the bin edges from the metadata
+            dictionary["metadata"]["color_limits"][color_space[0]] = [
                 color1_min,
                 color1_max,
             ]
-            self.dict[color_space[0], color_space[1]]["color2_limits"] = [
+            dictionary["metadata"]["color_limits"][color_space[1]] = [
                 color2_min,
                 color2_max,
             ]
+
+    def _update_dict(self, dictionary, dataset):
+        r"""
+        Update the input dictionary, given the input data set.
+
+        Parameters
+        ----------
+        dictionary : dict
+            Dictionary.
+        dataset : pandas.DataFrame
+            Input dataset containing photometric bands.
+        """
+        # Color values and object index dictionary
+        dict_colors = {}
+        for color in self.dm.colors:
+
+            value = dataset[color[0]].values - dataset[color[1]].values
+
+            # keep the color-color grids fixed to the initial ones!
+            color_min, color_max = dictionary["metadata"]["color_limits"][color]
+            value_bins = color_bin_edges(color_min, color_max, self.dm.grid_precision)
+
+            index = np.digitize(value, value_bins) - 1
+            nbins = len(value_bins) - 1
+            valid = (index >= 0) & (index < nbins)
+
+            dict_colors[color] = {"index": index, "valid": valid}
+
+        # Update the valid color indices in dictionary
+        for color_space in self.color_spaces:
+            color1 = color_space[0]
+            color2 = color_space[1]
+            valid = dict_colors[color1]["valid"] & dict_colors[color2]["valid"]
+            i1 = dict_colors[color1]["index"][valid]
+            i2 = dict_colors[color2]["index"][valid]
+
+            dictionary[color_space] = {}
+            dictionary[color_space]["valid"] = valid
+            dictionary[color_space]["color1_index"] = i1
+            dictionary[color_space]["color2_index"] = i2
+
+    def _process_for_one_z(self, args):
+        r"""
+        Calibrate the color cut selection on grids for a single redshift threshold `z_l`.
+
+        See the documentation of the class constructor for a detailed description of the
+        iterative process implemented in this function.
+
+        Parameters
+        ----------
+        args : tuple
+            A 3-element tuple containing:
+            - i_z : float
+                The index of the redshift threshold being processed.
+            - store_iterations : bool
+                If True, store the iteration steps in self.dict_steps.
+            - cpu_number : int
+                Number of CPU cores to use for parallel processing.
+        """
+        i_z, store_iterations, cpu_number = args
+
+        # Total number of good galaxies in the sample
+        N_good_tot = np.count_nonzero(self.dm.target_mask[i_z])
+
+        # Loop over color-color spaces to pre-compute statistics on the grids
+        dict_stats = {}  # temporary dict containing grid statistics and masks
+        for color_space in self.color_spaces:
+
+            # Dictionary initializations
+            self.dict[color_space]["mask"] = {}
+
+            dict_stats[color_space] = {}
+            dict_stats[color_space]["mask"] = {}
+            dict_stats[color_space]["color1_index"] = self.dict[color_space][
+                "color1_index"
+            ]
+            dict_stats[color_space]["color2_index"] = self.dict[color_space][
+                "color2_index"
+            ]
+            dict_stats[color_space]["valid"] = self.dict[color_space]["valid"]
+
+            # Grid points and total number of galaxies per bin
+            color1_min, color1_max = self.dict["metadata"]["color_limits"][
+                color_space[0]
+            ]
+            color2_min, color2_max = self.dict["metadata"]["color_limits"][
+                color_space[1]
+            ]
+
+            color1_bins = color_bin_edges(
+                color1_min, color1_max, self.dm.grid_precision
+            )
+            color2_bins = color_bin_edges(
+                color2_min, color2_max, self.dm.grid_precision
+            )
+
+            color1 = (
+                self.dm.dataset[color_space[0][0]].values
+                - self.dm.dataset[color_space[0][1]].values
+            )
+            color2 = (
+                self.dm.dataset[color_space[1][0]].values
+                - self.dm.dataset[color_space[1][1]].values
+            )
+            N_total, _, _ = np.histogram2d(
+                color1, color2, bins=[color1_bins, color2_bins]
+            )
+
+            # Per-bin number of galaxies fulfilling the input conditions
+            # and per-bin probability to get good objects
+            N_good = np.histogram2d(
+                color1[self.dm.target_mask[i_z]],
+                color2[self.dm.target_mask[i_z]],
+                bins=[color1_bins, color2_bins],
+            )[0]
+
+            prob = np.zeros_like(N_good)
+            nonzero = N_total > 0
+            prob[nonzero] = N_good[nonzero] / N_total[nonzero]
+            dict_stats[color_space]["prob"] = prob
+
+        # Remove bins with prob below a fixed threshold iteratively
+        prob_min_bin = 0.0  # starting bin-level probability
+        thresholded_quantity, P, C = 0.0, 0.0, 0.0
+
+        while thresholded_quantity < self.dm.thresholded_quantity_min[i_z]:
+
+            # Mask bins below the bin-level prob threshold
+            for color_space in self.color_spaces:
+                mask = dict_stats[color_space]["prob"] >= prob_min_bin
+                dict_stats[color_space]["mask"][i_z] = mask
+
+            mask = self.get_mask(i_z, dictionary=dict_stats)
+            N_good_sel = np.count_nonzero(mask & self.dm.target_mask[i_z])
+            N_tot_sel = np.count_nonzero(mask)
+
+            # Total completeness
+            if N_good_tot > 0:
+                C = N_good_sel / N_good_tot
+
+            # Total purity
+            if N_tot_sel > 0:
+                P = N_good_sel / N_tot_sel
+
+            # Check convergence
+            if self.dm.thresholded_quantity == "purity":
+                thresholded_quantity = P
+            elif self.dm.thresholded_quantity == "completeness":
+                thresholded_quantity = C
+            else:
+                raise ValueError(
+                    f"Not allowed value for thresholded_quantity ({self.dm.thresholded_quantity})."
+                )
+
+            if thresholded_quantity >= self.dm.thresholded_quantity_min[i_z]:
+                self.P[i_z] = P
+                self.C[i_z] = C
+                for color_space in self.color_spaces:
+                    self.dict[color_space]["mask"][i_z] = dict_stats[color_space][
+                        "mask"
+                    ][i_z]
+                break
+
+            # Increase bin-level threshold
+            prob_min_bin += self.dm.step
 
     def process(
         self,
@@ -142,105 +317,14 @@ class CalibrateGrid:
         """
         print("\nRunning the grid color selection calibration...")
 
-        i_z = 0
-
-        # Total number of good galaxies in the sample
-        N_good_tot = np.count_nonzero(self.dm.target_mask[i_z])
-
-        # Loop over color-color spaces to pre-compute statistics on the grids
-        dict_stats = {}
-        for color_space in self.color_spaces:
-
-            # Initializations
-            self.dict[color_space]["mask"] = {}
-            self.dict[color_space]["mask"][i_z] = {}
-            dict_stats[color_space] = {}
-
-            # Grid points and total number of galaxies per bin
-            color1_min, color1_max = self.dict[color_space]["color1_limits"]
-            color2_min, color2_max = self.dict[color_space]["color2_limits"]
-            color1_bins = color_bin_edges(
-                color1_min, color1_max, self.dm.grid_precision
-            )
-            color2_bins = color_bin_edges(
-                color2_min, color2_max, self.dm.grid_precision
-            )
-
-            color1 = self.dict_colors[color_space[0]]
-            color2 = self.dict_colors[color_space[1]]
-            dict_stats[color_space]["N_total"], _, _ = np.histogram2d(
-                color1, color2, bins=[color1_bins, color2_bins]
-            )
-
-            # Per-bin number of galaxies fulfilling the input conditions
-            # and per-bin probability to get good objects
-            dict_stats[color_space]["N_good"] = np.histogram2d(
-                color1[self.dm.target_mask[i_z]],
-                color2[self.dm.target_mask[i_z]],
-                bins=[color1_bins, color2_bins],
-            )[0]
-
-            prob = np.zeros_like(dict_stats[color_space]["N_good"])
-            nonzero = dict_stats[color_space]["N_total"] > 0
-            prob[nonzero] = (
-                dict_stats[color_space]["N_good"][nonzero]
-                / dict_stats[color_space]["N_total"][nonzero]
-            )
-            dict_stats[color_space]["prob"] = prob
-
-        # Remove bins with prob below a fixed threshold iteratively
-        prob_min_bin = 0.0  # starting bin-level probability
-        thresholded_quantity, P, C = 0.0, 0.0, 0.0
-
-        while thresholded_quantity < self.dm.thresholded_quantity_min[i_z]:
-
-            N_good_sel, N_tot_sel = 0.0, 0.0
-            for color_space in self.color_spaces:
-
-                # Mask bins below the bin-level prob threshold
-                mask = dict_stats[color_space]["prob"] >= prob_min_bin
-
-                N_good_sel += dict_stats[color_space]["N_good"][mask].sum()
-                N_tot_sel += dict_stats[color_space]["N_total"][mask].sum()
-
-                dict_stats[color_space]["mask"] = mask
-
-            # Total completeness
-            if N_good_tot > 0:
-                C = N_good_sel / N_good_tot
-
-            # Total purity
-            if N_tot_sel > 0:
-                P = N_good_sel / N_tot_sel
-
-            # Check convergence
-            if self.dm.thresholded_quantity == "purity":
-                thresholded_quantity = P
-            elif self.dm.thresholded_quantity == "completeness":
-                thresholded_quantity = C
-            else:
-                raise ValueError(
-                    f"Not allowed value for thresholded_quantity ({self.dm.thresholded_quantity})."
-                )
-
-            if thresholded_quantity >= self.dm.thresholded_quantity_min:
-                self.P[i_z] = P
-                self.C[i_z] = C
-                for color_space in self.color_spaces:
-                    self.dict[color_space]["mask"][i_z] = dict_stats[color_space][
-                        "mask"
-                    ]
-                break
-
-            # Increase bin-level threshold
-            prob_min_bin += self.dm.step
-
-        del dict_stats
+        results = [
+            self._process_for_one_z((i_z, store_iterations, cpu_number))
+            for i_z in tqdm(range(len(self.dm.z_lim)), desc="Looping over z_lim points")
+        ]
 
         print(f"Converged!")
-        print(f"P_min_bin = {prob_min_bin:.3f}")
-        print(f"P_tot     = {self.P[i_z]:.3f}")
-        print(f"C_tot     = {self.C[i_z]:.3f}")
+        print(f"P_tot     = {self.P}")
+        print(f"C_tot     = {self.C}")
 
         print("Grid calibration complete.")
 
@@ -257,7 +341,7 @@ class CalibrateGrid:
         """
         return [key for key in list(self.dict.keys()) if key != "metadata"]
 
-    def get_mask(self, zl_index, color_space="all"):
+    def get_mask(self, zl_index, color_space="all", dictionary=None):
         """
         Get the calibration mask.
 
@@ -271,6 +355,9 @@ class CalibrateGrid:
             It can be either "all" (all color-color spaces) or one of
             the available color-color spaces, in the form `((band1, band2), (band3, band4))`.
             Available color-color spaces can be obtained from `self.get_keys()`.
+        dictionary : dict, optional
+            The color-color space dictionary, containing grid masks. If not provided,
+            the internal dictionary (`self.dict`) is used.
 
         Returns
         -------
@@ -284,34 +371,20 @@ class CalibrateGrid:
                 raise ValueError(f"Not allowed color_space value {color_space}.")
             color_space = [color_space]
 
-        mask = np.full(len(self.dm.dataset), False)
+        if dictionary is None:
+            dictionary = self.dict
+
+        N_objects = len(dictionary[color_space[0]]["valid"])
+        mask = np.full(N_objects, False)
         for cs in color_space:
 
-            color1_min, color1_max = self.dict[cs]["color1_limits"]
-            color2_min, color2_max = self.dict[cs]["color2_limits"]
-            color1_bins = color_bin_edges(
-                color1_min, color1_max, self.dm.grid_precision
-            )
-            color2_bins = color_bin_edges(
-                color2_min, color2_max, self.dm.grid_precision
-            )
-            color1 = self.dict_colors[cs[0]]
-            color2 = self.dict_colors[cs[1]]
-
-            # Assign each galaxy to a bin
-            i1 = np.digitize(color1, color1_bins) - 1
-            i2 = np.digitize(color2, color2_bins) - 1
-
-            # Guard against out-of-range points
-            good_bins = self.dict[cs]["mask"][zl_index]
-            valid = (
-                (i1 >= 0)
-                & (i1 < good_bins.shape[0])
-                & (i2 >= 0)
-                & (i2 < good_bins.shape[1])
-            )
+            # Assign each galaxy to a bin.
+            # Here, out-of-grid points are excluded.
+            i1 = dictionary[cs]["color1_index"]
+            i2 = dictionary[cs]["color2_index"]
 
             # Select
-            mask[valid] |= good_bins[i1[valid], i2[valid]]
+            valid = dictionary[cs]["valid"]
+            mask[valid] |= dictionary[cs]["mask"][zl_index][i1, i2]
 
         return mask

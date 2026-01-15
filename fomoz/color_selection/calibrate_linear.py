@@ -136,9 +136,9 @@ class CalibrateLinear:
         Parameters
         ----------
         args : tuple
-            A 4-element tuple containing:
-            - z_l : float
-                The redshift threshold being processed.
+            A 3-element tuple containing:
+            - i_z : float
+                The index of the redshift threshold being processed.
             - store_iterations : bool
                 If True, store the iteration steps in self.dict_steps.
             - cpu_number : int
@@ -153,11 +153,11 @@ class CalibrateLinear:
              performance metrics (purity, completeness, failure rate)
              for the given redshift threshold.
         """
-        z_l, store_iterations, cpu_number = args
+        i_z, store_iterations, cpu_number = args
+        z_l = self.dm.z_lim[i_z]
 
         # Minimum required total purity or completeness for the optimized set of cuts
-        idx = np.where(self.dm.z_lim == z_l)[0][0]
-        threshold_tot_min = self.dm.thresholded_quantity_min[idx]
+        threshold_tot_min = self.dm.thresholded_quantity_min[i_z]
 
         # Pre-compute color cut performance
         measure = Measure(self.dm)
@@ -336,15 +336,15 @@ class CalibrateLinear:
                 F_tot_new,
             )
 
-            if F_tot_new[idx] == 1.0:
+            if F_tot_new[i_z] == 1.0:
                 err_msg = "No effective selection found:"
                 err_msg += f" the failure rate is 1 at z_l={z_l}."
                 raise ValueError(err_msg)
 
             if self.dm.thresholded_quantity == "purity":
-                threshold_condition = P_tot_new[idx] >= threshold_tot_min
+                threshold_condition = P_tot_new[i_z] >= threshold_tot_min
             else:
-                threshold_condition = C_tot_new[idx] >= threshold_tot_min
+                threshold_condition = C_tot_new[i_z] >= threshold_tot_min
 
             if threshold_condition:
                 best_by_key = new_best_by_key
@@ -359,7 +359,7 @@ class CalibrateLinear:
             else:
                 break  # below the threshold
 
-        self.attained_threshold[idx] = current_thresh
+        self.attained_threshold[i_z] = current_thresh
         return z_l, best_by_key, dict_steps
 
     def _estimate_errors(self, n_bootstraps=1000):
@@ -490,8 +490,8 @@ class CalibrateLinear:
 
         # Optimized selection
         results = [
-            self._process_for_one_z((z_l, store_iterations, cpu_number))
-            for z_l in tqdm(self.dm.z_lim, desc="Looping over z_lim points")
+            self._process_for_one_z((i_z, store_iterations, cpu_number))
+            for i_z in tqdm(range(len(self.dm.z_lim)), desc="Looping over z_lim points")
         ]
 
         for result in results:
