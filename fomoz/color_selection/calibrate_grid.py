@@ -17,7 +17,7 @@ import numpy as np
 import yaml
 from tqdm import tqdm
 
-from .tools import c_domain, color_bin_edges
+from .tools import c_domain, color_bin_edges, compute_metrics
 
 
 class CalibrateGrid:
@@ -127,8 +127,9 @@ class CalibrateGrid:
 
             value = dataset[color[0]].values - dataset[color[1]].values
 
-            # keep the color-color grids fixed to the initial ones!
-            color_min, color_max = dictionary["metadata"]["color_limits"][color]
+            # keep the color-color grids fixed to the initial ones,
+            # i.e. those in self.dict
+            color_min, color_max = self.dict["metadata"]["color_limits"][color]
             value_bins = color_bin_edges(color_min, color_max, self.dm.grid_precision)
 
             index = np.digitize(value, value_bins) - 1
@@ -169,9 +170,6 @@ class CalibrateGrid:
                 Number of CPU cores to use for parallel processing.
         """
         i_z, store_iterations, cpu_number = args
-
-        # Total number of good galaxies in the sample
-        N_good_tot = np.count_nonzero(self.dm.target_mask[i_z])
 
         # Loop over color-color spaces to pre-compute statistics on the grids
         dict_stats = {}  # temporary dict containing grid statistics and masks
@@ -231,10 +229,10 @@ class CalibrateGrid:
             dict_stats[color_space]["prob"] = prob
 
         # Remove bins with prob below a fixed threshold iteratively
-        prob_min_bin = 0.0  # starting bin-level probability
-        thresholded_quantity, P, C = 0.0, 0.0, 0.0
+        prob_min_bin = 1.0  # starting bin-level probability
+        thresholded_quantity, P, C, F = 0.0, 0.0, 0.0, 0.0
 
-        while thresholded_quantity < self.dm.thresholded_quantity_min[i_z]:
+        while prob_min_bin > 0.0:
 
             # Mask bins below the bin-level prob threshold
             for color_space in self.color_spaces:
@@ -242,16 +240,11 @@ class CalibrateGrid:
                 dict_stats[color_space]["mask"][i_z] = mask
 
             mask = self.get_mask(i_z, dictionary=dict_stats)
-            N_good_sel = np.count_nonzero(mask & self.dm.target_mask[i_z])
-            N_tot_sel = np.count_nonzero(mask)
 
-            # Total completeness
-            if N_good_tot > 0:
-                C = N_good_sel / N_good_tot
-
-            # Total purity
-            if N_tot_sel > 0:
-                P = N_good_sel / N_tot_sel
+            # Total completeness and purity
+            TP, FP, FN, TN = compute_metrics(mask, self.dm.target_mask[i_z])
+            C = TP / (TP + FN) if TP + FN > 0 else 0.0
+            P = TP / (TP + FP) if TP + FP > 0 else 0.0
 
             # Check convergence
             if self.dm.thresholded_quantity == "purity":
@@ -266,14 +259,96 @@ class CalibrateGrid:
             if thresholded_quantity >= self.dm.thresholded_quantity_min[i_z]:
                 self.P[i_z] = P
                 self.C[i_z] = C
-                for color_space in self.color_spaces:
-                    self.dict[color_space]["mask"][i_z] = dict_stats[color_space][
-                        "mask"
-                    ][i_z]
+                self.F[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0
+                for cs in self.color_spaces:
+                    self.dict[cs]["mask"][i_z] = dict_stats[cs]["mask"][i_z]
+            else:
                 break
 
-            # Increase bin-level threshold
-            prob_min_bin += self.dm.step
+            # Increase the bin-level threshold
+            prob_min_bin -= self.dm.step
+
+        if prob_min_bin <= 0:
+            raise ValueError(
+                f"Could not find a calibration for the redshift value {self.dm.z_lim[i_z]}."
+            )
+
+        # Remove not significant bins.
+        # Then, re-define the masks and the metrics
+
+    def _estimate_errors(self, n_bootstraps=1000):
+        """
+        Estimate bootstrap errors.
+
+        This method computes mean and standard deviation of completeness, purity,
+        and failure rate, based on bootstrap resampling. Results are
+        stored as instance attributes:
+        - C_std: Standard deviation of completeness
+        - P_std: Standard deviation of purity
+        - F_std: Standard deviation of failure rate
+
+        Parameters
+        ----------
+        n_bootstraps : int, optional
+            Number of bootstrap resamples to perform, by default 1000.
+
+        Raises
+        ------
+        ValueError
+            If calibration has not been run prior to error estimation.
+        """
+        if np.sum(self.C) == 0.0:
+            raise ValueError("No calibration is available! Run process() first.")
+
+        C_stats = np.zeros((2, len(self.dm.z_lim)))  # [sum, sum_of_squares]
+        P_stats = np.zeros((2, len(self.dm.z_lim)))
+        F_stats = np.zeros((2, len(self.dm.z_lim)))
+
+        for i in tqdm(range(n_bootstraps), desc="Deriving bootstrap errors"):
+
+            indices = np.random.choice(
+                len(self.dm.dataset), size=len(self.dm.dataset), replace=True
+            )
+            bootstrap_sample = self.dm.dataset.iloc[indices]
+
+            # Pre-compute colors
+            dict_temp = {}
+            self._update_dict(dict_temp, bootstrap_sample)
+
+            # Set the color-color masks equal to the calibrated ones
+            for cs in self.color_spaces:
+                dict_temp[cs]["mask"] = {}
+                for i_z in range(len(self.dm.z_lim)):
+                    dict_temp[cs]["mask"][i_z] = self.dict[cs]["mask"][i_z]
+
+            # Compute the metrics
+            C_temp = np.zeros(len(self.dm.z_lim))
+            P_temp = np.zeros(len(self.dm.z_lim))
+            F_temp = np.zeros(len(self.dm.z_lim))
+
+            target_mask = self.dm.get_target_mask(bootstrap_sample, self.dm.z_lim)
+            for i_z in range(len(self.dm.z_lim)):
+                mask = self.get_mask(i_z, dictionary=dict_temp)
+                TP, FP, FN, TN = compute_metrics(mask, target_mask[i_z])
+                C_temp[i_z] = TP / (TP + FN) if TP + FN > 0 else 0.0
+                P_temp[i_z] = TP / (TP + FP) if TP + FP > 0 else 0.0
+                F_temp[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0
+
+            C_stats[0] += C_temp
+            C_stats[1] += C_temp**2.0
+            P_stats[0] += P_temp
+            P_stats[1] += P_temp**2.0
+            F_stats[0] += F_temp
+            F_stats[1] += F_temp**2.0
+
+            del bootstrap_sample, C_temp, P_temp, F_temp
+
+        C_mean = C_stats[0] / n_bootstraps
+        P_mean = P_stats[0] / n_bootstraps
+        F_mean = F_stats[0] / n_bootstraps
+        self.C_std = np.sqrt((C_stats[1] / n_bootstraps) - C_mean**2)
+        self.P_std = np.sqrt((P_stats[1] / n_bootstraps) - P_mean**2)
+        self.F_std = np.sqrt((F_stats[1] / n_bootstraps) - F_mean**2)
 
     def process(
         self,
@@ -322,9 +397,14 @@ class CalibrateGrid:
             for i_z in tqdm(range(len(self.dm.z_lim)), desc="Looping over z_lim points")
         ]
 
+        # Compute bootstrap errors
+        if self.dm.do_bootstrap:
+            self._estimate_errors(n_bootstraps=self.dm.n_bootstraps)
+
         print(f"Converged!")
-        print(f"P_tot     = {self.P}")
-        print(f"C_tot     = {self.C}")
+        print(f"P_tot     = {self.P} +- {self.P_std}")
+        print(f"C_tot     = {self.C} +- {self.C_std}")
+        print(f"F_tot     = {self.F} +- {self.F_std}")
 
         print("Grid calibration complete.")
 

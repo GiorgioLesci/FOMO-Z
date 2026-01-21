@@ -36,7 +36,7 @@ class DataModel:
         step=0.0001,
         threshold_buffer=0.05,
         k=1,
-        do_bootstrap=False,
+        do_bootstrap=True,
         n_bootstraps=1000,
     ):
         """
@@ -124,7 +124,7 @@ class DataModel:
             - If there are fewer than ``k+1`` points, the degree is reduced
               to ``n_points - 1``.
             - If there is only one point, interpolation is skipped.
-        do_bootstrap : bool, default=False
+        do_bootstrap : bool, default=True
             If True, derive uncertainties on C, P, and F through bootstrap.
         n_bootstraps : int, default=1000
             Number of bootstrap resamples to perform, by default 1000.

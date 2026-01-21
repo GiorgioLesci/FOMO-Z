@@ -404,14 +404,14 @@ class CalibrateLinear:
                     np.float32
                 ) - bootstrap_sample[mag2].values.astype(np.float32)
 
-            C_temp = np.zeros(len(self.dm.z_lim))
-            P_temp = np.zeros(len(self.dm.z_lim))
-            F_temp = np.zeros(len(self.dm.z_lim))
-
             # Get the target mask
             target_mask = self.dm.get_target_mask(bootstrap_sample, self.dm.z_lim)
 
             # Compute the metrics
+            C_temp = np.zeros(len(self.dm.z_lim))
+            P_temp = np.zeros(len(self.dm.z_lim))
+            F_temp = np.zeros(len(self.dm.z_lim))
+
             combine_optimal_cuts(
                 self.dm.z_lim,
                 color_cache,
