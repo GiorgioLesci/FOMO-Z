@@ -362,7 +362,7 @@ class CalibrateLinear:
         self.attained_threshold[i_z] = current_thresh
         return z_l, best_by_key, dict_steps
 
-    def _estimate_errors(self, n_bootstraps=1000):
+    def _estimate_errors(self):
         """
         Estimate bootstrap errors.
 
@@ -372,11 +372,6 @@ class CalibrateLinear:
         - C_std: Standard deviation of completeness
         - P_std: Standard deviation of purity
         - F_std: Standard deviation of failure rate
-
-        Parameters
-        ----------
-        n_bootstraps : int, optional
-            Number of bootstrap resamples to perform, by default 1000.
 
         Raises
         ------
@@ -390,22 +385,22 @@ class CalibrateLinear:
         P_stats = np.zeros((2, len(self.dm.z_lim)))
         F_stats = np.zeros((2, len(self.dm.z_lim)))
 
-        for i in tqdm(range(n_bootstraps), desc="Deriving bootstrap errors"):
+        for i in tqdm(range(self.dm.n_bootstraps), desc="Deriving bootstrap errors"):
 
             indices = np.random.choice(
                 len(self.dm.dataset), size=len(self.dm.dataset), replace=True
             )
-            bootstrap_sample = self.dm.dataset.iloc[indices]
+            bt_sample = self.dm.dataset.iloc[indices]
 
             # Pre-compute colors
             color_cache = {}
             for mag1, mag2 in self.dm.colors:
-                color_cache[(mag1, mag2)] = bootstrap_sample[mag1].values.astype(
+                color_cache[(mag1, mag2)] = bt_sample[mag1].values.astype(
                     np.float32
-                ) - bootstrap_sample[mag2].values.astype(np.float32)
+                ) - bt_sample[mag2].values.astype(np.float32)
 
             # Get the target mask
-            target_mask = self.dm.get_target_mask(bootstrap_sample, self.dm.z_lim)
+            target_mask = self.dm.get_target_mask(bt_sample, self.dm.z_lim)
 
             # Compute the metrics
             C_temp = np.zeros(len(self.dm.z_lim))
@@ -429,14 +424,14 @@ class CalibrateLinear:
             F_stats[0] += F_temp
             F_stats[1] += F_temp**2.0
 
-            del bootstrap_sample, C_temp, P_temp, F_temp
+            del bt_sample, C_temp, P_temp, F_temp
 
-        C_mean = C_stats[0] / n_bootstraps
-        P_mean = P_stats[0] / n_bootstraps
-        F_mean = F_stats[0] / n_bootstraps
-        self.C_std = np.sqrt((C_stats[1] / n_bootstraps) - C_mean**2)
-        self.P_std = np.sqrt((P_stats[1] / n_bootstraps) - P_mean**2)
-        self.F_std = np.sqrt((F_stats[1] / n_bootstraps) - F_mean**2)
+        C_mean = C_stats[0] / self.dm.n_bootstraps
+        P_mean = P_stats[0] / self.dm.n_bootstraps
+        F_mean = F_stats[0] / self.dm.n_bootstraps
+        self.C_std = np.sqrt((C_stats[1] / self.dm.n_bootstraps) - C_mean**2)
+        self.P_std = np.sqrt((P_stats[1] / self.dm.n_bootstraps) - P_mean**2)
+        self.F_std = np.sqrt((F_stats[1] / self.dm.n_bootstraps) - F_mean**2)
 
     def process(
         self,
@@ -513,7 +508,7 @@ class CalibrateLinear:
 
         # Compute bootstrap errors
         if self.dm.do_bootstrap:
-            self._estimate_errors(n_bootstraps=self.dm.n_bootstraps)
+            self._estimate_errors()
 
         # Restructure self.dict and interpolate the color cut parameters
         restructure_dict(

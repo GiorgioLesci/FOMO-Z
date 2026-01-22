@@ -16,8 +16,9 @@ from itertools import combinations
 import numpy as np
 import yaml
 from tqdm import tqdm
+from scipy.stats import beta
 
-from .tools import c_domain, color_bin_edges, compute_metrics
+from .tools import c_domain, color_bin_edges, compute_metrics, prob_target
 
 
 class CalibrateGrid:
@@ -90,22 +91,18 @@ class CalibrateGrid:
         dictionary["metadata"]["grid_precision"] = self.dm.grid_precision
 
         dictionary["metadata"]["color_limits"] = {}
-        for color_space in self.color_spaces:
-            value1 = (
-                dataset[color_space[0][0]].values - dataset[color_space[0][1]].values
-            )
-            value2 = (
-                dataset[color_space[1][0]].values - dataset[color_space[1][1]].values
-            )
+        for cs in self.color_spaces:
+            value1 = dataset[cs[0][0]].values - dataset[cs[0][1]].values
+            value2 = dataset[cs[1][0]].values - dataset[cs[1][1]].values
             color1_min, color1_max = c_domain(value1, q_low=0.0001, q_high=0.9999)
             color2_min, color2_max = c_domain(value2, q_low=0.0001, q_high=0.9999)
 
             # These are used to reconstruct the bin edges from the metadata
-            dictionary["metadata"]["color_limits"][color_space[0]] = [
+            dictionary["metadata"]["color_limits"][cs[0]] = [
                 color1_min,
                 color1_max,
             ]
-            dictionary["metadata"]["color_limits"][color_space[1]] = [
+            dictionary["metadata"]["color_limits"][cs[1]] = [
                 color2_min,
                 color2_max,
             ]
@@ -139,17 +136,17 @@ class CalibrateGrid:
             dict_colors[color] = {"index": index, "valid": valid}
 
         # Update the valid color indices in dictionary
-        for color_space in self.color_spaces:
-            color1 = color_space[0]
-            color2 = color_space[1]
+        for cs in self.color_spaces:
+            color1 = cs[0]
+            color2 = cs[1]
             valid = dict_colors[color1]["valid"] & dict_colors[color2]["valid"]
             i1 = dict_colors[color1]["index"][valid]
             i2 = dict_colors[color2]["index"][valid]
 
-            dictionary[color_space] = {}
-            dictionary[color_space]["valid"] = valid
-            dictionary[color_space]["color1_index"] = i1
-            dictionary[color_space]["color2_index"] = i2
+            dictionary[cs] = {}
+            dictionary[cs]["valid"] = valid
+            dictionary[cs]["color1_index"] = i1
+            dictionary[cs]["color2_index"] = i2
 
     def _process_for_one_z(self, args):
         r"""
@@ -173,60 +170,24 @@ class CalibrateGrid:
 
         # Loop over color-color spaces to pre-compute statistics on the grids
         dict_stats = {}  # temporary dict containing grid statistics and masks
-        for color_space in self.color_spaces:
+        for cs in self.color_spaces:
 
             # Dictionary initializations
-            self.dict[color_space]["mask"] = {}
+            self.dict[cs]["mask"] = {}
 
-            dict_stats[color_space] = {}
-            dict_stats[color_space]["mask"] = {}
-            dict_stats[color_space]["color1_index"] = self.dict[color_space][
-                "color1_index"
-            ]
-            dict_stats[color_space]["color2_index"] = self.dict[color_space][
-                "color2_index"
-            ]
-            dict_stats[color_space]["valid"] = self.dict[color_space]["valid"]
+            dict_stats[cs] = {}
+            dict_stats[cs]["mask"] = {}
+            dict_stats[cs]["color1_index"] = self.dict[cs]["color1_index"]
+            dict_stats[cs]["color2_index"] = self.dict[cs]["color2_index"]
+            dict_stats[cs]["valid"] = self.dict[cs]["valid"]
 
-            # Grid points and total number of galaxies per bin
-            color1_min, color1_max = self.dict["metadata"]["color_limits"][
-                color_space[0]
-            ]
-            color2_min, color2_max = self.dict["metadata"]["color_limits"][
-                color_space[1]
-            ]
-
-            color1_bins = color_bin_edges(
-                color1_min, color1_max, self.dm.grid_precision
+            # Probability to get target galaxies
+            prob, N_good, N_total = prob_target(
+                self.dict["metadata"], cs, self.dm.dataset, self.dm.target_mask[i_z]
             )
-            color2_bins = color_bin_edges(
-                color2_min, color2_max, self.dm.grid_precision
-            )
-
-            color1 = (
-                self.dm.dataset[color_space[0][0]].values
-                - self.dm.dataset[color_space[0][1]].values
-            )
-            color2 = (
-                self.dm.dataset[color_space[1][0]].values
-                - self.dm.dataset[color_space[1][1]].values
-            )
-            N_total, _, _ = np.histogram2d(
-                color1, color2, bins=[color1_bins, color2_bins]
-            )
-
-            # Per-bin number of galaxies fulfilling the input conditions
-            # and per-bin probability to get good objects
-            N_good = np.histogram2d(
-                color1[self.dm.target_mask[i_z]],
-                color2[self.dm.target_mask[i_z]],
-                bins=[color1_bins, color2_bins],
-            )[0]
-
-            prob = np.zeros_like(N_good)
-            nonzero = N_total > 0
-            prob[nonzero] = N_good[nonzero] / N_total[nonzero]
-            dict_stats[color_space]["prob"] = prob
+            dict_stats[cs]["prob"] = prob
+            dict_stats[cs]["N_good"] = N_good
+            dict_stats[cs]["N_total"] = N_total
 
         # Remove bins with prob below a fixed threshold iteratively
         prob_min_bin = 1.0  # starting bin-level probability
@@ -235,9 +196,9 @@ class CalibrateGrid:
         while prob_min_bin > 0.0:
 
             # Mask bins below the bin-level prob threshold
-            for color_space in self.color_spaces:
-                mask = dict_stats[color_space]["prob"] >= prob_min_bin
-                dict_stats[color_space]["mask"][i_z] = mask
+            for cs in self.color_spaces:
+                mask = dict_stats[cs]["prob"] >= prob_min_bin
+                dict_stats[cs]["mask"][i_z] = mask
 
             mask = self.get_mask(i_z, dictionary=dict_stats)
 
@@ -273,10 +234,50 @@ class CalibrateGrid:
                 f"Could not find a calibration for the redshift value {self.dm.z_lim[i_z]}."
             )
 
-        # Remove not significant bins.
-        # Then, re-define the masks and the metrics
+        # Remove not robust bins, namely those with more than 5% probability to have
+        # per-bin purity p < prob_min_bin. Following the Bayes' theorem, we have
+        # P(p | k, n) = P(k | p, n) P(p | n) / P(k | n),
+        # where p is the per-bin purity, k is the number of successes, and n is the
+        # number of trials. We assume that P(k | p, n) is a Binomial distribution and
+        # P(p | n) = [0, 1] is a uniform prior.
+        # Our selection criterion is P(p < p_min | k, n) < alpha, where alpha = 0.05.
+        alpha = 0.05
 
-    def _estimate_errors(self, n_bootstraps=1000):
+        if alpha < 1.0:
+
+            dict_significant = {}
+
+            for cs in self.color_spaces:
+
+                dict_significant[cs] = {}
+                dict_significant[cs]["mask"] = {}
+                shape = dict_stats[cs]["prob"].shape
+                dict_significant[cs]["mask"] = np.zeros(shape, dtype=bool)
+
+                for i in range(shape[0]):
+                    for j in range(shape[1]):
+                        k = dict_stats[cs]["N_good"][i][j]
+                        n = dict_stats[cs]["N_total"][i][j]
+                        if n == 0:
+                            continue
+                        # Given the observed data (k successes out of n), compute the posterior
+                        # probability that (true purity < prob_min_bin) is smaller than alpha.
+                        significant = beta.cdf(prob_min_bin, k + 1, n - k + 1) < alpha
+                        dict_significant[cs]["mask"][i, j] = significant
+
+            # Re-define the masks and re-evaluate the metrics
+            for cs in self.color_spaces:
+                self.dict[cs]["mask"][i_z] = (
+                    dict_stats[cs]["mask"][i_z] & dict_significant[cs]["mask"]
+                )
+
+            mask = self.get_mask(i_z)
+            TP, FP, FN, TN = compute_metrics(mask, self.dm.target_mask[i_z])
+            self.P[i_z] = TP / (TP + FP) if TP + FP > 0 else 0.0
+            self.C[i_z] = TP / (TP + FN) if TP + FN > 0 else 0.0
+            self.F[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0
+
+    def _estimate_errors(self):
         """
         Estimate bootstrap errors.
 
@@ -286,11 +287,6 @@ class CalibrateGrid:
         - C_std: Standard deviation of completeness
         - P_std: Standard deviation of purity
         - F_std: Standard deviation of failure rate
-
-        Parameters
-        ----------
-        n_bootstraps : int, optional
-            Number of bootstrap resamples to perform, by default 1000.
 
         Raises
         ------
@@ -304,16 +300,17 @@ class CalibrateGrid:
         P_stats = np.zeros((2, len(self.dm.z_lim)))
         F_stats = np.zeros((2, len(self.dm.z_lim)))
 
-        for i in tqdm(range(n_bootstraps), desc="Deriving bootstrap errors"):
+        for i in tqdm(range(self.dm.n_bootstraps), desc="Deriving bootstrap errors"):
 
+            # Bootstrap sample
             indices = np.random.choice(
                 len(self.dm.dataset), size=len(self.dm.dataset), replace=True
             )
-            bootstrap_sample = self.dm.dataset.iloc[indices]
+            bt_sample = self.dm.dataset.iloc[indices]
 
             # Pre-compute colors
             dict_temp = {}
-            self._update_dict(dict_temp, bootstrap_sample)
+            self._update_dict(dict_temp, bt_sample)
 
             # Set the color-color masks equal to the calibrated ones
             for cs in self.color_spaces:
@@ -326,7 +323,7 @@ class CalibrateGrid:
             P_temp = np.zeros(len(self.dm.z_lim))
             F_temp = np.zeros(len(self.dm.z_lim))
 
-            target_mask = self.dm.get_target_mask(bootstrap_sample, self.dm.z_lim)
+            target_mask = self.dm.get_target_mask(bt_sample, self.dm.z_lim)
             for i_z in range(len(self.dm.z_lim)):
                 mask = self.get_mask(i_z, dictionary=dict_temp)
                 TP, FP, FN, TN = compute_metrics(mask, target_mask[i_z])
@@ -341,14 +338,14 @@ class CalibrateGrid:
             F_stats[0] += F_temp
             F_stats[1] += F_temp**2.0
 
-            del bootstrap_sample, C_temp, P_temp, F_temp
+            del bt_sample, C_temp, P_temp, F_temp
 
-        C_mean = C_stats[0] / n_bootstraps
-        P_mean = P_stats[0] / n_bootstraps
-        F_mean = F_stats[0] / n_bootstraps
-        self.C_std = np.sqrt((C_stats[1] / n_bootstraps) - C_mean**2)
-        self.P_std = np.sqrt((P_stats[1] / n_bootstraps) - P_mean**2)
-        self.F_std = np.sqrt((F_stats[1] / n_bootstraps) - F_mean**2)
+        C_mean = C_stats[0] / self.dm.n_bootstraps
+        P_mean = P_stats[0] / self.dm.n_bootstraps
+        F_mean = F_stats[0] / self.dm.n_bootstraps
+        self.C_std = np.sqrt((C_stats[1] / self.dm.n_bootstraps) - C_mean**2)
+        self.P_std = np.sqrt((P_stats[1] / self.dm.n_bootstraps) - P_mean**2)
+        self.F_std = np.sqrt((F_stats[1] / self.dm.n_bootstraps) - F_mean**2)
 
     def process(
         self,
@@ -399,7 +396,7 @@ class CalibrateGrid:
 
         # Compute bootstrap errors
         if self.dm.do_bootstrap:
-            self._estimate_errors(n_bootstraps=self.dm.n_bootstraps)
+            self._estimate_errors()
 
         print(f"Converged!")
         print(f"P_tot     = {self.P} +- {self.P_std}")

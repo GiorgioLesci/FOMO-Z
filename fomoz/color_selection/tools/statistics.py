@@ -10,6 +10,8 @@ color selection metrics and interpolations.
 import numpy as np
 from scipy.interpolate import UnivariateSpline
 
+from .color_domain import color_bin_edges
+
 
 def compute_metrics(mask, target_mask):
     """
@@ -365,3 +367,55 @@ def distribution_contours(x, y, nbins, levels):
     ]
 
     return X, Y, H_norm, level_density
+
+
+def prob_target(metadata, cs, dataset, target_mask):
+    """
+    Compute the per-bin probability of selecting target objects in a 2D color–color grid.
+
+    Parameters
+    ----------
+    cs : tuple
+        Color–color space definition in the form
+        ((band1, band2), (band3, band4)).
+    metadata : dict
+        Dictionary containing grid metadata, including color limits and grid precision.
+    dataset : pandas.DataFrame
+        Input dataset containing the photometric bands used to compute colors.
+    target_mask : numpy.ndarray of bool
+        Boolean mask selecting target objects (e.g. high-redshift galaxies).
+
+    Returns
+    -------
+    prob : numpy.ndarray
+        2D array of per-bin probabilities, defined as the ratio of target objects
+        to total objects in each color–color bin.
+    N_good : numpy.ndarray
+        2D array of per-bin number of target objects.
+    N_total : numpy.ndarray
+        2D array of per-bin total number objects.
+    """
+    color1_min, color1_max = metadata["color_limits"][cs[0]]
+    color2_min, color2_max = metadata["color_limits"][cs[1]]
+
+    color1_bins = color_bin_edges(color1_min, color1_max, metadata["grid_precision"])
+    color2_bins = color_bin_edges(color2_min, color2_max, metadata["grid_precision"])
+
+    color1 = dataset[cs[0][0]].values - dataset[cs[0][1]].values
+    color2 = dataset[cs[1][0]].values - dataset[cs[1][1]].values
+
+    N_total, _, _ = np.histogram2d(color1, color2, bins=[color1_bins, color2_bins])
+
+    # Per-bin number of galaxies fulfilling the input conditions
+    # and per-bin probability to get good objects
+    N_good = np.histogram2d(
+        color1[target_mask],
+        color2[target_mask],
+        bins=[color1_bins, color2_bins],
+    )[0]
+
+    prob = np.zeros_like(N_good)
+    nonzero = N_total > 0
+    prob[nonzero] = N_good[nonzero] / N_total[nonzero]
+
+    return prob, N_good, N_total

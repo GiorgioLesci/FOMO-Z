@@ -127,7 +127,8 @@ class DataModel:
         do_bootstrap : bool, default=True
             If True, derive uncertainties on C, P, and F through bootstrap.
         n_bootstraps : int, default=1000
-            Number of bootstrap resamples to perform, by default 1000.
+            Number of bootstrap resamples to perform. It defines
+            the number of resampling in error estimation.
         """
         assert isinstance(
             dataset, pd.DataFrame
