@@ -50,9 +50,15 @@ class CalibrateLinear:
         maximized_quantity="completeness",
         maximized_quantity_min=0.05,
         threshold_buffer=0.05,
+        s_samples=np.linspace(0.3, 1.7, 30),
+        c_precision=0.05,
+        k=1,
+        step=0.0001,
+        do_bootstrap=True,
+        n_bootstraps=1000,
     ):
         r"""
-        Class calibrating optimal linear color selections.
+        Class calibrating optimal linear color selections. [DESCRIBE THE COLOR CONDITIONS AND THEIR CONNECTION].
 
         This class provides structures for ranking, aggregating, and optimizing color
         cuts. The maximized quantity (either completeness or purity) is defined by the
@@ -61,7 +67,7 @@ class CalibrateLinear:
         threshold in order to identify a set of cuts that maximize total completeness
         (purity) while still satisfying the global threshold. The algorithm
         proceeds iteratively, starting from a strict initial threshold and reducing
-        it by `TargetDefinition.step` until the total purity (or completeness) remains above
+        it by `step` until the total purity (or completeness) remains above
         `thresholded_quantity_min`.
         The starting threshold corresponds to the maximum
         purity (or completeness) attained across all single color conditions.
@@ -71,7 +77,7 @@ class CalibrateLinear:
         -----------
         For each redshift value, this method searches for the set of
         cuts that ($\mathcal{P}_{\rm iter}^{\rm ini}$: initial threshold,
-        $\delta\mathcal{P}_{\rm iter}$: `TargetDefinition.step`, $z_{\rm l}$: `z_l`,
+        $\delta\mathcal{P}_{\rm iter}$: `step`, $z_{\rm l}$: `z_l`,
         $\mathcal{P}_{\rm min}$: `thresholded_quantity_min`):
         - Update $\mathcal{P}_{\rm iter}^k = \mathcal{P}_{\rm iter}^{\rm ini} -
           k\,\delta\mathcal{P}_{\rm iter}$, where $k$ is the iteration index,
@@ -128,6 +134,28 @@ class CalibrateLinear:
             with unused information. The default value is 0.05, namely a 5 percentage point
             subtraction. If this value is too small, the optimization method in
             `CalibrateLinear` raises an error.
+        s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
+            Array of slope values for generating linear cuts in color-color space.
+            These samples must be strictly positive.
+        c_precision : float, default=0.05
+            Precision of the c parameter sampling. Smaller values
+            increase accuracy but significantly increase the number of operations.
+            If `c_precision` is halved, expect about 2 times more c steps per s
+            (also runtime and RAM roughly double).
+        k : int, default=1
+            Requested degree of the spline interpolation, used to interpolate color
+            condition parameters. Default is 1 (linear).
+            The actual degree is adjusted case by case:
+            - If there are fewer than ``k+1`` points, the degree is reduced
+              to ``n_points - 1``.
+            - If there is only one point, interpolation is skipped.
+        step : float, default=0.0001
+            Defines the threshold reduction on single color conditions. Default is 0.0001.
+        do_bootstrap : bool, default=True
+            If True, derive uncertainties on C, P, and F through bootstrap.
+        n_bootstraps : int, default=1000
+            Number of bootstrap resamples to perform. It defines
+            the number of resampling in error estimation.
 
         Attributes
         ----------
@@ -192,6 +220,19 @@ class CalibrateLinear:
             )
         self.buffered_threshold = thresholded_quantity_min - threshold_buffer
 
+        if np.any(s_samples <= 0):
+            raise ValueError(
+                "All slope values in s_samples must be strictly positive. "
+                f"Found non-positive values: {s_samples[s_samples <= 0]}"
+            )
+        self.s_samples = s_samples.astype(np.float32)
+        self.c_precision = float(c_precision)
+
+        self.k = k
+        self.step = step
+        self.do_bootstrap = do_bootstrap
+        self.n_bootstraps = n_bootstraps
+
         # Initialize other attributes
         self.dict = {}
         self.dict_steps = {}
@@ -247,6 +288,8 @@ class CalibrateLinear:
             self.thresholded_quantity,
             self.maximized_quantity_min,
             self.buffered_threshold,
+            self.s_samples,
+            self.c_precision,
         )
         measure.process(z_l, cpu_number=cpu_number)
 
@@ -438,7 +481,7 @@ class CalibrateLinear:
                 C_tot = C_tot_new
                 P_tot = P_tot_new
                 F_tot = F_tot_new
-                current_thresh -= self.td.step
+                current_thresh -= self.step
 
                 if store_iterations:
                     dict_steps[iteration] = nested
@@ -472,7 +515,7 @@ class CalibrateLinear:
         P_stats = np.zeros((2, len(self.td.z_lim)))
         F_stats = np.zeros((2, len(self.td.z_lim)))
 
-        for i in tqdm(range(self.td.n_bootstraps), desc="Deriving bootstrap errors"):
+        for i in tqdm(range(self.n_bootstraps), desc="Deriving bootstrap errors"):
 
             indices = np.random.choice(
                 len(self.dataset), size=len(self.dataset), replace=True
@@ -513,12 +556,12 @@ class CalibrateLinear:
 
             del bt_sample, C_temp, P_temp, F_temp
 
-        C_mean = C_stats[0] / self.td.n_bootstraps
-        P_mean = P_stats[0] / self.td.n_bootstraps
-        F_mean = F_stats[0] / self.td.n_bootstraps
-        self.C_std = np.sqrt((C_stats[1] / self.td.n_bootstraps) - C_mean**2)
-        self.P_std = np.sqrt((P_stats[1] / self.td.n_bootstraps) - P_mean**2)
-        self.F_std = np.sqrt((F_stats[1] / self.td.n_bootstraps) - F_mean**2)
+        C_mean = C_stats[0] / self.n_bootstraps
+        P_mean = P_stats[0] / self.n_bootstraps
+        F_mean = F_stats[0] / self.n_bootstraps
+        self.C_std = np.sqrt((C_stats[1] / self.n_bootstraps) - C_mean**2)
+        self.P_std = np.sqrt((P_stats[1] / self.n_bootstraps) - P_mean**2)
+        self.F_std = np.sqrt((F_stats[1] / self.n_bootstraps) - F_mean**2)
 
     def process(
         self,
@@ -594,7 +637,7 @@ class CalibrateLinear:
         del self.redshift, self.color_cache
 
         # Compute bootstrap errors
-        if self.td.do_bootstrap:
+        if self.do_bootstrap:
             self._estimate_errors()
 
         # Restructure self.dict and interpolate the color cut parameters
@@ -607,7 +650,7 @@ class CalibrateLinear:
             self.thresholded_quantity_min,
             is_zlim_lower=self.td.is_zlim_lower,
         )
-        interpolate_parameters(self.dict, k=self.td.k)
+        interpolate_parameters(self.dict, k=self.k)
         print("Linear cut calibration complete.")
 
     def write(

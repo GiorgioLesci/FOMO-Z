@@ -31,6 +31,11 @@ class CalibrateGrid:
         target_definition: TargetDefinition,
         thresholded_quantity_min,
         maximized_quantity="completeness",
+        grid_precision=0.15,
+        alpha=0.1,
+        step=0.0001,
+        do_bootstrap=True,
+        n_bootstraps=1000,
     ):
         r"""
         Class calibrating optimal grid color selections.
@@ -53,6 +58,24 @@ class CalibrateGrid:
         maximized_quantity : str, default="completeness"
             The quantity to maximize. Possibilities are either "completeness" or
             "purity".
+        grid_precision : float, default=0.15
+            Precision of the color-color grids. A smaller value yields a finer,
+            more accurate grid at the cost of increased computation, RAM usage, and
+            storage requirements.
+        alpha : float, default=0.1
+            Significance level used to discard statistically non-robust grid bins.
+            A bin is considered as significant only if the posterior
+            probability that its true per-bin purity is below the optimized
+            threshold is smaller than `alpha`. Default is 0.1, namely 10% probability.
+            To avoid the bin significance classification, and include all possible bins,
+            set this parameter equal to 1.
+        step : float, default=0.0001
+            Defines the threshold reduction on grid elements. Default is 0.0001.
+        do_bootstrap : bool, default=True
+            If True, derive uncertainties on C, P, and F through bootstrap.
+        n_bootstraps : int, default=1000
+            Number of bootstrap resamples to perform. It defines
+            the number of resampling in error estimation.
 
         Attributes
         ----------
@@ -101,6 +124,18 @@ class CalibrateGrid:
             self.thresholded_quantity = "purity"
         else:
             self.thresholded_quantity = "completeness"
+
+        self.grid_precision = float(grid_precision)
+
+        if alpha < 0 or alpha > 1:
+            raise ValueError(
+                f"alpha must range between 0 and 1. The current value is {alpha}."
+            )
+        self.alpha = alpha
+
+        self.step = step
+        self.do_bootstrap = do_bootstrap
+        self.n_bootstraps = n_bootstraps
 
         # Initialize other attributes
         self.dict_steps = {}
@@ -275,7 +310,7 @@ class CalibrateGrid:
                 break
 
             # Increase the bin-level threshold
-            prob_min_bin -= self.td.step
+            prob_min_bin -= self.step
 
         if prob_min_bin <= 0:
             raise ValueError(
@@ -349,7 +384,7 @@ class CalibrateGrid:
         P_stats = np.zeros((2, len(self.td.z_lim)))
         F_stats = np.zeros((2, len(self.td.z_lim)))
 
-        for i in tqdm(range(self.td.n_bootstraps), desc="Deriving bootstrap errors"):
+        for i in tqdm(range(self.n_bootstraps), desc="Deriving bootstrap errors"):
 
             # Bootstrap sample
             indices = np.random.choice(
@@ -389,12 +424,12 @@ class CalibrateGrid:
 
             del bt_sample, C_temp, P_temp, F_temp
 
-        C_mean = C_stats[0] / self.td.n_bootstraps
-        P_mean = P_stats[0] / self.td.n_bootstraps
-        F_mean = F_stats[0] / self.td.n_bootstraps
-        self.C_std = np.sqrt((C_stats[1] / self.td.n_bootstraps) - C_mean**2)
-        self.P_std = np.sqrt((P_stats[1] / self.td.n_bootstraps) - P_mean**2)
-        self.F_std = np.sqrt((F_stats[1] / self.td.n_bootstraps) - F_mean**2)
+        C_mean = C_stats[0] / self.n_bootstraps
+        P_mean = P_stats[0] / self.n_bootstraps
+        F_mean = F_stats[0] / self.n_bootstraps
+        self.C_std = np.sqrt((C_stats[1] / self.n_bootstraps) - C_mean**2)
+        self.P_std = np.sqrt((P_stats[1] / self.n_bootstraps) - P_mean**2)
+        self.F_std = np.sqrt((F_stats[1] / self.n_bootstraps) - F_mean**2)
 
     def process(
         self,
@@ -444,7 +479,7 @@ class CalibrateGrid:
         ]
 
         # Compute bootstrap errors
-        if self.td.do_bootstrap:
+        if self.do_bootstrap:
             self._estimate_errors()
 
         print(f"Converged!")

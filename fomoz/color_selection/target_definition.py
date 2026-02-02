@@ -23,14 +23,6 @@ class TargetDefinition:
         z_lim,
         is_zlim_lower=True,
         additional_rules=None,
-        s_samples=np.linspace(0.3, 1.7, 30),
-        c_precision=0.05,
-        grid_precision=0.15,
-        step=0.0001,
-        alpha=0.1,
-        k=1,
-        do_bootstrap=True,
-        n_bootstraps=1000,
     ):
         """
         Set the data model for color selections.
@@ -55,44 +47,6 @@ class TargetDefinition:
             combined through the AND logical operator.
             Example: ``[ ["logM", ">", 10.0], ["u", "<", 24.0] ]``.
             Supported operators: ">", "<", ">=", "<=", "==", "!=".
-        s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
-            Array of slope values for generating linear cuts in color–color space.
-            These samples must be strictly positive. Used only for linear color cuts
-            (i.e., used by `CalibrateLinear`, not used by `CalibrateGrid`).
-        c_precision : float, default=0.05
-            Precision of the c parameter sampling in `CalibrateLinear`. Smaller values
-            increase accuracy but significantly increase the number of operations.
-            If `c_precision` is halved, expect about 2 times more c steps per s
-            (also runtime and RAM roughly double). Used only for linear color cuts
-            (i.e., used by `CalibrateLinear`, not used by `CalibrateGrid`).
-        grid_precision : float, default=0.15
-            Precision of the color-color grids in `CalibrateGrid`. A smaller value yields a finer,
-            more accurate grid at the cost of increased computation, RAM usage, and
-            storage requirements.
-        step : float, default=0.0001
-            Defines the threshold reduction (i) on single color conditions in `CalibrateLinear`,
-            and (ii) on grid elements in `CalibrateGrid`. Default is 0.0001.
-        alpha : float, default=0.1
-            Significance level used in `CalibrateGrid` to discard statistically
-            non-robust grid bins. A bin is considered as significant only if the posterior
-            probability that its true per-bin purity is below the optimized
-            threshold is smaller than `alpha`. Default is 0.1, namely 10% probability.
-            To avoid the bin significance classification, and include all possible bins,
-            set this parameter equal to 1.
-            A more detailed description can be found in the documentation of `CalibrateGrid`.
-        k : int, default=1
-            Used only in `CalibrateLinear`.
-            Requested degree of the spline interpolation, used to interpolate color
-            condition parameters. Default is 1 (linear).
-            The actual degree is adjusted case by case:
-            - If there are fewer than ``k+1`` points, the degree is reduced
-              to ``n_points - 1``.
-            - If there is only one point, interpolation is skipped.
-        do_bootstrap : bool, default=True
-            If True, derive uncertainties on C, P, and F through bootstrap.
-        n_bootstraps : int, default=1000
-            Number of bootstrap resamples to perform. It defines
-            the number of resampling in error estimation.
         """
         self.z_lim = set_input_variable_precision(z_lim)
 
@@ -100,28 +54,8 @@ class TargetDefinition:
             if z_l < 0:
                 raise ValueError("z_lim values cannot be negative")
 
-        if np.any(s_samples <= 0):
-            raise ValueError(
-                "All slope values in s_samples must be strictly positive. "
-                f"Found non-positive values: {s_samples[s_samples <= 0]}"
-            )
-        self.s_samples = s_samples.astype(np.float32)
-        self.c_precision = float(c_precision)
-        self.grid_precision = float(grid_precision)
-
         self.is_zlim_lower = is_zlim_lower
         self.additional_rules = additional_rules
-
-        self.step = step
-        if alpha < 0 or alpha > 1:
-            raise ValueError(
-                f"alpha must range between 0 and 1. The current value is {alpha}."
-            )
-        self.alpha = alpha
-
-        self.k = k
-        self.do_bootstrap = do_bootstrap
-        self.n_bootstraps = n_bootstraps
 
         # Check the format of the additional rules
         if additional_rules is not None:

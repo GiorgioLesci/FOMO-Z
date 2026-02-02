@@ -66,11 +66,7 @@ def reference_colors(reference_dataset):
 def reference_target_definition_instance():
     """Create a TargetDefinition instance."""
     z_lim = [0.5, 0.6]
-    target_definition = TargetDefinition(
-        z_lim,
-        step=0.0001,
-        k=3,
-    )
+    target_definition = TargetDefinition(z_lim)
     return target_definition
 
 
@@ -86,6 +82,8 @@ def reference_measure_instance(
         reference_target_definition_instance,
         "purity",
         0,
+        0.05,
+        np.linspace(0.3, 1.7, 30),
         0.05,
     )
     for z_l in reference_target_definition_instance.z_lim:
@@ -105,6 +103,8 @@ def reference_calibration_linear_instance(
         reference_target_definition_instance,
         thresholded_quantity_min,
         maximized_quantity_min=0,
+        step=0.0001,
+        k=3,
     )
 
     return calibration
@@ -383,7 +383,14 @@ class TestMeasureProcess:
         # Create a new Measure instance with single z limit
         td = TargetDefinition(z_l, 0.9)
         measure = MeasureLinear(
-            reference_dataset, reference_colors, td, "purity", 0, 0.05
+            reference_dataset,
+            reference_colors,
+            td,
+            "purity",
+            0,
+            0.05,
+            np.linspace(0.3, 1.7, 30),
+            0.05,
         )
         measure.process(td.z_lim[0], cpu_number=1)
 

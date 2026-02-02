@@ -85,6 +85,8 @@ class MeasureLinear:
         thresholded_quantity,
         maximized_quantity_min,
         buffered_threshold,
+        s_samples,
+        c_precision,
     ):
         """
         Measure the metrics of color conditions.
@@ -114,6 +116,14 @@ class MeasureLinear:
             or purity (if `maximized_quantity == "purity"`) across all redshift bins.
         buffered_threshold : float
             Buffered threshold on the thresholded quantity (see the documentation of `CalibrateLinear`).
+        s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
+            Array of slope values for generating linear cuts in color-color space.
+            These samples must be strictly positive.
+        c_precision : float, default=0.05
+            Precision of the c parameter sampling. Smaller values
+            increase accuracy but significantly increase the number of operations.
+            If `c_precision` is halved, expect about 2 times more c steps per s
+            (also runtime and RAM roughly double).
         """
         self.dict_all = {}
         self.td = target_definition
@@ -122,6 +132,8 @@ class MeasureLinear:
         self.thresholded_quantity = thresholded_quantity
         self.maximized_quantity_min = maximized_quantity_min
         self.buffered_threshold = buffered_threshold
+        self.s_samples = s_samples
+        self.c_precision = c_precision
 
     def _apply_cuts(self, z_lim, mag1, mag2, cross_colors=[], cpu_number=None):
         """
@@ -168,7 +180,7 @@ class MeasureLinear:
         ].values.astype(np.float32)
 
         vmin, vmax = c_domain(color1)
-        n_steps = int((vmax - vmin) / self.td.c_precision) + 1
+        n_steps = int((vmax - vmin) / self.c_precision) + 1
         test_colors = np.linspace(vmin, vmax, n_steps, dtype=np.float32)
 
         # Create shared arrays
@@ -276,9 +288,9 @@ class MeasureLinear:
                     color2 = cross_color_arrays[(mag3, mag4)]
 
                     sc_grid = []
-                    for s in self.td.s_samples:
+                    for s in self.s_samples:
                         c_min, c_max = c_domain_given_s(color1, color2, s)
-                        n_c = int((c_max - c_min) / self.td.c_precision) + 1
+                        n_c = int((c_max - c_min) / self.c_precision) + 1
                         c_grid = np.linspace(c_min, c_max, n_c, dtype=np.float32)
 
                         for c in c_grid:
