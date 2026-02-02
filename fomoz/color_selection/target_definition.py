@@ -21,16 +21,12 @@ class TargetDefinition:
     def __init__(
         self,
         z_lim,
-        thresholded_quantity_min,
-        maximized_quantity="completeness",
-        maximized_quantity_min=0.05,
         is_zlim_lower=True,
         additional_rules=None,
         s_samples=np.linspace(0.3, 1.7, 30),
         c_precision=0.05,
         grid_precision=0.15,
         step=0.0001,
-        threshold_buffer=0.05,
         alpha=0.1,
         k=1,
         do_bootstrap=True,
@@ -49,25 +45,6 @@ class TargetDefinition:
             Array of redshift limits/thresholds to be used in selection tests.
             It can represent either lower of higher limit values, depending on
             the value of `is_zlim_lower`.
-        thresholded_quantity_min : float or array-like
-            Required minimum for the thresholded quantity, namely
-            global purity (if `maximized_quantity == "completeness"`)
-            or completeness (if `maximized_quantity == "purity"`) across all redshift bins.
-            If float, the same threshold is applied at any limiting redshift point.
-            If array-like, a different threshold is used at each limiting
-            redshift.
-        maximized_quantity : str, default="completeness"
-            The quantity to maximize. Possibilities are either "completeness" or
-            "purity".
-        maximized_quantity_min : float, default=0.05
-            Required minimum for the maximized completeness (if `maximized_quantity == "completeness"`)
-            or purity (if `maximized_quantity == "purity"`) across all redshift bins.
-            This is not a threshold on the global value of the maximized quantity.
-            In `CalibrateLinear`, only single color conditions that meet the requirement on
-            this parameter are considered. In `CalibrateGrid`, only color-color spaces that
-            yield a maximized quantity larger than this parameter are considered. The default
-            value is 0.05, namely 5%. This threshold is useful to exclude random fluctuations
-            and reduce statistical uncertainties on selection purity and completeness.
         is_zlim_lower : bool, default = True
             If True, `z_lim` is a set of lower redshift limits. Otherwise, `z_lim`
             is a set of higher limits.
@@ -89,20 +66,12 @@ class TargetDefinition:
             (also runtime and RAM roughly double). Used only for linear color cuts
             (i.e., used by `CalibrateLinear`, not used by `CalibrateGrid`).
         grid_precision : float, default=0.15
-            Precision of the grid in `CalibrateGrid`. A smaller value yields a finer,
+            Precision of the color-color grids in `CalibrateGrid`. A smaller value yields a finer,
             more accurate grid at the cost of increased computation, RAM usage, and
             storage requirements.
         step : float, default=0.0001
             Defines the threshold reduction (i) on single color conditions in `CalibrateLinear`,
             and (ii) on grid elements in `CalibrateGrid`. Default is 0.0001.
-        threshold_buffer : float, default=0.05
-            Used only in `CalibrateLinear`. Quantity subtracted from `thresholded_quantity_min`.
-            Color conditions not satisfying the final threshold, namely
-            `thresholded_quantity_min - threshold_buffer`, are not
-            considered in the optimization process. This is useful to avoid filling memory
-            with unused information. The default value is 0.05, namely a 5 percentage point
-            subtraction. If this value is too small, the optimization method in
-            `CalibrateLinear` raises an error.
         alpha : float, default=0.1
             Significance level used in `CalibrateGrid` to discard statistically
             non-robust grid bins. A bin is considered as significant only if the posterior
@@ -131,28 +100,6 @@ class TargetDefinition:
             if z_l < 0:
                 raise ValueError("z_lim values cannot be negative")
 
-        if isinstance(thresholded_quantity_min, float):
-            self.thresholded_quantity_min = [thresholded_quantity_min] * len(self.z_lim)
-        else:
-            if len(thresholded_quantity_min) != len(self.z_lim):
-                raise ValueError(
-                    f"thresholded_quantity_min length ({len(thresholded_quantity_min)}) "
-                    f"must match z_lim length ({len(self.z_lim)})"
-                )
-            self.thresholded_quantity_min = thresholded_quantity_min
-        for t in self.thresholded_quantity_min:
-            if not (0.0 <= t < 1.0):
-                raise ValueError(
-                    "thresholded_quantity_min accepted values lie in the range [0, 1)."
-                )
-
-        if isinstance(maximized_quantity_min, (float, int)):
-            if not (0.0 <= maximized_quantity_min <= 1.0):
-                raise ValueError("maximized_quantity_min must range from 0 to 1.")
-            self.maximized_quantity_min = maximized_quantity_min
-        else:
-            raise TypeError("maximized_quantity_min must be a float or integer.")
-
         if np.any(s_samples <= 0):
             raise ValueError(
                 "All slope values in s_samples must be strictly positive. "
@@ -171,20 +118,6 @@ class TargetDefinition:
                 f"alpha must range between 0 and 1. The current value is {alpha}."
             )
         self.alpha = alpha
-
-        if threshold_buffer > thresholded_quantity_min:
-            raise ValueError(
-                "threshold_buffer must be strictly smaller than thresholded_quantity_min."
-            )
-        self.buffered_threshold = thresholded_quantity_min - threshold_buffer
-
-        if maximized_quantity not in ["completeness", "purity"]:
-            errMsg = "maximized_quantity must be either 'completeness' or 'purity'."
-            raise ValueError(errMsg)
-        if maximized_quantity == "completeness":
-            self.thresholded_quantity = "purity"
-        else:
-            self.thresholded_quantity = "completeness"
 
         self.k = k
         self.do_bootstrap = do_bootstrap

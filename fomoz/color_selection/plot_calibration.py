@@ -121,7 +121,7 @@ class PlotCalibration:
         color = normalize_plot_style(color, "color", self.n_calibrations)
 
         for i, calibration in enumerate(self.calibrations):
-            z_lim = calibration.dm.z_lim
+            z_lim = calibration.td.z_lim
             if metric == "C":
                 y = calibration.C
                 y_std = calibration.C_std
@@ -153,12 +153,12 @@ class PlotCalibration:
                 sel = SelectObject()
                 sel.load_parameters(calibration)
 
-                dataset = calibration.dm.dataset
+                dataset = calibration.dataset
                 sel.process(interp_points, dataset)
 
                 y = []
                 for j, z_l in enumerate(interp_points):
-                    target_mask = calibration.dm.get_target_mask(dataset, [z_l])
+                    target_mask = calibration.td.get_target_mask(dataset, [z_l])
                     TP, FP, FN, TN = compute_metrics(
                         np.array(sel.mask[j]), np.array(target_mask[0])
                     )
@@ -421,12 +421,12 @@ class PlotCalibration:
 
         calib = self.calibrations[calibration_index]
 
-        z_l = calib.dm.z_lim[zl_index]
+        z_l = calib.td.z_lim[zl_index]
 
-        c1 = calib.dm.dataset[color1[0]] - calib.dm.dataset[color1[2]]
-        c2 = calib.dm.dataset[color2[0]] - calib.dm.dataset[color2[2]]
+        c1 = calib.dataset[color1[0]] - calib.dataset[color1[2]]
+        c2 = calib.dataset[color2[0]] - calib.dataset[color2[2]]
 
-        all_colors = [color[0] + "-" + color[1] for color in calib.dm.colors]
+        all_colors = [color[0] + "-" + color[1] for color in calib.colors]
         other_colors = [c for c in all_colors if c not in [color1, color2]]
 
         x_min, x_max = ax.get_xlim()
@@ -722,7 +722,7 @@ class PlotCalibration:
         """
         calib = self.calibrations[calibration_index]
 
-        color_spaces = list(combinations(calib.dm.colors, 2))
+        color_spaces = list(combinations(calib.colors, 2))
 
         n_color_spaces = len(color_spaces)
         n_rows = int(np.ceil(n_color_spaces / n_columns))

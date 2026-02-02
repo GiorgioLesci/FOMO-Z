@@ -42,7 +42,15 @@ yaml.add_representer(list, inline_list_representer, Dumper=yaml.SafeDumper)
 class CalibrateLinear:
     """Calibrate linear color selections."""
 
-    def __init__(self, dataset: Dataset, target_definition: TargetDefinition):
+    def __init__(
+        self,
+        dataset: Dataset,
+        target_definition: TargetDefinition,
+        thresholded_quantity_min,
+        maximized_quantity="completeness",
+        maximized_quantity_min=0.05,
+        threshold_buffer=0.05,
+    ):
         r"""
         Class calibrating optimal linear color selections.
 
@@ -54,7 +62,7 @@ class CalibrateLinear:
         (purity) while still satisfying the global threshold. The algorithm
         proceeds iteratively, starting from a strict initial threshold and reducing
         it by `TargetDefinition.step` until the total purity (or completeness) remains above
-        `TargetDefinition.thresholded_quantity_min`.
+        `thresholded_quantity_min`.
         The starting threshold corresponds to the maximum
         purity (or completeness) attained across all single color conditions.
         Also bootstrap errors on the metrics are derived.
@@ -64,7 +72,7 @@ class CalibrateLinear:
         For each redshift value, this method searches for the set of
         cuts that ($\mathcal{P}_{\rm iter}^{\rm ini}$: initial threshold,
         $\delta\mathcal{P}_{\rm iter}$: `TargetDefinition.step`, $z_{\rm l}$: `z_l`,
-        $\mathcal{P}_{\rm min}$: `TargetDefinition.thresholded_quantity_min`):
+        $\mathcal{P}_{\rm min}$: `thresholded_quantity_min`):
         - Update $\mathcal{P}_{\rm iter}^k = \mathcal{P}_{\rm iter}^{\rm ini} -
           k\,\delta\mathcal{P}_{\rm iter}$, where $k$ is the iteration index,
           starting from 0.
@@ -94,6 +102,32 @@ class CalibrateLinear:
             A `Dataset` object containing the dataset and band information.
         target_definition : TargetDefinition
             A `TargetDefinition` object containing target selections (e.g. redshift thresholds).
+        thresholded_quantity_min : float or array-like
+            Required minimum for the thresholded quantity, namely
+            global purity (if `maximized_quantity == "completeness"`)
+            or completeness (if `maximized_quantity == "purity"`) across all redshift bins.
+            If float, the same threshold is applied at any limiting redshift point.
+            If array-like, a different threshold is used at each limiting
+            redshift.
+        maximized_quantity : str, default="completeness"
+            The quantity to maximize. Possibilities are either "completeness" or
+            "purity".
+        maximized_quantity_min : float, default=0.05
+            Required minimum for the maximized completeness (if `maximized_quantity == "completeness"`)
+            or purity (if `maximized_quantity == "purity"`) across all redshift bins.
+            This is not a threshold on the global value of the maximized quantity.
+            Only single color conditions that meet the requirement on
+            this parameter are considered. The default
+            value is 0.05, namely 5%. This threshold is useful to exclude random fluctuations
+            and reduce statistical uncertainties on selection purity and completeness.
+        threshold_buffer : float, default=0.05
+            Quantity subtracted from `thresholded_quantity_min`.
+            Color conditions not satisfying the final threshold, namely
+            `thresholded_quantity_min - threshold_buffer`, are not
+            considered in the optimization process. This is useful to avoid filling memory
+            with unused information. The default value is 0.05, namely a 5 percentage point
+            subtraction. If this value is too small, the optimization method in
+            `CalibrateLinear` raises an error.
 
         Attributes
         ----------
@@ -118,9 +152,47 @@ class CalibrateLinear:
         self.dataset = dataset.dataset
         self.bands = dataset.bands
         self.colors = dataset.colors
-
         self.td = target_definition
 
+        if isinstance(thresholded_quantity_min, float):
+            self.thresholded_quantity_min = [thresholded_quantity_min] * len(
+                self.td.z_lim
+            )
+        else:
+            if len(thresholded_quantity_min) != len(self.td.z_lim):
+                raise ValueError(
+                    f"thresholded_quantity_min length ({len(thresholded_quantity_min)}) "
+                    f"must match z_lim length ({len(self.td.z_lim)})"
+                )
+            self.thresholded_quantity_min = thresholded_quantity_min
+        for t in self.thresholded_quantity_min:
+            if not (0.0 <= t < 1.0):
+                raise ValueError(
+                    "thresholded_quantity_min accepted values lie in the range [0, 1)."
+                )
+
+        if maximized_quantity not in ["completeness", "purity"]:
+            errMsg = "maximized_quantity must be either 'completeness' or 'purity'."
+            raise ValueError(errMsg)
+        if maximized_quantity == "completeness":
+            self.thresholded_quantity = "purity"
+        else:
+            self.thresholded_quantity = "completeness"
+
+        if isinstance(maximized_quantity_min, (float, int)):
+            if not (0.0 <= maximized_quantity_min <= 1.0):
+                raise ValueError("maximized_quantity_min must range from 0 to 1.")
+            self.maximized_quantity_min = maximized_quantity_min
+        else:
+            raise TypeError("maximized_quantity_min must be a float or integer.")
+
+        if threshold_buffer > thresholded_quantity_min:
+            raise ValueError(
+                "threshold_buffer must be strictly smaller than thresholded_quantity_min."
+            )
+        self.buffered_threshold = thresholded_quantity_min - threshold_buffer
+
+        # Initialize other attributes
         self.dict = {}
         self.dict_steps = {}
         self.P = np.zeros(len(self.td.z_lim))
@@ -165,10 +237,17 @@ class CalibrateLinear:
         z_l = self.td.z_lim[i_z]
 
         # Minimum required total purity or completeness for the optimized set of cuts
-        threshold_tot_min = self.td.thresholded_quantity_min[i_z]
+        threshold_tot_min = self.thresholded_quantity_min[i_z]
 
         # Pre-compute color cut performance
-        measure = MeasureLinear(self.dataset, self.colors, self.td)
+        measure = MeasureLinear(
+            self.dataset,
+            self.colors,
+            self.td,
+            self.thresholded_quantity,
+            self.maximized_quantity_min,
+            self.buffered_threshold,
+        )
         measure.process(z_l, cpu_number=cpu_number)
 
         # Get the correct dictionary
@@ -184,7 +263,7 @@ class CalibrateLinear:
             for comp_pair, conditions in comp_dict.items():
                 for cond_index, cond_data in conditions.items():
                     candidate_max = cond_data.get(
-                        self.td.thresholded_quantity,
+                        self.thresholded_quantity,
                         [],
                     )
                     for i, candidate in enumerate(candidate_max):
@@ -198,7 +277,7 @@ class CalibrateLinear:
             )
 
         # Start the iterative process
-        if self.td.thresholded_quantity == "purity":
+        if self.thresholded_quantity == "purity":
             maximized_quantity = "completeness"
         else:
             maximized_quantity = "purity"
@@ -214,10 +293,10 @@ class CalibrateLinear:
         iteration = 0
         while current_thresh > 0:
 
-            if current_thresh <= self.td.buffered_threshold:
+            if current_thresh <= self.buffered_threshold:
                 errMsg = "The current threshold in the iterative process is lower"
                 errMsg += " than or equal to the buffered threshold set in the"
-                errMsg += " TargetDefinition class. Increase threshold_buffer in TargetDefinition."
+                errMsg += " TargetDefinition class. Increase threshold_buffer in the constructor."
                 raise ValueError(errMsg)
 
             new_best_by_key = {}
@@ -245,7 +324,7 @@ class CalibrateLinear:
 
                                 key = (base_pair, comp_pair, cond_index)
 
-                                if self.td.thresholded_quantity == "purity":
+                                if self.thresholded_quantity == "purity":
                                     threshold_condition = purity >= current_thresh
                                     maximization_condition = (
                                         compl
@@ -294,7 +373,7 @@ class CalibrateLinear:
 
                                 key = (base_pair, comp_pair, cond_index)
 
-                                if self.td.thresholded_quantity == "purity":
+                                if self.thresholded_quantity == "purity":
                                     threshold_condition = purity >= current_thresh
                                     maximization_condition = (
                                         compl
@@ -349,7 +428,7 @@ class CalibrateLinear:
                 err_msg += f" the failure rate is 1 at z_l={z_l}."
                 raise ValueError(err_msg)
 
-            if self.td.thresholded_quantity == "purity":
+            if self.thresholded_quantity == "purity":
                 threshold_condition = P_tot_new[i_z] >= threshold_tot_min
             else:
                 threshold_condition = C_tot_new[i_z] >= threshold_tot_min
@@ -524,8 +603,8 @@ class CalibrateLinear:
             self.bands,
             self.colors,
             self.td.z_lim,
-            self.td.thresholded_quantity,
-            self.td.thresholded_quantity_min,
+            self.thresholded_quantity,
+            self.thresholded_quantity_min,
             is_zlim_lower=self.td.is_zlim_lower,
         )
         interpolate_parameters(self.dict, k=self.td.k)

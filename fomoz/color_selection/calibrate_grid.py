@@ -25,7 +25,13 @@ from .tools import c_domain, color_bin_edges, compute_metrics, prob_target
 class CalibrateGrid:
     """Calibrate grid color selections."""
 
-    def __init__(self, dataset: Dataset, target_definition: TargetDefinition):
+    def __init__(
+        self,
+        dataset: Dataset,
+        target_definition: TargetDefinition,
+        thresholded_quantity_min,
+        maximized_quantity="completeness",
+    ):
         r"""
         Class calibrating optimal grid color selections.
 
@@ -37,6 +43,16 @@ class CalibrateGrid:
             A `Dataset` object containing the dataset and band information.
         target_definition : TargetDefinition
             A `TargetDefinition` object containing target selections (e.g. redshift thresholds).
+        thresholded_quantity_min : float or array-like
+            Required minimum for the thresholded quantity, namely
+            global purity (if `maximized_quantity == "completeness"`)
+            or completeness (if `maximized_quantity == "purity"`) across all redshift bins.
+            If float, the same threshold is applied at any limiting redshift point.
+            If array-like, a different threshold is used at each limiting
+            redshift.
+        maximized_quantity : str, default="completeness"
+            The quantity to maximize. Possibilities are either "completeness" or
+            "purity".
 
         Attributes
         ----------
@@ -59,9 +75,34 @@ class CalibrateGrid:
         self.bands = dataset.bands
         self.colors = dataset.colors
         self.color_spaces = dataset.color_spaces
-
         self.td = target_definition
 
+        if isinstance(thresholded_quantity_min, float):
+            self.thresholded_quantity_min = [thresholded_quantity_min] * len(
+                self.td.z_lim
+            )
+        else:
+            if len(thresholded_quantity_min) != len(self.td.z_lim):
+                raise ValueError(
+                    f"thresholded_quantity_min length ({len(thresholded_quantity_min)}) "
+                    f"must match z_lim length ({len(self.td.z_lim)})"
+                )
+            self.thresholded_quantity_min = thresholded_quantity_min
+        for t in self.thresholded_quantity_min:
+            if not (0.0 <= t < 1.0):
+                raise ValueError(
+                    "thresholded_quantity_min accepted values lie in the range [0, 1)."
+                )
+
+        if maximized_quantity not in ["completeness", "purity"]:
+            errMsg = "maximized_quantity must be either 'completeness' or 'purity'."
+            raise ValueError(errMsg)
+        if maximized_quantity == "completeness":
+            self.thresholded_quantity = "purity"
+        else:
+            self.thresholded_quantity = "completeness"
+
+        # Initialize other attributes
         self.dict_steps = {}
         self.P = np.zeros(len(self.td.z_lim))
         self.C = np.zeros(len(self.td.z_lim))
@@ -92,8 +133,8 @@ class CalibrateGrid:
         dictionary["metadata"]["bands"] = self.bands
         dictionary["metadata"]["z_l"] = [float(z) for z in self.td.z_lim]
         dictionary["metadata"]["z_l_is_lower_limit"] = self.td.is_zlim_lower
-        dictionary["metadata"][f"{self.td.thresholded_quantity}_min"] = [
-            float(T) for T in self.td.thresholded_quantity_min
+        dictionary["metadata"][f"{self.thresholded_quantity}_min"] = [
+            float(T) for T in self.thresholded_quantity_min
         ]
         dictionary["metadata"]["grid_precision"] = self.td.grid_precision
 
@@ -215,16 +256,16 @@ class CalibrateGrid:
             P = TP / (TP + FP) if TP + FP > 0 else 0.0
 
             # Check convergence
-            if self.td.thresholded_quantity == "purity":
+            if self.thresholded_quantity == "purity":
                 thresholded_quantity = P
-            elif self.td.thresholded_quantity == "completeness":
+            elif self.thresholded_quantity == "completeness":
                 thresholded_quantity = C
             else:
                 raise ValueError(
-                    f"Not allowed value for thresholded_quantity ({self.td.thresholded_quantity})."
+                    f"Not allowed value for thresholded_quantity ({self.thresholded_quantity})."
                 )
 
-            if thresholded_quantity >= self.td.thresholded_quantity_min[i_z]:
+            if thresholded_quantity >= self.thresholded_quantity_min[i_z]:
                 self.P[i_z] = P
                 self.C[i_z] = C
                 self.F[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0

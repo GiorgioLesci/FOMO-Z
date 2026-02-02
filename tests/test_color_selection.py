@@ -66,16 +66,11 @@ def reference_colors(reference_dataset):
 def reference_target_definition_instance():
     """Create a TargetDefinition instance."""
     z_lim = [0.5, 0.6]
-    thresholded_quantity_min = 0.9
-
     target_definition = TargetDefinition(
         z_lim,
-        thresholded_quantity_min,
-        maximized_quantity_min=0.0,
         step=0.0001,
         k=3,
     )
-
     return target_definition
 
 
@@ -86,7 +81,12 @@ def reference_measure_instance(
 ):
     """Create a MeasureLinear instance with reference.csv data for testing."""
     measure = MeasureLinear(
-        reference_dataset, reference_colors, reference_target_definition_instance
+        reference_dataset,
+        reference_colors,
+        reference_target_definition_instance,
+        "purity",
+        0,
+        0.05,
     )
     for z_l in reference_target_definition_instance.z_lim:
         measure.process(z_l, cpu_number=1)
@@ -99,8 +99,12 @@ def reference_calibration_linear_instance(
     reference_dataset_instance, reference_target_definition_instance
 ):
     """Create an CalibrateLinear instance with reference.csv data for testing."""
+    thresholded_quantity_min = 0.9
     calibration = CalibrateLinear(
-        reference_dataset_instance, reference_target_definition_instance
+        reference_dataset_instance,
+        reference_target_definition_instance,
+        thresholded_quantity_min,
+        maximized_quantity_min=0,
     )
 
     return calibration
@@ -377,8 +381,10 @@ class TestMeasureProcess:
         z_l = [0.3]  # Single z limit
 
         # Create a new Measure instance with single z limit
-        td = TargetDefinition(z_l, 0.9, maximized_quantity_min=0.0)
-        measure = MeasureLinear(reference_dataset, reference_colors, td)
+        td = TargetDefinition(z_l, 0.9)
+        measure = MeasureLinear(
+            reference_dataset, reference_colors, td, "purity", 0, 0.05
+        )
         measure.process(td.z_lim[0], cpu_number=1)
 
         assert measure.td.z_lim[0] in measure.dict_all
