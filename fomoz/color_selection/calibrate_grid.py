@@ -11,29 +11,35 @@ import copy
 import multiprocessing as mp
 import os
 import time
-from itertools import combinations
 
 import numpy as np
 import yaml
-from tqdm import tqdm
 from scipy.stats import beta
+from tqdm import tqdm
 
+from .data_model import DataModel
+from .dataset import Dataset
 from .tools import c_domain, color_bin_edges, compute_metrics, prob_target
 
 
 class CalibrateGrid:
     """Calibrate grid color selections."""
 
-    def __init__(self, data_model):
+    def __init__(self, dataset: Dataset, data_model: DataModel):
         r"""
         Class calibrating optimal grid color selections.
 
-        This class...
+        This class... (also, talk about the threshold alpha!)
+
+        Parameters
+        ----------
+        dataset : Dataset
+            A `Dataset` object containing the dataset and band information.
+        data_model : DataModel
+            A `DataModel` object containing target selections (e.g. redshift thresholds).
 
         Attributes
         ----------
-        dm : DataModel
-            `DataModel` object.
         dict : dict
             Container for storing results based on color selections.
         P : numpy.array
@@ -48,15 +54,13 @@ class CalibrateGrid:
             Total completeness error.
         F_std : numpy.array
             Total failure rate error.
-
-        Parameters
-        ----------
-        data_model : DataModel
-            A `DataModel` object containing the dataset, band information,
-            redshift thresholds, and precomputed cut metrics.
         """
+        self.dataset = dataset.dataset
+        self.bands = dataset.bands
+        self.colors = dataset.colors
+        self.color_spaces = dataset.color_spaces
+
         self.dm = data_model
-        self.color_spaces = list(combinations(self.dm.colors, 2))
 
         self.dict_steps = {}
         self.P = np.zeros(len(self.dm.z_lim))
@@ -67,8 +71,11 @@ class CalibrateGrid:
         self.F_std = np.full(len(self.dm.z_lim), np.nan)
 
         self.dict = {}
-        self._update_dict_metadata(self.dict, self.dm.dataset)
-        self._update_dict(self.dict, self.dm.dataset)
+        self._update_dict_metadata(self.dict, self.dataset)
+        self._update_dict(self.dict, self.dataset)
+
+        # Create the target mask
+        self.target_mask = self.dm.get_target_mask(self.dataset, self.dm.z_lim)
 
     def _update_dict_metadata(self, dictionary, dataset):
         r"""
@@ -82,7 +89,7 @@ class CalibrateGrid:
             Input dataset containing photometric bands.
         """
         dictionary["metadata"] = {}
-        dictionary["metadata"]["bands"] = self.dm.bands
+        dictionary["metadata"]["bands"] = self.bands
         dictionary["metadata"]["z_l"] = [float(z) for z in self.dm.z_lim]
         dictionary["metadata"]["z_l_is_lower_limit"] = self.dm.is_zlim_lower
         dictionary["metadata"][f"{self.dm.thresholded_quantity}_min"] = [
@@ -120,7 +127,7 @@ class CalibrateGrid:
         """
         # Color values and object index dictionary
         dict_colors = {}
-        for color in self.dm.colors:
+        for color in self.colors:
 
             value = dataset[color[0]].values - dataset[color[1]].values
 
@@ -183,7 +190,7 @@ class CalibrateGrid:
 
             # Probability to get target galaxies
             prob, N_good, N_total = prob_target(
-                self.dict["metadata"], cs, self.dm.dataset, self.dm.target_mask[i_z]
+                self.dict["metadata"], cs, self.dataset, self.target_mask[i_z]
             )
             dict_stats[cs]["prob"] = prob
             dict_stats[cs]["N_good"] = N_good
@@ -203,7 +210,7 @@ class CalibrateGrid:
             mask = self.get_mask(i_z, dictionary=dict_stats)
 
             # Total completeness and purity
-            TP, FP, FN, TN = compute_metrics(mask, self.dm.target_mask[i_z])
+            TP, FP, FN, TN = compute_metrics(mask, self.target_mask[i_z])
             C = TP / (TP + FN) if TP + FN > 0 else 0.0
             P = TP / (TP + FP) if TP + FP > 0 else 0.0
 
@@ -234,16 +241,15 @@ class CalibrateGrid:
                 f"Could not find a calibration for the redshift value {self.dm.z_lim[i_z]}."
             )
 
-        # Remove not robust bins, namely those with more than 5% probability to have
-        # per-bin purity p < prob_min_bin. Following the Bayes' theorem, we have
+        # Remove not robust bins, namely those with probability to have per-bin purity
+        # p < prob_min_bin larger than alpha. Following the Bayes' theorem, we have
         # P(p | k, n) = P(k | p, n) P(p | n) / P(k | n),
         # where p is the per-bin purity, k is the number of successes, and n is the
         # number of trials. We assume that P(k | p, n) is a Binomial distribution and
         # P(p | n) = [0, 1] is a uniform prior.
-        # Our selection criterion is P(p < p_min | k, n) < alpha, where alpha = 0.05.
-        alpha = 0.05
+        # Our selection criterion is P(p < p_min | k, n) < alpha.
 
-        if alpha < 1.0:
+        if self.dm.alpha < 1.0:
 
             dict_significant = {}
 
@@ -262,7 +268,9 @@ class CalibrateGrid:
                             continue
                         # Given the observed data (k successes out of n), compute the posterior
                         # probability that (true purity < prob_min_bin) is smaller than alpha.
-                        significant = beta.cdf(prob_min_bin, k + 1, n - k + 1) < alpha
+                        significant = (
+                            beta.cdf(prob_min_bin, k + 1, n - k + 1) < self.dm.alpha
+                        )
                         dict_significant[cs]["mask"][i, j] = significant
 
             # Re-define the masks and re-evaluate the metrics
@@ -272,7 +280,7 @@ class CalibrateGrid:
                 )
 
             mask = self.get_mask(i_z)
-            TP, FP, FN, TN = compute_metrics(mask, self.dm.target_mask[i_z])
+            TP, FP, FN, TN = compute_metrics(mask, self.target_mask[i_z])
             self.P[i_z] = TP / (TP + FP) if TP + FP > 0 else 0.0
             self.C[i_z] = TP / (TP + FN) if TP + FN > 0 else 0.0
             self.F[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0
@@ -304,9 +312,9 @@ class CalibrateGrid:
 
             # Bootstrap sample
             indices = np.random.choice(
-                len(self.dm.dataset), size=len(self.dm.dataset), replace=True
+                len(self.dataset), size=len(self.dataset), replace=True
             )
-            bt_sample = self.dm.dataset.iloc[indices]
+            bt_sample = self.dataset.iloc[indices]
 
             # Pre-compute colors
             dict_temp = {}

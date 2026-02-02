@@ -4,26 +4,28 @@ Unit tests for the color_selection subpackage.
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
-import pytest
-import numpy as np
-import yaml
-import pandas as pd
 import os
 
+import numpy as np
+import pandas as pd
+import pytest
+import yaml
+
+from fomoz.color_selection.calibrate_linear import CalibrateLinear
+from fomoz.color_selection.data_model import DataModel
+from fomoz.color_selection.dataset import Dataset
+from fomoz.color_selection.select_object import SelectObject
 from fomoz.color_selection.tools import (
-    Measure,
-    compute_metrics,
-    compute_for_simple,
-    compute_for_cross,
+    MeasureLinear,
     build_nested_dict,
-    restructure_dict,
+    compute_for_cross,
+    compute_for_simple,
+    compute_metrics,
+    float_representer,
     interpolate_parameters,
     make_yaml_serializable,
-    float_representer,
+    restructure_dict,
 )
-from fomoz.color_selection.data_model import DataModel
-from fomoz.color_selection.calibrate_linear import CalibrateLinear
-from fomoz.color_selection.select_object import SelectObject
 
 
 # Shared fixture for reference dataset
@@ -41,17 +43,32 @@ def reference_dataset():
     return pd.read_csv(data_path, comment="#")
 
 
+# Shared fixture for dataset instance
+@pytest.fixture
+def reference_dataset_instance(reference_dataset):
+    """Create a Dataset instance with reference.csv data for testing."""
+    bands = ["g", "r", "i"]
+    dataset = Dataset(reference_dataset, bands)
+    return dataset
+
+
+# Shared fixture for reference color list
+@pytest.fixture
+def reference_colors(reference_dataset):
+    """Create a Dataset instance with reference.csv data for testing."""
+    bands = ["g", "r", "i"]
+    dataset = Dataset(reference_dataset, bands)
+    return dataset.colors
+
+
 # Shared fixture for data_model instance
 @pytest.fixture
-def reference_data_model_instance(reference_dataset):
-    """Create a Measure instance with reference.csv data for testing."""
-    bands = ["g", "r", "i"]
+def reference_data_model_instance():
+    """Create a DataModel instance."""
     z_lim = [0.5, 0.6]
     thresholded_quantity_min = 0.9
 
     data_model = DataModel(
-        reference_dataset,
-        bands,
         z_lim,
         thresholded_quantity_min,
         maximized_quantity_min=0.0,
@@ -64,20 +81,27 @@ def reference_data_model_instance(reference_dataset):
 
 # Shared fixture for measure instance
 @pytest.fixture
-def reference_measure_instance(reference_data_model_instance):
-    """Create a Measure instance with reference.csv data for testing."""
-    measure = Measure(reference_data_model_instance)
+def reference_measure_instance(
+    reference_dataset, reference_colors, reference_data_model_instance
+):
+    """Create a MeasureLinear instance with reference.csv data for testing."""
+    measure = MeasureLinear(
+        reference_dataset, reference_colors, reference_data_model_instance
+    )
     for z_l in reference_data_model_instance.z_lim:
         measure.process(z_l, cpu_number=1)
-
     return measure
 
 
 # Shared fixture for calibration instance
 @pytest.fixture
-def reference_calibration_linear_instance(reference_data_model_instance):
+def reference_calibration_linear_instance(
+    reference_dataset_instance, reference_data_model_instance
+):
     """Create an CalibrateLinear instance with reference.csv data for testing."""
-    calibration = CalibrateLinear(reference_data_model_instance)
+    calibration = CalibrateLinear(
+        reference_dataset_instance, reference_data_model_instance
+    )
 
     return calibration
 
@@ -347,14 +371,14 @@ class TestMeasureProcess:
                         assert n == len(cond_metrics["purity"])
                         assert n == len(cond_metrics["completeness"])
 
-    def test_process_with_single_z_limit(self, reference_dataset):
+    def test_process_with_single_z_limit(self, reference_dataset, reference_colors):
         """Test process() with single redshift limit."""
         bands = ["g", "r", "i"]
         z_l = [0.3]  # Single z limit
 
         # Create a new Measure instance with single z limit
-        dm = DataModel(reference_dataset, bands, z_l, 0.9, maximized_quantity_min=0.0)
-        measure = Measure(dm)
+        dm = DataModel(z_l, 0.9, maximized_quantity_min=0.0)
+        measure = MeasureLinear(reference_dataset, reference_colors, dm)
         measure.process(dm.z_lim[0], cpu_number=1)
 
         assert measure.dm.z_lim[0] in measure.dict_all

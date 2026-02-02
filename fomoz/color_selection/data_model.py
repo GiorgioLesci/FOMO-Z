@@ -1,7 +1,7 @@
 """
 Data model settings.
 
-This module sets the data model for color selections,
+This module sets the target definitions for color selections,
 handling any condition on galaxy properties.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
@@ -16,25 +16,22 @@ from .tools import set_input_variable_precision
 
 
 class DataModel:
-    """Set the data model for the derivation of color selections."""
+    """Set the target selections for the derivation of color selections."""
 
     def __init__(
         self,
-        dataset,
-        bands,
         z_lim,
         thresholded_quantity_min,
         maximized_quantity="completeness",
         maximized_quantity_min=0.05,
-        z_gal_string="redshift",
         is_zlim_lower=True,
         additional_rules=None,
-        missing_data=-99,
         s_samples=np.linspace(0.3, 1.7, 30),
         c_precision=0.05,
         grid_precision=0.15,
         step=0.0001,
         threshold_buffer=0.05,
+        alpha=0.1,
         k=1,
         do_bootstrap=True,
         n_bootstraps=1000,
@@ -44,17 +41,10 @@ class DataModel:
 
         Class defining the color selection data model.
 
-        This class standardizes input photometric data, handles missing values,
-        constructs color arrays from provided bands, and defines color selection
-        criteria.
+        This class defines color selection criteria.
 
         Parameters
         ----------
-        dataset : pandas.DataFrame
-            Input photometric dataset containing magnitude measurements and a
-            redshift column.
-        bands : list of str
-            Names of the photometric bands to include in the analysis.
         z_lim : array-like
             Array of redshift limits/thresholds to be used in selection tests.
             It can represent either lower of higher limit values, depending on
@@ -78,8 +68,6 @@ class DataModel:
             yield a maximized quantity larger than this parameter are considered. The default
             value is 0.05, namely 5%. This threshold is useful to exclude random fluctuations
             and reduce statistical uncertainties on selection purity and completeness.
-        z_gal_string : str, default='redshift'
-            Column name in `dataset` that contains the galaxy redshift values.
         is_zlim_lower : bool, default = True
             If True, `z_lim` is a set of lower redshift limits. Otherwise, `z_lim`
             is a set of higher limits.
@@ -90,9 +78,6 @@ class DataModel:
             combined through the AND logical operator.
             Example: ``[ ["logM", ">", 10.0], ["u", "<", 24.0] ]``.
             Supported operators: ">", "<", ">=", "<=", "==", "!=".
-        missing_data : int or float, default=-99
-            Value used in the dataset to denote missing entries. These are replaced
-            with NaN for consistency.
         s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
             Array of slope values for generating linear cuts in color–color space.
             These samples must be strictly positive. Used only for linear color cuts
@@ -116,10 +101,20 @@ class DataModel:
             `thresholded_quantity_min - threshold_buffer`, are not
             considered in the optimization process. This is useful to avoid filling memory
             with unused information. The default value is 0.05, namely a 5 percentage point
-            subtraction.
+            subtraction. If this value is too small, the optimization method in
+            `CalibrateLinear` raises an error.
+        alpha : float, default=0.1
+            Significance level used in `CalibrateGrid` to discard statistically
+            non-robust grid bins. A bin is considered as significant only if the posterior
+            probability that its true per-bin purity is below the optimized
+            threshold is smaller than `alpha`. Default is 0.1, namely 10% probability.
+            To avoid the bin significance classification, and include all possible bins,
+            set this parameter equal to 1.
+            A more detailed description can be found in the documentation of `CalibrateGrid`.
         k : int, default=1
             Used only in `CalibrateLinear`.
-            Requested degree of the spline interpolation. Default is 1 (linear).
+            Requested degree of the spline interpolation, used to interpolate color
+            condition parameters. Default is 1 (linear).
             The actual degree is adjusted case by case:
             - If there are fewer than ``k+1`` points, the degree is reduced
               to ``n_points - 1``.
@@ -130,43 +125,6 @@ class DataModel:
             Number of bootstrap resamples to perform. It defines
             the number of resampling in error estimation.
         """
-        assert isinstance(
-            dataset, pd.DataFrame
-        ), "Input dataset must be a pandas DataFrame"
-
-        if z_gal_string not in dataset.columns:
-            errMsg = f"z_gal_string='{z_gal_string}' "
-            errMsg += "not found in dataset columns."
-            raise KeyError(errMsg)
-
-        if "c" in bands or "s" in bands:
-            raise ValueError("Band keys cannot equal 'c' or 's'.")
-
-        if len(bands) < 2:
-            raise ValueError("At least two photometric bands are required.")
-
-        if z_gal_string in bands:
-            errMsg = f"z_gal_string='{z_gal_string}' conflicts "
-            errMsg += f"with a band name in {bands}."
-            raise ValueError(errMsg)
-
-        if "redshift" in dataset.columns and z_gal_string != "redshift":
-            errMsg = "Dataset already contains a 'redshift' column. "
-            errMsg += "Please rename it or set z_gal_string='redshift'."
-            raise ValueError(errMsg)
-
-        needed_columns = [z_gal_string] + bands
-        self.dataset = dataset[needed_columns].copy()
-        for band in bands:
-            self.dataset[band] = self.dataset[band].replace(missing_data, np.nan)
-        self.dataset = self.dataset.rename(columns={z_gal_string: "redshift"})
-        self.dataset["redshift"] = self.dataset["redshift"].replace(
-            missing_data, np.nan
-        )
-
-        self.bands = bands
-        self.colors = list(combinations(self.bands, 2))
-
         self.z_lim = set_input_variable_precision(z_lim)
 
         for z_l in self.z_lim:
@@ -208,6 +166,11 @@ class DataModel:
         self.additional_rules = additional_rules
 
         self.step = step
+        if alpha < 0 or alpha > 1:
+            raise ValueError(
+                f"alpha must range between 0 and 1. The current value is {alpha}."
+            )
+        self.alpha = alpha
 
         if threshold_buffer > thresholded_quantity_min:
             raise ValueError(
@@ -254,19 +217,11 @@ class DataModel:
                     )
                     raise TypeError(errMsg)
 
-                if property_name not in self.dataset.columns:
-                    errMsg = f"The property '{property_name}' "
-                    errMsg += f"in additional_rules is not in the dataset."
-                    raise KeyError(errMsg)
-
                 valid_operators = [">", "<", ">=", "<=", "==", "!="]
                 if operator not in valid_operators:
                     errMsg = f"Rule {i}: operator '{operator}' is not supported. "
                     errMsg += f"Must be one of {valid_operators}"
                     raise ValueError(errMsg)
-
-        # Create the target mask
-        self.target_mask = self.get_target_mask(self.dataset, self.z_lim)
 
     def get_target_mask(self, dataset, z_lim):
         """
@@ -311,7 +266,13 @@ class DataModel:
             # Additional rules
             if self.additional_rules is None:
                 continue
+
             for property_name, operator, threshold in self.additional_rules:
+
+                if property_name not in dataset.columns:
+                    errMsg = f"The property '{property_name}' "
+                    errMsg += f"in additional_rules is not in the dataset."
+                    raise KeyError(errMsg)
 
                 data = dataset[property_name]
 

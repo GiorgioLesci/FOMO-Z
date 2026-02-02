@@ -6,24 +6,24 @@ This module provides functions for data visualization.
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
-from typing import Union, List, Tuple, Optional
 from itertools import combinations
+from typing import List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
-import numpy as np
 import numexpr as ne
+import numpy as np
 from scipy.interpolate import BSpline
 
+from .calibrate_linear import CalibrateLinear
+from .select_object import SelectObject
 from .tools import (
+    check_ax_limits,
+    check_plot_type,
     compute_metrics,
     normalize_plot_style,
     plot_distribution_contours,
     plot_distribution_scatter,
-    check_plot_type,
-    check_ax_limits,
 )
-from .calibrate_linear import CalibrateLinear
-from .select_object import SelectObject
 
 
 class PlotCalibration:

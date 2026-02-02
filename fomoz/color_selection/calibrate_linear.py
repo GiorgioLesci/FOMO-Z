@@ -12,16 +12,18 @@ import multiprocessing as mp
 import os
 import pickle
 
+import numexpr as ne
 import numpy as np
+import pandas as pd
 import yaml
 from tqdm import tqdm
-import pandas as pd
-import numexpr as ne
 
+from .data_model import DataModel
+from .dataset import Dataset
 from .tools import (
-    Measure,
-    combine_optimal_cuts,
+    MeasureLinear,
     build_nested_dict,
+    combine_optimal_cuts,
     float_representer,
     inline_list_representer,
     interpolate_parameters,
@@ -40,7 +42,7 @@ yaml.add_representer(list, inline_list_representer, Dumper=yaml.SafeDumper)
 class CalibrateLinear:
     """Calibrate linear color selections."""
 
-    def __init__(self, data_model):
+    def __init__(self, dataset: Dataset, data_model: DataModel):
         r"""
         Class calibrating optimal linear color selections.
 
@@ -86,10 +88,15 @@ class CalibrateLinear:
         Single color conditions having failure rate equal to 1 or completeness equal
         to 0 are always excluded.
 
+        Parameters
+        ----------
+        dataset : Dataset
+            A `Dataset` object containing the dataset and band information.
+        data_model : DataModel
+            A `DataModel` object containing target selections (e.g. redshift thresholds).
+
         Attributes
         ----------
-        dm : DataModel
-            `DataModel` object.
         dict : dict
             Container for storing results based on linear color cuts.
         P : numpy.array
@@ -107,13 +114,11 @@ class CalibrateLinear:
         attained_threshold : np.array
             Single-cut threshold attained in the optimization process.
             Each element corresponds to a limiting redshift value.
-
-        Parameters
-        ----------
-        data_model : DataModel
-            A `DataModel` object containing the dataset, band information,
-            redshift thresholds, and precomputed cut metrics.
         """
+        self.dataset = dataset.dataset
+        self.bands = dataset.bands
+        self.colors = dataset.colors
+
         self.dm = data_model
 
         self.dict = {}
@@ -125,6 +130,9 @@ class CalibrateLinear:
         self.P_std = np.full(len(self.dm.z_lim), np.nan)
         self.F_std = np.full(len(self.dm.z_lim), np.nan)
         self.attained_threshold = np.zeros(len(self.dm.z_lim))
+
+        # Create the target mask
+        self.target_mask = self.dm.get_target_mask(self.dataset, self.dm.z_lim)
 
     def _process_for_one_z(self, args):
         r"""
@@ -160,7 +168,7 @@ class CalibrateLinear:
         threshold_tot_min = self.dm.thresholded_quantity_min[i_z]
 
         # Pre-compute color cut performance
-        measure = Measure(self.dm)
+        measure = MeasureLinear(self.dataset, self.colors, self.dm)
         measure.process(z_l, cpu_number=cpu_number)
 
         # Get the correct dictionary
@@ -329,7 +337,7 @@ class CalibrateLinear:
             combine_optimal_cuts(
                 self.dm.z_lim,
                 self.color_cache,
-                self.dm.target_mask,
+                self.target_mask,
                 {z_l: nested},
                 C_tot_new,
                 P_tot_new,
@@ -388,13 +396,13 @@ class CalibrateLinear:
         for i in tqdm(range(self.dm.n_bootstraps), desc="Deriving bootstrap errors"):
 
             indices = np.random.choice(
-                len(self.dm.dataset), size=len(self.dm.dataset), replace=True
+                len(self.dataset), size=len(self.dataset), replace=True
             )
-            bt_sample = self.dm.dataset.iloc[indices]
+            bt_sample = self.dataset.iloc[indices]
 
             # Pre-compute colors
             color_cache = {}
-            for mag1, mag2 in self.dm.colors:
+            for mag1, mag2 in self.colors:
                 color_cache[(mag1, mag2)] = bt_sample[mag1].values.astype(
                     np.float32
                 ) - bt_sample[mag2].values.astype(np.float32)
@@ -476,12 +484,12 @@ class CalibrateLinear:
         print("\nRunning the linear color cut calibration...")
 
         # Pre-compute colors
-        self.redshift = self.dm.dataset["redshift"].values.astype(np.float32)
+        self.redshift = self.dataset["redshift"].values.astype(np.float32)
         self.color_cache = {}
-        for mag1, mag2 in self.dm.colors:
-            self.color_cache[(mag1, mag2)] = self.dm.dataset[mag1].values.astype(
+        for mag1, mag2 in self.colors:
+            self.color_cache[(mag1, mag2)] = self.dataset[mag1].values.astype(
                 np.float32
-            ) - self.dm.dataset[mag2].values.astype(np.float32)
+            ) - self.dataset[mag2].values.astype(np.float32)
 
         # Optimized selection
         results = [
@@ -497,7 +505,7 @@ class CalibrateLinear:
         combine_optimal_cuts(
             self.dm.z_lim,
             self.color_cache,
-            self.dm.target_mask,
+            self.target_mask,
             self.dict,
             self.C,
             self.P,
@@ -513,8 +521,8 @@ class CalibrateLinear:
         # Restructure self.dict and interpolate the color cut parameters
         restructure_dict(
             self.dict,
-            self.dm.bands,
-            self.dm.colors,
+            self.bands,
+            self.colors,
             self.dm.z_lim,
             self.dm.thresholded_quantity,
             self.dm.thresholded_quantity_min,
@@ -656,10 +664,10 @@ class CalibrateLinear:
 
         z_l = self.dm.z_lim[zl_index]
         mags = {
-            band: self.dm.dataset[band].to_numpy()
+            band: self.dataset[band].to_numpy()
             for band in self.dict["metadata"]["bands"]
         }
-        mask = np.full(len(self.dm.dataset), False)
+        mask = np.full(len(self.dataset), False)
         local_dict = dict(mags)
 
         for key in color_condition:

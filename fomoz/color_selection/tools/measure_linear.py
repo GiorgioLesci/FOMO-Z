@@ -13,10 +13,9 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from .variable_handler import set_input_variable_precision
-from .statistics import compute_for_cross, compute_for_simple
 from .color_domain import c_domain, c_domain_given_s
-
+from .statistics import compute_for_cross, compute_for_simple
+from .variable_handler import set_input_variable_precision
 
 # Globals visible to workers
 GLOBAL_color1 = None
@@ -75,10 +74,10 @@ def compute_for_cross_worker(args):
     return compute_for_cross((s, c, GLOBAL_color1, GLOBAL_color2, GLOBAL_shared_mask))
 
 
-class Measure:
+class MeasureLinear:
     """Measure the metrics of color conditions."""
 
-    def __init__(self, data_model):
+    def __init__(self, dataset: pd.DataFrame, colors, data_model):
         """
         Measure the metrics of color conditions.
 
@@ -93,12 +92,17 @@ class Measure:
 
         Parameters
         ----------
+        dataset : pandas.DataFrame
+            Dataframe containing the dataset.
+        colors : list
+            List of colors.
         data_model : DataModel
-            A `DataModel` object containing the dataset, band information,
-            redshift thresholds, and precomputed cut metrics.
+            A `DataModel` object containing target selections (e.g. redshift thresholds).
         """
         self.dict_all = {}
         self.dm = data_model
+        self.dataset = dataset
+        self.colors = colors
 
     def _apply_cuts(self, z_lim, mag1, mag2, cross_colors=[], cpu_number=None):
         """
@@ -140,7 +144,7 @@ class Measure:
         N_cpu = max(1, N_cpu)  # Ensure at least 1 process
 
         # Precompute base arrays
-        color1 = self.dm.dataset[mag1].values.astype(np.float32) - self.dm.dataset[
+        color1 = self.dataset[mag1].values.astype(np.float32) - self.dataset[
             mag2
         ].values.astype(np.float32)
 
@@ -155,9 +159,9 @@ class Measure:
         cross_shared_arrays = {}
         if cross_colors:
             for mag3, mag4 in cross_colors:
-                color2 = self.dm.dataset[mag3].values.astype(
-                    np.float32
-                ) - self.dm.dataset[mag4].values.astype(np.float32)
+                color2 = self.dataset[mag3].values.astype(np.float32) - self.dataset[
+                    mag4
+                ].values.astype(np.float32)
                 cross_color_arrays[(mag3, mag4)] = color2
                 cross_shared_arrays[(mag3, mag4)] = mp.Array("f", color2)
 
@@ -165,8 +169,7 @@ class Measure:
         for z_l in z_lim:
 
             idx = np.where(self.dm.z_lim == z_l)[0][0]
-            target_mask = self.dm.target_mask[idx]
-            shared_target_mask = mp.Array("b", [bool(x) for x in target_mask])
+            shared_target_mask = mp.Array("b", [bool(x) for x in self.target_mask])
 
             if z_l not in self.dict_all:
                 self.dict_all[z_l] = {}
@@ -353,11 +356,13 @@ class Measure:
         if z_lim not in self.dm.z_lim:
             raise ValueError("z_lim must be one of the elements of DataModel's z_lim")
 
-        for i in range(len(self.dm.colors)):
+        self.target_mask = self.dm.get_target_mask(self.dataset, [z_lim])[0]
+
+        for i in range(len(self.colors)):
             self._apply_cuts(
                 [z_lim],
-                self.dm.colors[i][0],
-                self.dm.colors[i][1],
-                cross_colors=self.dm.colors[i + 1 : len(self.dm.colors)],
+                self.colors[i][0],
+                self.colors[i][1],
+                cross_colors=self.colors[i + 1 : len(self.colors)],
                 cpu_number=cpu_number,
             )
