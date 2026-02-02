@@ -18,8 +18,8 @@ import pandas as pd
 import yaml
 from tqdm import tqdm
 
-from .data_model import DataModel
 from .dataset import Dataset
+from .target_definition import TargetDefinition
 from .tools import (
     MeasureLinear,
     build_nested_dict,
@@ -42,19 +42,19 @@ yaml.add_representer(list, inline_list_representer, Dumper=yaml.SafeDumper)
 class CalibrateLinear:
     """Calibrate linear color selections."""
 
-    def __init__(self, dataset: Dataset, data_model: DataModel):
+    def __init__(self, dataset: Dataset, target_definition: TargetDefinition):
         r"""
         Class calibrating optimal linear color selections.
 
         This class provides structures for ranking, aggregating, and optimizing color
         cuts. The maximized quantity (either completeness or purity) is defined by the
-        `DataModel` instance given in input to this constructor.
+        `TargetDefinition` instance given in input to this constructor.
         The method implemented here incrementally relaxes the single color cut purity (completeness)
         threshold in order to identify a set of cuts that maximize total completeness
         (purity) while still satisfying the global threshold. The algorithm
         proceeds iteratively, starting from a strict initial threshold and reducing
-        it by `DataModel.step` until the total purity (or completeness) remains above
-        `DataModel.thresholded_quantity_min`.
+        it by `TargetDefinition.step` until the total purity (or completeness) remains above
+        `TargetDefinition.thresholded_quantity_min`.
         The starting threshold corresponds to the maximum
         purity (or completeness) attained across all single color conditions.
         Also bootstrap errors on the metrics are derived.
@@ -63,8 +63,8 @@ class CalibrateLinear:
         -----------
         For each redshift value, this method searches for the set of
         cuts that ($\mathcal{P}_{\rm iter}^{\rm ini}$: initial threshold,
-        $\delta\mathcal{P}_{\rm iter}$: `DataModel.step`, $z_{\rm l}$: `z_l`,
-        $\mathcal{P}_{\rm min}$: `DataModel.thresholded_quantity_min`):
+        $\delta\mathcal{P}_{\rm iter}$: `TargetDefinition.step`, $z_{\rm l}$: `z_l`,
+        $\mathcal{P}_{\rm min}$: `TargetDefinition.thresholded_quantity_min`):
         - Update $\mathcal{P}_{\rm iter}^k = \mathcal{P}_{\rm iter}^{\rm ini} -
           k\,\delta\mathcal{P}_{\rm iter}$, where $k$ is the iteration index,
           starting from 0.
@@ -92,8 +92,8 @@ class CalibrateLinear:
         ----------
         dataset : Dataset
             A `Dataset` object containing the dataset and band information.
-        data_model : DataModel
-            A `DataModel` object containing target selections (e.g. redshift thresholds).
+        target_definition : TargetDefinition
+            A `TargetDefinition` object containing target selections (e.g. redshift thresholds).
 
         Attributes
         ----------
@@ -119,20 +119,20 @@ class CalibrateLinear:
         self.bands = dataset.bands
         self.colors = dataset.colors
 
-        self.dm = data_model
+        self.td = target_definition
 
         self.dict = {}
         self.dict_steps = {}
-        self.P = np.zeros(len(self.dm.z_lim))
-        self.C = np.zeros(len(self.dm.z_lim))
-        self.F = np.zeros(len(self.dm.z_lim))
-        self.C_std = np.full(len(self.dm.z_lim), np.nan)
-        self.P_std = np.full(len(self.dm.z_lim), np.nan)
-        self.F_std = np.full(len(self.dm.z_lim), np.nan)
-        self.attained_threshold = np.zeros(len(self.dm.z_lim))
+        self.P = np.zeros(len(self.td.z_lim))
+        self.C = np.zeros(len(self.td.z_lim))
+        self.F = np.zeros(len(self.td.z_lim))
+        self.C_std = np.full(len(self.td.z_lim), np.nan)
+        self.P_std = np.full(len(self.td.z_lim), np.nan)
+        self.F_std = np.full(len(self.td.z_lim), np.nan)
+        self.attained_threshold = np.zeros(len(self.td.z_lim))
 
         # Create the target mask
-        self.target_mask = self.dm.get_target_mask(self.dataset, self.dm.z_lim)
+        self.target_mask = self.td.get_target_mask(self.dataset, self.td.z_lim)
 
     def _process_for_one_z(self, args):
         r"""
@@ -162,13 +162,13 @@ class CalibrateLinear:
              for the given redshift threshold.
         """
         i_z, store_iterations, cpu_number = args
-        z_l = self.dm.z_lim[i_z]
+        z_l = self.td.z_lim[i_z]
 
         # Minimum required total purity or completeness for the optimized set of cuts
-        threshold_tot_min = self.dm.thresholded_quantity_min[i_z]
+        threshold_tot_min = self.td.thresholded_quantity_min[i_z]
 
         # Pre-compute color cut performance
-        measure = MeasureLinear(self.dataset, self.colors, self.dm)
+        measure = MeasureLinear(self.dataset, self.colors, self.td)
         measure.process(z_l, cpu_number=cpu_number)
 
         # Get the correct dictionary
@@ -184,7 +184,7 @@ class CalibrateLinear:
             for comp_pair, conditions in comp_dict.items():
                 for cond_index, cond_data in conditions.items():
                     candidate_max = cond_data.get(
-                        self.dm.thresholded_quantity,
+                        self.td.thresholded_quantity,
                         [],
                     )
                     for i, candidate in enumerate(candidate_max):
@@ -198,7 +198,7 @@ class CalibrateLinear:
             )
 
         # Start the iterative process
-        if self.dm.thresholded_quantity == "purity":
+        if self.td.thresholded_quantity == "purity":
             maximized_quantity = "completeness"
         else:
             maximized_quantity = "purity"
@@ -207,17 +207,17 @@ class CalibrateLinear:
         best_by_key = {}
         dict_steps = {}
 
-        C_tot = np.zeros_like(self.dm.z_lim, dtype=np.float32)
-        P_tot = np.zeros_like(self.dm.z_lim, dtype=np.float32)
-        F_tot = np.zeros_like(self.dm.z_lim, dtype=np.float32)
+        C_tot = np.zeros_like(self.td.z_lim, dtype=np.float32)
+        P_tot = np.zeros_like(self.td.z_lim, dtype=np.float32)
+        F_tot = np.zeros_like(self.td.z_lim, dtype=np.float32)
 
         iteration = 0
         while current_thresh > 0:
 
-            if current_thresh <= self.dm.buffered_threshold:
+            if current_thresh <= self.td.buffered_threshold:
                 errMsg = "The current threshold in the iterative process is lower"
                 errMsg += " than or equal to the buffered threshold set in the"
-                errMsg += " DataModel class. Increase threshold_buffer in DataModel."
+                errMsg += " TargetDefinition class. Increase threshold_buffer in TargetDefinition."
                 raise ValueError(errMsg)
 
             new_best_by_key = {}
@@ -245,7 +245,7 @@ class CalibrateLinear:
 
                                 key = (base_pair, comp_pair, cond_index)
 
-                                if self.dm.thresholded_quantity == "purity":
+                                if self.td.thresholded_quantity == "purity":
                                     threshold_condition = purity >= current_thresh
                                     maximization_condition = (
                                         compl
@@ -294,7 +294,7 @@ class CalibrateLinear:
 
                                 key = (base_pair, comp_pair, cond_index)
 
-                                if self.dm.thresholded_quantity == "purity":
+                                if self.td.thresholded_quantity == "purity":
                                     threshold_condition = purity >= current_thresh
                                     maximization_condition = (
                                         compl
@@ -328,14 +328,14 @@ class CalibrateLinear:
                                     ):
                                         new_best_by_key[key] = cut
 
-            C_tot_new = np.zeros_like(self.dm.z_lim, dtype=np.float32)
-            P_tot_new = np.zeros_like(self.dm.z_lim, dtype=np.float32)
-            F_tot_new = np.zeros_like(self.dm.z_lim, dtype=np.float32)
+            C_tot_new = np.zeros_like(self.td.z_lim, dtype=np.float32)
+            P_tot_new = np.zeros_like(self.td.z_lim, dtype=np.float32)
+            F_tot_new = np.zeros_like(self.td.z_lim, dtype=np.float32)
 
             nested = build_nested_dict(new_best_by_key)
 
             combine_optimal_cuts(
-                self.dm.z_lim,
+                self.td.z_lim,
                 self.color_cache,
                 self.target_mask,
                 {z_l: nested},
@@ -349,7 +349,7 @@ class CalibrateLinear:
                 err_msg += f" the failure rate is 1 at z_l={z_l}."
                 raise ValueError(err_msg)
 
-            if self.dm.thresholded_quantity == "purity":
+            if self.td.thresholded_quantity == "purity":
                 threshold_condition = P_tot_new[i_z] >= threshold_tot_min
             else:
                 threshold_condition = C_tot_new[i_z] >= threshold_tot_min
@@ -359,7 +359,7 @@ class CalibrateLinear:
                 C_tot = C_tot_new
                 P_tot = P_tot_new
                 F_tot = F_tot_new
-                current_thresh -= self.dm.step
+                current_thresh -= self.td.step
 
                 if store_iterations:
                     dict_steps[iteration] = nested
@@ -389,11 +389,11 @@ class CalibrateLinear:
         if np.sum(self.C) == 0.0:
             raise ValueError("No calibration is available! Run process() first.")
 
-        C_stats = np.zeros((2, len(self.dm.z_lim)))  # [sum, sum_of_squares]
-        P_stats = np.zeros((2, len(self.dm.z_lim)))
-        F_stats = np.zeros((2, len(self.dm.z_lim)))
+        C_stats = np.zeros((2, len(self.td.z_lim)))  # [sum, sum_of_squares]
+        P_stats = np.zeros((2, len(self.td.z_lim)))
+        F_stats = np.zeros((2, len(self.td.z_lim)))
 
-        for i in tqdm(range(self.dm.n_bootstraps), desc="Deriving bootstrap errors"):
+        for i in tqdm(range(self.td.n_bootstraps), desc="Deriving bootstrap errors"):
 
             indices = np.random.choice(
                 len(self.dataset), size=len(self.dataset), replace=True
@@ -408,15 +408,15 @@ class CalibrateLinear:
                 ) - bt_sample[mag2].values.astype(np.float32)
 
             # Get the target mask
-            target_mask = self.dm.get_target_mask(bt_sample, self.dm.z_lim)
+            target_mask = self.td.get_target_mask(bt_sample, self.td.z_lim)
 
             # Compute the metrics
-            C_temp = np.zeros(len(self.dm.z_lim))
-            P_temp = np.zeros(len(self.dm.z_lim))
-            F_temp = np.zeros(len(self.dm.z_lim))
+            C_temp = np.zeros(len(self.td.z_lim))
+            P_temp = np.zeros(len(self.td.z_lim))
+            F_temp = np.zeros(len(self.td.z_lim))
 
             combine_optimal_cuts(
-                self.dm.z_lim,
+                self.td.z_lim,
                 color_cache,
                 target_mask,
                 self.dict,
@@ -434,12 +434,12 @@ class CalibrateLinear:
 
             del bt_sample, C_temp, P_temp, F_temp
 
-        C_mean = C_stats[0] / self.dm.n_bootstraps
-        P_mean = P_stats[0] / self.dm.n_bootstraps
-        F_mean = F_stats[0] / self.dm.n_bootstraps
-        self.C_std = np.sqrt((C_stats[1] / self.dm.n_bootstraps) - C_mean**2)
-        self.P_std = np.sqrt((P_stats[1] / self.dm.n_bootstraps) - P_mean**2)
-        self.F_std = np.sqrt((F_stats[1] / self.dm.n_bootstraps) - F_mean**2)
+        C_mean = C_stats[0] / self.td.n_bootstraps
+        P_mean = P_stats[0] / self.td.n_bootstraps
+        F_mean = F_stats[0] / self.td.n_bootstraps
+        self.C_std = np.sqrt((C_stats[1] / self.td.n_bootstraps) - C_mean**2)
+        self.P_std = np.sqrt((P_stats[1] / self.td.n_bootstraps) - P_mean**2)
+        self.F_std = np.sqrt((F_stats[1] / self.td.n_bootstraps) - F_mean**2)
 
     def process(
         self,
@@ -450,7 +450,7 @@ class CalibrateLinear:
         Perform the iterative search for optimal linear color conditions.
 
         Here, either completeness or purity are maximized, depending on what was
-        set in the `DataModel` instance given in input to the constructor of this class.
+        set in the `TargetDefinition` instance given in input to the constructor of this class.
 
         Parameters
         ----------
@@ -494,7 +494,7 @@ class CalibrateLinear:
         # Optimized selection
         results = [
             self._process_for_one_z((i_z, store_iterations, cpu_number))
-            for i_z in tqdm(range(len(self.dm.z_lim)), desc="Looping over z_lim points")
+            for i_z in tqdm(range(len(self.td.z_lim)), desc="Looping over z_lim points")
         ]
 
         for result in results:
@@ -503,7 +503,7 @@ class CalibrateLinear:
             self.dict_steps[z_l] = steps
 
         combine_optimal_cuts(
-            self.dm.z_lim,
+            self.td.z_lim,
             self.color_cache,
             self.target_mask,
             self.dict,
@@ -515,7 +515,7 @@ class CalibrateLinear:
         del self.redshift, self.color_cache
 
         # Compute bootstrap errors
-        if self.dm.do_bootstrap:
+        if self.td.do_bootstrap:
             self._estimate_errors()
 
         # Restructure self.dict and interpolate the color cut parameters
@@ -523,12 +523,12 @@ class CalibrateLinear:
             self.dict,
             self.bands,
             self.colors,
-            self.dm.z_lim,
-            self.dm.thresholded_quantity,
-            self.dm.thresholded_quantity_min,
-            is_zlim_lower=self.dm.is_zlim_lower,
+            self.td.z_lim,
+            self.td.thresholded_quantity,
+            self.td.thresholded_quantity_min,
+            is_zlim_lower=self.td.is_zlim_lower,
         )
-        interpolate_parameters(self.dict, k=self.dm.k)
+        interpolate_parameters(self.dict, k=self.td.k)
         print("Linear cut calibration complete.")
 
     def write(
@@ -596,7 +596,7 @@ class CalibrateLinear:
         if write_also_metrics:
 
             metrics_data = {
-                "z_lim": self.dm.z_lim,
+                "z_lim": self.td.z_lim,
                 "C": self.C,
                 "P": self.P,
                 "F": self.F,
@@ -639,7 +639,7 @@ class CalibrateLinear:
         Parameters
         ------
         zl_index : int
-            Index of the redshift threshold in DataModel.z_lim.
+            Index of the redshift threshold in TargetDefinition.z_lim.
         color_condition : str, optional
             It can be either "all" (all optimal color conditions) or one of
             the optimal color conditions. The latter can be obtained from `self.get_keys()`.
@@ -662,7 +662,7 @@ class CalibrateLinear:
                 )
             color_condition = [color_condition]
 
-        z_l = self.dm.z_lim[zl_index]
+        z_l = self.td.z_lim[zl_index]
         mags = {
             band: self.dataset[band].to_numpy()
             for band in self.dict["metadata"]["bands"]

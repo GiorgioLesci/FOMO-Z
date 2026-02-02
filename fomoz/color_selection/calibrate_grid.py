@@ -17,15 +17,15 @@ import yaml
 from scipy.stats import beta
 from tqdm import tqdm
 
-from .data_model import DataModel
 from .dataset import Dataset
+from .target_definition import TargetDefinition
 from .tools import c_domain, color_bin_edges, compute_metrics, prob_target
 
 
 class CalibrateGrid:
     """Calibrate grid color selections."""
 
-    def __init__(self, dataset: Dataset, data_model: DataModel):
+    def __init__(self, dataset: Dataset, target_definition: TargetDefinition):
         r"""
         Class calibrating optimal grid color selections.
 
@@ -35,8 +35,8 @@ class CalibrateGrid:
         ----------
         dataset : Dataset
             A `Dataset` object containing the dataset and band information.
-        data_model : DataModel
-            A `DataModel` object containing target selections (e.g. redshift thresholds).
+        target_definition : TargetDefinition
+            A `TargetDefinition` object containing target selections (e.g. redshift thresholds).
 
         Attributes
         ----------
@@ -60,22 +60,22 @@ class CalibrateGrid:
         self.colors = dataset.colors
         self.color_spaces = dataset.color_spaces
 
-        self.dm = data_model
+        self.td = target_definition
 
         self.dict_steps = {}
-        self.P = np.zeros(len(self.dm.z_lim))
-        self.C = np.zeros(len(self.dm.z_lim))
-        self.F = np.zeros(len(self.dm.z_lim))
-        self.C_std = np.full(len(self.dm.z_lim), np.nan)
-        self.P_std = np.full(len(self.dm.z_lim), np.nan)
-        self.F_std = np.full(len(self.dm.z_lim), np.nan)
+        self.P = np.zeros(len(self.td.z_lim))
+        self.C = np.zeros(len(self.td.z_lim))
+        self.F = np.zeros(len(self.td.z_lim))
+        self.C_std = np.full(len(self.td.z_lim), np.nan)
+        self.P_std = np.full(len(self.td.z_lim), np.nan)
+        self.F_std = np.full(len(self.td.z_lim), np.nan)
 
         self.dict = {}
         self._update_dict_metadata(self.dict, self.dataset)
         self._update_dict(self.dict, self.dataset)
 
         # Create the target mask
-        self.target_mask = self.dm.get_target_mask(self.dataset, self.dm.z_lim)
+        self.target_mask = self.td.get_target_mask(self.dataset, self.td.z_lim)
 
     def _update_dict_metadata(self, dictionary, dataset):
         r"""
@@ -90,12 +90,12 @@ class CalibrateGrid:
         """
         dictionary["metadata"] = {}
         dictionary["metadata"]["bands"] = self.bands
-        dictionary["metadata"]["z_l"] = [float(z) for z in self.dm.z_lim]
-        dictionary["metadata"]["z_l_is_lower_limit"] = self.dm.is_zlim_lower
-        dictionary["metadata"][f"{self.dm.thresholded_quantity}_min"] = [
-            float(T) for T in self.dm.thresholded_quantity_min
+        dictionary["metadata"]["z_l"] = [float(z) for z in self.td.z_lim]
+        dictionary["metadata"]["z_l_is_lower_limit"] = self.td.is_zlim_lower
+        dictionary["metadata"][f"{self.td.thresholded_quantity}_min"] = [
+            float(T) for T in self.td.thresholded_quantity_min
         ]
-        dictionary["metadata"]["grid_precision"] = self.dm.grid_precision
+        dictionary["metadata"]["grid_precision"] = self.td.grid_precision
 
         dictionary["metadata"]["color_limits"] = {}
         for cs in self.color_spaces:
@@ -134,7 +134,7 @@ class CalibrateGrid:
             # keep the color-color grids fixed to the initial ones,
             # i.e. those in self.dict
             color_min, color_max = self.dict["metadata"]["color_limits"][color]
-            value_bins = color_bin_edges(color_min, color_max, self.dm.grid_precision)
+            value_bins = color_bin_edges(color_min, color_max, self.td.grid_precision)
 
             index = np.digitize(value, value_bins) - 1
             nbins = len(value_bins) - 1
@@ -215,16 +215,16 @@ class CalibrateGrid:
             P = TP / (TP + FP) if TP + FP > 0 else 0.0
 
             # Check convergence
-            if self.dm.thresholded_quantity == "purity":
+            if self.td.thresholded_quantity == "purity":
                 thresholded_quantity = P
-            elif self.dm.thresholded_quantity == "completeness":
+            elif self.td.thresholded_quantity == "completeness":
                 thresholded_quantity = C
             else:
                 raise ValueError(
-                    f"Not allowed value for thresholded_quantity ({self.dm.thresholded_quantity})."
+                    f"Not allowed value for thresholded_quantity ({self.td.thresholded_quantity})."
                 )
 
-            if thresholded_quantity >= self.dm.thresholded_quantity_min[i_z]:
+            if thresholded_quantity >= self.td.thresholded_quantity_min[i_z]:
                 self.P[i_z] = P
                 self.C[i_z] = C
                 self.F[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0
@@ -234,11 +234,11 @@ class CalibrateGrid:
                 break
 
             # Increase the bin-level threshold
-            prob_min_bin -= self.dm.step
+            prob_min_bin -= self.td.step
 
         if prob_min_bin <= 0:
             raise ValueError(
-                f"Could not find a calibration for the redshift value {self.dm.z_lim[i_z]}."
+                f"Could not find a calibration for the redshift value {self.td.z_lim[i_z]}."
             )
 
         # Remove not robust bins, namely those with probability to have per-bin purity
@@ -249,7 +249,7 @@ class CalibrateGrid:
         # P(p | n) = [0, 1] is a uniform prior.
         # Our selection criterion is P(p < p_min | k, n) < alpha.
 
-        if self.dm.alpha < 1.0:
+        if self.td.alpha < 1.0:
 
             dict_significant = {}
 
@@ -269,7 +269,7 @@ class CalibrateGrid:
                         # Given the observed data (k successes out of n), compute the posterior
                         # probability that (true purity < prob_min_bin) is smaller than alpha.
                         significant = (
-                            beta.cdf(prob_min_bin, k + 1, n - k + 1) < self.dm.alpha
+                            beta.cdf(prob_min_bin, k + 1, n - k + 1) < self.td.alpha
                         )
                         dict_significant[cs]["mask"][i, j] = significant
 
@@ -304,11 +304,11 @@ class CalibrateGrid:
         if np.sum(self.C) == 0.0:
             raise ValueError("No calibration is available! Run process() first.")
 
-        C_stats = np.zeros((2, len(self.dm.z_lim)))  # [sum, sum_of_squares]
-        P_stats = np.zeros((2, len(self.dm.z_lim)))
-        F_stats = np.zeros((2, len(self.dm.z_lim)))
+        C_stats = np.zeros((2, len(self.td.z_lim)))  # [sum, sum_of_squares]
+        P_stats = np.zeros((2, len(self.td.z_lim)))
+        F_stats = np.zeros((2, len(self.td.z_lim)))
 
-        for i in tqdm(range(self.dm.n_bootstraps), desc="Deriving bootstrap errors"):
+        for i in tqdm(range(self.td.n_bootstraps), desc="Deriving bootstrap errors"):
 
             # Bootstrap sample
             indices = np.random.choice(
@@ -323,16 +323,16 @@ class CalibrateGrid:
             # Set the color-color masks equal to the calibrated ones
             for cs in self.color_spaces:
                 dict_temp[cs]["mask"] = {}
-                for i_z in range(len(self.dm.z_lim)):
+                for i_z in range(len(self.td.z_lim)):
                     dict_temp[cs]["mask"][i_z] = self.dict[cs]["mask"][i_z]
 
             # Compute the metrics
-            C_temp = np.zeros(len(self.dm.z_lim))
-            P_temp = np.zeros(len(self.dm.z_lim))
-            F_temp = np.zeros(len(self.dm.z_lim))
+            C_temp = np.zeros(len(self.td.z_lim))
+            P_temp = np.zeros(len(self.td.z_lim))
+            F_temp = np.zeros(len(self.td.z_lim))
 
-            target_mask = self.dm.get_target_mask(bt_sample, self.dm.z_lim)
-            for i_z in range(len(self.dm.z_lim)):
+            target_mask = self.td.get_target_mask(bt_sample, self.td.z_lim)
+            for i_z in range(len(self.td.z_lim)):
                 mask = self.get_mask(i_z, dictionary=dict_temp)
                 TP, FP, FN, TN = compute_metrics(mask, target_mask[i_z])
                 C_temp[i_z] = TP / (TP + FN) if TP + FN > 0 else 0.0
@@ -348,12 +348,12 @@ class CalibrateGrid:
 
             del bt_sample, C_temp, P_temp, F_temp
 
-        C_mean = C_stats[0] / self.dm.n_bootstraps
-        P_mean = P_stats[0] / self.dm.n_bootstraps
-        F_mean = F_stats[0] / self.dm.n_bootstraps
-        self.C_std = np.sqrt((C_stats[1] / self.dm.n_bootstraps) - C_mean**2)
-        self.P_std = np.sqrt((P_stats[1] / self.dm.n_bootstraps) - P_mean**2)
-        self.F_std = np.sqrt((F_stats[1] / self.dm.n_bootstraps) - F_mean**2)
+        C_mean = C_stats[0] / self.td.n_bootstraps
+        P_mean = P_stats[0] / self.td.n_bootstraps
+        F_mean = F_stats[0] / self.td.n_bootstraps
+        self.C_std = np.sqrt((C_stats[1] / self.td.n_bootstraps) - C_mean**2)
+        self.P_std = np.sqrt((P_stats[1] / self.td.n_bootstraps) - P_mean**2)
+        self.F_std = np.sqrt((F_stats[1] / self.td.n_bootstraps) - F_mean**2)
 
     def process(
         self,
@@ -364,7 +364,7 @@ class CalibrateGrid:
         Perform the iterative search for optimal color selection grids.
 
         Here, either completeness or purity are maximized, depending on what was
-        set in the `DataModel` instance given in input to the constructor of this class.
+        set in the `TargetDefinition` instance given in input to the constructor of this class.
 
         Parameters
         ----------
@@ -399,11 +399,11 @@ class CalibrateGrid:
 
         results = [
             self._process_for_one_z((i_z, store_iterations, cpu_number))
-            for i_z in tqdm(range(len(self.dm.z_lim)), desc="Looping over z_lim points")
+            for i_z in tqdm(range(len(self.td.z_lim)), desc="Looping over z_lim points")
         ]
 
         # Compute bootstrap errors
-        if self.dm.do_bootstrap:
+        if self.td.do_bootstrap:
             self._estimate_errors()
 
         print(f"Converged!")
@@ -435,7 +435,7 @@ class CalibrateGrid:
         Parameters
         ------
         zl_index : int
-            Index of the redshift threshold in DataModel.z_lim.
+            Index of the redshift threshold in TargetDefinition.z_lim.
         color_space : str or tuple, optional
             It can be either "all" (all color-color spaces) or one of
             the available color-color spaces, in the form `((band1, band2), (band3, band4))`.

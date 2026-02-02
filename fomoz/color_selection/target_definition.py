@@ -15,7 +15,7 @@ import pandas as pd
 from .tools import set_input_variable_precision
 
 
-class DataModel:
+class TargetDefinition:
     """Set the target selections for the derivation of color selections."""
 
     def __init__(

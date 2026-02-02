@@ -12,9 +12,9 @@ import pytest
 import yaml
 
 from fomoz.color_selection.calibrate_linear import CalibrateLinear
-from fomoz.color_selection.data_model import DataModel
 from fomoz.color_selection.dataset import Dataset
 from fomoz.color_selection.select_object import SelectObject
+from fomoz.color_selection.target_definition import TargetDefinition
 from fomoz.color_selection.tools import (
     MeasureLinear,
     build_nested_dict,
@@ -61,14 +61,14 @@ def reference_colors(reference_dataset):
     return dataset.colors
 
 
-# Shared fixture for data_model instance
+# Shared fixture for target_definition instance
 @pytest.fixture
-def reference_data_model_instance():
-    """Create a DataModel instance."""
+def reference_target_definition_instance():
+    """Create a TargetDefinition instance."""
     z_lim = [0.5, 0.6]
     thresholded_quantity_min = 0.9
 
-    data_model = DataModel(
+    target_definition = TargetDefinition(
         z_lim,
         thresholded_quantity_min,
         maximized_quantity_min=0.0,
@@ -76,19 +76,19 @@ def reference_data_model_instance():
         k=3,
     )
 
-    return data_model
+    return target_definition
 
 
 # Shared fixture for measure instance
 @pytest.fixture
 def reference_measure_instance(
-    reference_dataset, reference_colors, reference_data_model_instance
+    reference_dataset, reference_colors, reference_target_definition_instance
 ):
     """Create a MeasureLinear instance with reference.csv data for testing."""
     measure = MeasureLinear(
-        reference_dataset, reference_colors, reference_data_model_instance
+        reference_dataset, reference_colors, reference_target_definition_instance
     )
-    for z_l in reference_data_model_instance.z_lim:
+    for z_l in reference_target_definition_instance.z_lim:
         measure.process(z_l, cpu_number=1)
     return measure
 
@@ -96,11 +96,11 @@ def reference_measure_instance(
 # Shared fixture for calibration instance
 @pytest.fixture
 def reference_calibration_linear_instance(
-    reference_dataset_instance, reference_data_model_instance
+    reference_dataset_instance, reference_target_definition_instance
 ):
     """Create an CalibrateLinear instance with reference.csv data for testing."""
     calibration = CalibrateLinear(
-        reference_dataset_instance, reference_data_model_instance
+        reference_dataset_instance, reference_target_definition_instance
     )
 
     return calibration
@@ -316,7 +316,7 @@ class TestMeasureProcess:
         """Test process() method with actual reference data."""
 
         measure = reference_measure_instance
-        z_lim = measure.dm.z_lim
+        z_lim = measure.td.z_lim
 
         # Top-level structure: one dict entry per z_l
         assert len(measure.dict_all) == len(z_lim)
@@ -377,11 +377,11 @@ class TestMeasureProcess:
         z_l = [0.3]  # Single z limit
 
         # Create a new Measure instance with single z limit
-        dm = DataModel(z_l, 0.9, maximized_quantity_min=0.0)
-        measure = MeasureLinear(reference_dataset, reference_colors, dm)
-        measure.process(dm.z_lim[0], cpu_number=1)
+        td = TargetDefinition(z_l, 0.9, maximized_quantity_min=0.0)
+        measure = MeasureLinear(reference_dataset, reference_colors, td)
+        measure.process(td.z_lim[0], cpu_number=1)
 
-        assert measure.dm.z_lim[0] in measure.dict_all
+        assert measure.td.z_lim[0] in measure.dict_all
         assert len(measure.dict_all) == 1
 
 
@@ -401,8 +401,8 @@ class TestCalibrationProcess:
         calibration.process(cpu_number=1)
 
         # Check that C_tot and P_tot arrays are populated correctly
-        assert len(calibration.C) == len(calibration.dm.z_lim)
-        assert len(calibration.P) == len(calibration.dm.z_lim)
+        assert len(calibration.C) == len(calibration.td.z_lim)
+        assert len(calibration.P) == len(calibration.td.z_lim)
 
         # Check against known expected values
         expected_C = [0.9294421, 0.93034951]
@@ -437,7 +437,7 @@ class TestSelectObject:
 
         # "Test" sample and test z_l points
         test_sample = reference_dataset
-        zl_new = np.arange(min(calibration.dm.z_lim), max(calibration.dm.z_lim), 0.01)
+        zl_new = np.arange(min(calibration.td.z_lim), max(calibration.td.z_lim), 0.01)
 
         # Select
         sel = SelectObject()

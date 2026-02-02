@@ -77,7 +77,7 @@ def compute_for_cross_worker(args):
 class MeasureLinear:
     """Measure the metrics of color conditions."""
 
-    def __init__(self, dataset: pd.DataFrame, colors, data_model):
+    def __init__(self, dataset: pd.DataFrame, colors, target_definition):
         """
         Measure the metrics of color conditions.
 
@@ -96,11 +96,11 @@ class MeasureLinear:
             Dataframe containing the dataset.
         colors : list
             List of colors.
-        data_model : DataModel
-            A `DataModel` object containing target selections (e.g. redshift thresholds).
+        target_definition : TargetDefinition
+            A `TargetDefinition` object containing target selections (e.g. redshift thresholds).
         """
         self.dict_all = {}
-        self.dm = data_model
+        self.td = target_definition
         self.dataset = dataset
         self.colors = colors
 
@@ -149,7 +149,7 @@ class MeasureLinear:
         ].values.astype(np.float32)
 
         vmin, vmax = c_domain(color1)
-        n_steps = int((vmax - vmin) / self.dm.c_precision) + 1
+        n_steps = int((vmax - vmin) / self.td.c_precision) + 1
         test_colors = np.linspace(vmin, vmax, n_steps, dtype=np.float32)
 
         # Create shared arrays
@@ -168,7 +168,7 @@ class MeasureLinear:
         # Loop over limiting redshift points
         for z_l in z_lim:
 
-            idx = np.where(self.dm.z_lim == z_l)[0][0]
+            idx = np.where(self.td.z_lim == z_l)[0][0]
             shared_target_mask = mp.Array("b", [bool(x) for x in self.target_mask])
 
             if z_l not in self.dict_all:
@@ -208,16 +208,16 @@ class MeasureLinear:
             failure_up = fp_up / np.maximum(fp_up + tn_up, 1e-12)
             failure_low = fp_low / np.maximum(fp_low + tn_low, 1e-12)
 
-            if self.dm.thresholded_quantity == "purity":
-                mask_threshold_up = purity_up > self.dm.buffered_threshold
-                mask_threshold_low = purity_low > self.dm.buffered_threshold
-                mask_maximized_up = compl_up > self.dm.maximized_quantity_min
-                mask_maximized_low = compl_low > self.dm.maximized_quantity_min
+            if self.td.thresholded_quantity == "purity":
+                mask_threshold_up = purity_up > self.td.buffered_threshold
+                mask_threshold_low = purity_low > self.td.buffered_threshold
+                mask_maximized_up = compl_up > self.td.maximized_quantity_min
+                mask_maximized_low = compl_low > self.td.maximized_quantity_min
             else:
-                mask_threshold_up = compl_up > self.dm.buffered_threshold
-                mask_threshold_low = compl_low > self.dm.buffered_threshold
-                mask_maximized_up = purity_up > self.dm.maximized_quantity_min
-                mask_maximized_low = purity_low > self.dm.maximized_quantity_min
+                mask_threshold_up = compl_up > self.td.buffered_threshold
+                mask_threshold_low = compl_low > self.td.buffered_threshold
+                mask_maximized_up = purity_up > self.td.maximized_quantity_min
+                mask_maximized_low = purity_low > self.td.maximized_quantity_min
 
             mask_up = (
                 (mask_threshold_up)
@@ -257,9 +257,9 @@ class MeasureLinear:
                     color2 = cross_color_arrays[(mag3, mag4)]
 
                     sc_grid = []
-                    for s in self.dm.s_samples:
+                    for s in self.td.s_samples:
                         c_min, c_max = c_domain_given_s(color1, color2, s)
-                        n_c = int((c_max - c_min) / self.dm.c_precision) + 1
+                        n_c = int((c_max - c_min) / self.td.c_precision) + 1
                         c_grid = np.linspace(c_min, c_max, n_c, dtype=np.float32)
 
                         for c in c_grid:
@@ -294,12 +294,12 @@ class MeasureLinear:
                     compl = tp_all / np.maximum(tp_all + fn_all, 1e-12)
                     failure = fp_all / np.maximum(fp_all + tn_all, 1e-12)
 
-                    if self.dm.thresholded_quantity == "purity":
-                        mask_threshold = purity > self.dm.buffered_threshold
-                        mask_maximized = compl > self.dm.maximized_quantity_min
+                    if self.td.thresholded_quantity == "purity":
+                        mask_threshold = purity > self.td.buffered_threshold
+                        mask_maximized = compl > self.td.maximized_quantity_min
                     else:
-                        mask_threshold = compl > self.dm.buffered_threshold
-                        mask_maximized = purity > self.dm.maximized_quantity_min
+                        mask_threshold = compl > self.td.buffered_threshold
+                        mask_maximized = purity > self.td.maximized_quantity_min
 
                     mask_per_condition = (
                         (mask_threshold)
@@ -353,10 +353,10 @@ class MeasureLinear:
             This method updates the internal class attribute `self.dict_all`
             and does not return any value.
         """
-        if z_lim not in self.dm.z_lim:
-            raise ValueError("z_lim must be one of the elements of DataModel's z_lim")
+        if z_lim not in self.td.z_lim:
+            raise ValueError("z_lim must be one of the elements of TargetDefinition's z_lim")
 
-        self.target_mask = self.dm.get_target_mask(self.dataset, [z_lim])[0]
+        self.target_mask = self.td.get_target_mask(self.dataset, [z_lim])[0]
 
         for i in range(len(self.colors)):
             self._apply_cuts(
