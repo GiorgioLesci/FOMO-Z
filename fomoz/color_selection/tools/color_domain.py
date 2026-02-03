@@ -9,7 +9,7 @@ This module provides auxiliary functions to assess optimal color domains.
 import numpy as np
 
 
-def c_domain(color, q_low=0.01, q_high=0.99):
+def c_domain(color, q_low=0.001, q_high=0.999):
     """
     Get the domain of `c`.
 
@@ -28,7 +28,7 @@ def c_domain(color, q_low=0.01, q_high=0.99):
         Input color array (may contain NaNs).
     q_low, q_high : float
         Lower and upper quantiles for robust domain estimation
-        (0 < q_low < q_high < 1). Default: [0.01, 0.99].
+        (0 < q_low < q_high < 1). Default: [0.001, 0.999].
 
     Returns
     -------
@@ -38,7 +38,7 @@ def c_domain(color, q_low=0.01, q_high=0.99):
     return np.quantile(color[np.isfinite(color)], [q_low, q_high])
 
 
-def c_domain_given_s(color1, color2, s, q_low=0.01, q_high=0.99):
+def c_domain_given_s(color1, color2, s, q_low=0.001, q_high=0.999):
     """
     Get the domain of `c`.
 
@@ -71,7 +71,7 @@ def c_domain_given_s(color1, color2, s, q_low=0.01, q_high=0.99):
         Positive slope magnitude used to evaluate both +s and -s conditions.
     q_low, q_high : float
         Lower and upper quantiles for robust domain estimation
-        (0 < q_low < q_high < 1). Default: [0.01, 0.99].
+        (0 < q_low < q_high < 1). Default: [0.001, 0.999].
 
     Returns
     -------

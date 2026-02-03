@@ -418,9 +418,9 @@ class TestCalibrationProcess:
         assert len(calibration.P) == len(calibration.td.z_lim)
 
         # Check against known expected values
-        expected_C = [0.9294421, 0.93034951]
-        expected_P = [0.90339485, 0.90398241]
-        expected_F = [0.43983402, 0.31364725]
+        expected_C = [0.93014534, 0.9308524]
+        expected_P = [0.90407838, 0.90270666]
+        expected_F = [0.43672199, 0.31843575]
 
         assert np.allclose(
             calibration.C, expected_C
@@ -459,7 +459,7 @@ class TestSelectObject:
         mask = sel.mask
 
         # Check the number of selected objects
-        expected_N = [4389, 4353, 4327, 4302, 4277, 4246, 4213, 4186, 4155, 4122, 4093]
+        expected_N = [4389, 4360, 4336, 4311, 4278, 4243, 4219, 4185, 4153, 4121, 4101]
 
         assert len(expected_N) == len(mask)
 
