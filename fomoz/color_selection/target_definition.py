@@ -33,8 +33,8 @@ class TargetDefinition:
 
         Parameters
         ----------
-        z_lim : array-like
-            Array of redshift limits/thresholds to be used in selection tests.
+        z_lim : float or array-like
+            Float or array of redshift limits/thresholds to be used in selection tests.
             It can represent either lower of higher limit values, depending on
             the value of `is_zlim_lower`.
         is_zlim_lower : bool, default = True
@@ -49,13 +49,13 @@ class TargetDefinition:
             Supported operators: ">", "<", ">=", "<=", "==", "!=".
         """
         self.z_lim = set_input_variable_precision(z_lim)
-
         for z_l in self.z_lim:
             if z_l < 0:
-                raise ValueError("z_lim values cannot be negative")
+                raise ValueError("z_lim values cannot be negative.")
 
+        if not isinstance(is_zlim_lower, bool):
+            raise TypeError("is_zlim_lower must be a boolean (True or False).")
         self.is_zlim_lower = is_zlim_lower
-        self.additional_rules = additional_rules
 
         # Check the format of the additional rules
         if additional_rules is not None:
@@ -89,6 +89,8 @@ class TargetDefinition:
                     errMsg = f"Rule {i}: operator '{operator}' is not supported. "
                     errMsg += f"Must be one of {valid_operators}"
                     raise ValueError(errMsg)
+
+        self.additional_rules = additional_rules
 
     def get_target_mask(self, dataset, z_lim):
         """

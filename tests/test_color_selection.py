@@ -381,7 +381,7 @@ class TestMeasureProcess:
         z_l = [0.3]  # Single z limit
 
         # Create a new Measure instance with single z limit
-        td = TargetDefinition(z_l, 0.9)
+        td = TargetDefinition(z_l)
         measure = MeasureLinear(
             reference_dataset,
             reference_colors,
