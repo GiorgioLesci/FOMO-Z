@@ -171,7 +171,7 @@ class CalibrateGrid:
         dictionary["metadata"][f"{self.thresholded_quantity}_min"] = [
             float(T) for T in self.thresholded_quantity_min
         ]
-        dictionary["metadata"]["grid_precision"] = self.td.grid_precision
+        dictionary["metadata"]["grid_precision"] = self.grid_precision
 
         dictionary["metadata"]["color_limits"] = {}
         for cs in self.color_spaces:
@@ -210,7 +210,7 @@ class CalibrateGrid:
             # keep the color-color grids fixed to the initial ones,
             # i.e. those in self.dict
             color_min, color_max = self.dict["metadata"]["color_limits"][color]
-            value_bins = color_bin_edges(color_min, color_max, self.td.grid_precision)
+            value_bins = color_bin_edges(color_min, color_max, self.grid_precision)
 
             index = np.digitize(value, value_bins) - 1
             nbins = len(value_bins) - 1
@@ -325,7 +325,7 @@ class CalibrateGrid:
         # P(p | n) = [0, 1] is a uniform prior.
         # Our selection criterion is P(p < p_min | k, n) < alpha.
 
-        if self.td.alpha < 1.0:
+        if self.alpha < 1.0:
 
             dict_significant = {}
 
@@ -345,7 +345,7 @@ class CalibrateGrid:
                         # Given the observed data (k successes out of n), compute the posterior
                         # probability that (true purity < prob_min_bin) is smaller than alpha.
                         significant = (
-                            beta.cdf(prob_min_bin, k + 1, n - k + 1) < self.td.alpha
+                            beta.cdf(prob_min_bin, k + 1, n - k + 1) < self.alpha
                         )
                         dict_significant[cs]["mask"][i, j] = significant
 

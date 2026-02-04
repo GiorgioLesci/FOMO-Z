@@ -83,9 +83,6 @@ class Dataset:
         if "c" in bands or "s" in bands:
             raise ValueError("Band keys cannot equal 'c' or 's'.")
 
-        if len(bands) < 2:
-            raise ValueError("At least two photometric bands are required.")
-
         if z_gal_string in bands:
             errMsg = f"z_gal_string='{z_gal_string}' conflicts "
             errMsg += f"with a band name in {bands}."
@@ -111,6 +108,11 @@ class Dataset:
             self.colors = list(combinations(self.bands, 2))
         else:
             self.colors = self._validate_custom_colors(custom_colors)
+
+        if len(self.colors) < 2:
+            raise ValueError(
+                f"At least two colors are required (current number of colors: {len(self.colors)})."
+            )
 
         self.color_spaces = list(combinations(self.colors, 2))
 

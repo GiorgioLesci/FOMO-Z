@@ -25,23 +25,21 @@ class TargetDefinition:
         additional_rules=None,
     ):
         """
-        Set the data model for color selections.
+        Set the rules defining the target sample for color selections.
 
-        Class defining the color selection data model.
-
-        This class defines color selection criteria.
+        Class defining the color selection target sample.
 
         Parameters
         ----------
         z_lim : float or array-like
-            Float or array of redshift limits/thresholds to be used in selection tests.
+            Float or array of redshift limits.
             It can represent either lower of higher limit values, depending on
             the value of `is_zlim_lower`.
         is_zlim_lower : bool, default = True
             If True, `z_lim` is a set of lower redshift limits. Otherwise, `z_lim`
             is a set of higher limits.
         additional_rules : list of lists, default = None
-            Additional selection rules beyond redshift. Each rule is a list
+            Additional selection rules beyond `z_lim`. Each rule is a list
             with this format: [property, operator, threshold].
             All rules (including the one on the i-th `z_lim`) are
             combined through the AND logical operator.
