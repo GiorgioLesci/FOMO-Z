@@ -90,24 +90,22 @@ class CalibrateLinear:
         `thresholded_quantity_min`.
         Also bootstrap errors on the metrics are derived.
 
-        Constraints
-        -----------
-        For each redshift value, this method searches for the set of
-        cuts that ($\mathcal{P}_{\rm iter}^{\rm ini}$: initial threshold,
-        $\delta\mathcal{P}_{\rm iter}$: `step`, $z_{\rm l}$: `z_l`,
+        For each limiting redshift value specified in `TargetDefinition`,
+        this method searches for the set of cuts that
+        ($\delta\mathcal{P}_{\rm step}$: `step`,
+        $\mathcal{C}_{\rm min}$: `maximized_quantity_min`,
         $\mathcal{P}_{\rm min}$: `thresholded_quantity_min`):
-        - Update $\mathcal{P}_{\rm iter}^k = \mathcal{P}_{\rm iter}^{\rm ini} -
-          k\,\delta\mathcal{P}_{\rm iter}$, where $k$ is the iteration index,
-          starting from 0.
-        - For any $(x,y)$ color pair, select the $j$th condition
-          if there exists at least one parameter set $\vec{p}$ that yields
-          $\mathcal{P}_j(z_{\rm l}\,|\,\vec{p},x,y)>\mathcal{P}_{\rm iter}^k$.
-        - Among those selected at step 2, define the optimal $j$th condition
-          in the $(x,y)$ space as the one having $\vec{p}$ parameters that
-          maximize $\mathcal{C}_j(z_{\rm l}\,|\,\vec{p},x,y)$.
-        - Combine the selected conditions in all $(x,y)$ spaces through the
-          $\lor$ logical operator, and evaluate the global purity,
-          $\mathcal{P}(z_{\rm l})$.
+        - Update $\mathcal{P}_{\rm iter}^n = 1 - n\,\delta\mathcal{P}_{\rm step}$,
+          where $n$ is the iteration index, starting from 0.
+        - For any $(x,y)$ color pair, select the $k$th condition
+          if there exists at least one parameter set that yields
+          a single-condition purity $\mathcal{P}^k>\mathcal{P}_{\rm iter}^n$
+          and a single-condition completeness $\mathcal{C}^k>\mathcal{C_min}$.
+        - For each color condition selected on step 2, define the optimal
+          parameter set as the one that maximizes $\mathcal{C}^k$.
+        - Combine the selected conditions, with optimal parameters,
+          in all $(x,y)$ spaces through the $\lor$ logical operator
+          Then, evaluate the global purity, $\mathcal{P}$.
         - Repeat from point 1 as long as
           $\mathcal{P}(z_{\rm l})>\mathcal{P}_{\rm min}$.
 
@@ -116,8 +114,7 @@ class CalibrateLinear:
         2. Restructured into an expression-based dictionary.
         3. Interpolated across redshift bins to provide continuous cut parameters.
 
-        Single color conditions having failure rate equal to 1 or completeness equal
-        to 0 are always excluded.
+        Single color conditions having failure rate equal to 1 are always excluded.
 
         Parameters
         ----------
