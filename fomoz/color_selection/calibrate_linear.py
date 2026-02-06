@@ -58,19 +58,36 @@ class CalibrateLinear:
         n_bootstraps=1000,
     ):
         r"""
-        Class calibrating optimal linear color selections. [DESCRIBE THE COLOR CONDITIONS AND THEIR CONNECTION].
+        Class calibrating optimal linear color selections.
 
-        This class provides structures for ranking, aggregating, and optimizing color
-        cuts. The maximized quantity (either completeness or purity) is defined by the
-        `TargetDefinition` instance given in input to this constructor.
+        This class implements methods that aim to select objects that occupy the
+        outskirts of color-color distributions, a characteristic feature of, e.g.,
+        background galaxy populations.
+
+        The following color conditions are considered in each color-color space:
+
+          - color1 > c1
+          - color1 < c2
+          - color2 > c3
+          - color2 < c4
+          - color1 > s1 * color2 + c5
+          - color1 > s2 * color2 + c6
+          - color1 < s3 * color2 + c7
+          - color1 < s4 * color2 + c8
+
+        where c1...c8 are real numbers, s1 and s3 are non-zero positive real numbers,
+        while s2 and s4 are non-zero negative real numbers. All color conditions,
+        within the same space and between different spaces, are connected
+        through the logical "or" operator.
+
+        The maximized quantity (either completeness or purity) is defined by the
+        `maximized_quantity` value given in input to this constructor.
         The method implemented here incrementally relaxes the single color cut purity (completeness)
         threshold in order to identify a set of cuts that maximize total completeness
         (purity) while still satisfying the global threshold. The algorithm
         proceeds iteratively, starting from a strict initial threshold and reducing
         it by `step` until the total purity (or completeness) remains above
         `thresholded_quantity_min`.
-        The starting threshold corresponds to the maximum
-        purity (or completeness) attained across all single color conditions.
         Also bootstrap errors on the metrics are derived.
 
         Constraints
@@ -135,12 +152,12 @@ class CalibrateLinear:
             subtraction. If this value is too small, the optimization method in
             `CalibrateLinear` raises an error.
         s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
-            Array of slope values for generating linear cuts in color-color space.
+            Array of slope values, s_j, for generating linear cuts in color-color space.
             These samples must be strictly positive.
         c_precision : float, default=0.05
-            Precision of the c parameter sampling. Smaller values
+            Precision of the c_i parameters sampling. Smaller values
             increase accuracy but significantly increase the number of operations.
-            If `c_precision` is halved, expect about 2 times more c steps per s
+            If `c_precision` is halved, expect about 2 times more c_i steps per s_j
             (also runtime and RAM roughly double).
         k : int, default=1
             Requested degree of the spline interpolation, used to interpolate color
@@ -299,33 +316,13 @@ class CalibrateLinear:
         if not all_cuts:
             return z_l, None
 
-        # Find the initial threshold
-        start_threshold = 0.0
-
-        for base_pair, comp_dict in all_cuts.items():
-            for comp_pair, conditions in comp_dict.items():
-                for cond_index, cond_data in conditions.items():
-                    candidate_max = cond_data.get(
-                        self.thresholded_quantity,
-                        [],
-                    )
-                    for i, candidate in enumerate(candidate_max):
-                        if candidate > start_threshold:
-                            start_threshold = candidate
-
-        if start_threshold <= threshold_tot_min:
-            raise ValueError(
-                f"At z_l={z_l}, the starting threshold, {start_threshold},"
-                f" is <= than the global threshold, {threshold_tot_min}."
-            )
-
         # Start the iterative process
         if self.thresholded_quantity == "purity":
             maximized_quantity = "completeness"
         else:
             maximized_quantity = "purity"
 
-        current_thresh = start_threshold
+        current_thresh = 1.0
         best_by_key = {}
         dict_steps = {}
 
