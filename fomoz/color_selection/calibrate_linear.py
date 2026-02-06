@@ -200,8 +200,8 @@ class CalibrateLinear:
         self.td = target_definition
 
         if isinstance(thresholded_quantity_min, float):
-            self.thresholded_quantity_min = [thresholded_quantity_min] * len(
-                self.td.z_lim
+            self.thresholded_quantity_min = np.asarray(
+                [thresholded_quantity_min] * len(self.td.z_lim)
             )
         else:
             if len(thresholded_quantity_min) != len(self.td.z_lim):
@@ -209,7 +209,7 @@ class CalibrateLinear:
                     f"thresholded_quantity_min length ({len(thresholded_quantity_min)}) "
                     f"must match z_lim length ({len(self.td.z_lim)})"
                 )
-            self.thresholded_quantity_min = thresholded_quantity_min
+            self.thresholded_quantity_min = np.asarray(thresholded_quantity_min)
         for t in self.thresholded_quantity_min:
             if not (0.0 <= t < 1.0):
                 raise ValueError(
@@ -231,11 +231,12 @@ class CalibrateLinear:
         else:
             raise TypeError("maximized_quantity_min must be a float or integer.")
 
-        if threshold_buffer > thresholded_quantity_min:
-            raise ValueError(
-                "threshold_buffer must be strictly smaller than thresholded_quantity_min."
-            )
-        self.buffered_threshold = thresholded_quantity_min - threshold_buffer
+        for t in self.thresholded_quantity_min:
+            if threshold_buffer > t:
+                raise ValueError(
+                    "threshold_buffer must be strictly smaller than thresholded_quantity_min."
+                )
+        self.buffered_threshold = self.thresholded_quantity_min - threshold_buffer
 
         if np.any(s_samples <= 0):
             raise ValueError(
@@ -304,9 +305,10 @@ class CalibrateLinear:
             self.td,
             self.thresholded_quantity,
             self.maximized_quantity_min,
-            self.buffered_threshold,
+            self.buffered_threshold[i_z],
             self.s_samples,
             self.c_precision,
+            self.step,
         )
         measure.process(z_l, cpu_number=cpu_number)
 
@@ -315,6 +317,25 @@ class CalibrateLinear:
         all_cuts = measure.dict_all.get(z_l, {})
         if not all_cuts:
             return z_l, None
+
+        # Find the initial threshold
+        start_threshold = 0.0
+        for base_pair, comp_dict in all_cuts.items():
+            for comp_pair, conditions in comp_dict.items():
+                for cond_index, cond_data in conditions.items():
+                    candidate_max = cond_data.get(
+                        self.thresholded_quantity,
+                        [],
+                    )
+                    for i, candidate in enumerate(candidate_max):
+                        if candidate > start_threshold:
+                            start_threshold = candidate
+
+        if start_threshold <= threshold_tot_min:
+            raise ValueError(
+                f"At z_l={z_l}, the starting threshold, {start_threshold},"
+                f" is <= than the global threshold, {threshold_tot_min}."
+            )
 
         # Start the iterative process
         if self.thresholded_quantity == "purity":
@@ -333,11 +354,15 @@ class CalibrateLinear:
         iteration = 0
         while current_thresh > 0:
 
-            if current_thresh <= self.buffered_threshold:
+            if current_thresh <= self.buffered_threshold[i_z]:
                 errMsg = "The current threshold in the iterative process is lower"
                 errMsg += " than or equal to the buffered threshold set in the"
                 errMsg += " TargetDefinition class. Increase threshold_buffer in the constructor."
                 raise ValueError(errMsg)
+
+            if current_thresh > start_threshold:
+                current_thresh -= self.step
+                continue  # apparently sub-optimal, but essential for consistency with MeasureLinear
 
             new_best_by_key = {}
 
@@ -446,6 +471,10 @@ class CalibrateLinear:
                                         or maximization_condition
                                     ):
                                         new_best_by_key[key] = cut
+
+            if new_best_by_key == {}:
+                current_thresh -= self.step
+                continue
 
             C_tot_new = np.zeros_like(self.td.z_lim, dtype=np.float32)
             P_tot_new = np.zeros_like(self.td.z_lim, dtype=np.float32)

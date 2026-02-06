@@ -87,6 +87,7 @@ class MeasureLinear:
         buffered_threshold,
         s_samples,
         c_precision,
+        step,
     ):
         """
         Measure the metrics of color conditions.
@@ -116,14 +117,17 @@ class MeasureLinear:
             or purity (if `maximized_quantity == "purity"`) across all redshift bins.
         buffered_threshold : float
             Buffered threshold on the thresholded quantity (see the documentation of `CalibrateLinear`).
-        s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
+        s_samples : array-like
             Array of slope values for generating linear cuts in color-color space.
             These samples must be strictly positive.
-        c_precision : float, default=0.05
+        c_precision : float
             Precision of the c parameter sampling. Smaller values
             increase accuracy but significantly increase the number of operations.
             If `c_precision` is halved, expect about 2 times more c steps per s
             (also runtime and RAM roughly double).
+        step : float
+            Defines the threshold reduction on single color conditions.Here, it is
+            used to preliminarily remove suboptimal color condition parameters.
         """
         self.dict_all = {}
         self.td = target_definition
@@ -134,6 +138,69 @@ class MeasureLinear:
         self.buffered_threshold = buffered_threshold
         self.s_samples = s_samples
         self.c_precision = c_precision
+        self.step = step
+
+    def _filter_useful_cuts(
+        self,
+        params,
+        purity_vals,
+        completeness_vals,
+    ):
+        """
+        Keep only color cut parameters that are optimal for at least one
+        threshold step in the iterative optimization process.
+
+        A cut is kept if it maximizes the non-thresholded quantity at any
+        threshold value T = 1 - n * step, with T > buffered_threshold.
+
+        This aligns the logic used in the iterative optimization in CalibrateLinear.
+        """
+        params = np.asarray(params, dtype=np.float32)
+        purity_vals = np.asarray(purity_vals, dtype=np.float32)
+        completeness_vals = np.asarray(completeness_vals, dtype=np.float32)
+
+        if params.ndim == 1:
+            params = params[:, None]  # ensure 2D
+
+        if self.thresholded_quantity == "purity":
+            Q_thr = purity_vals
+            Q_max = completeness_vals
+        else:
+            Q_thr = completeness_vals
+            Q_max = purity_vals
+
+        # Sort by thresholded quantity (descending)
+        order = np.argsort(Q_thr)[::-1]
+        Q_thr = Q_thr[order]
+        Q_max = Q_max[order]
+        params = params[order]
+        purity_vals = purity_vals[order]
+        completeness_vals = completeness_vals[order]
+
+        useful = np.zeros(len(Q_thr), dtype=bool)
+
+        current_thresh = 1.0
+        idx = 0
+        best_Qmax_so_far = -np.inf
+
+        while current_thresh > self.buffered_threshold and idx < len(Q_thr):
+
+            if current_thresh > max(Q_thr):
+                current_thresh -= self.step
+                continue  # apparently sub-optimal, but essential for consistency with CalibrateLinear
+
+            while idx < len(Q_thr) and Q_thr[idx] >= current_thresh:
+                if Q_max[idx] > best_Qmax_so_far:
+                    best_Qmax_so_far = Q_max[idx]
+                    useful[idx] = True
+                idx += 1
+            current_thresh -= self.step
+
+        return (
+            params[useful],
+            purity_vals[useful],
+            completeness_vals[useful],
+        )
 
     def _apply_cuts(self, z_lim, mag1, mag2, cross_colors=[], cpu_number=None):
         """
@@ -145,7 +212,7 @@ class MeasureLinear:
 
         Parameters
         ----------
-        z_lim : array-like
+        z_lim : float
             Limiting redshift points.
         mag1 : array-like of float
             First magnitude or color feature used in the cuts.
@@ -196,169 +263,180 @@ class MeasureLinear:
                 cross_color_arrays[(mag3, mag4)] = color2
                 cross_shared_arrays[(mag3, mag4)] = mp.Array("f", color2)
 
-        # Loop over limiting redshift points
-        for z_l in z_lim:
+        # Proceed with the measurements
+        shared_target_mask = mp.Array("b", [bool(x) for x in self.target_mask])
 
-            idx = np.where(self.td.z_lim == z_l)[0][0]
-            shared_target_mask = mp.Array("b", [bool(x) for x in self.target_mask])
+        if z_lim not in self.dict_all:
+            self.dict_all[z_lim] = {}
 
-            if z_l not in self.dict_all:
-                self.dict_all[z_l] = {}
+        if (mag1, mag2) not in self.dict_all[z_lim]:
+            self.dict_all[z_lim][(mag1, mag2)] = {}
 
-            if (mag1, mag2) not in self.dict_all[z_l]:
-                self.dict_all[z_l][(mag1, mag2)] = {}
+        # One-color cuts
+        with mp.Pool(
+            N_cpu,
+            initializer=init_worker,
+            initargs=(shared_color1, None, shared_target_mask),
+        ) as pool:
+            results = pool.map(compute_for_simple_worker, test_colors)
 
-            # One-color cuts
-            with mp.Pool(
-                N_cpu,
-                initializer=init_worker,
-                initargs=(shared_color1, None, shared_target_mask),
-            ) as pool:
-                results = pool.map(compute_for_simple_worker, test_colors)
+        results_up = [res[:4] for res in results]
+        results_low = [res[4:] for res in results]
 
-            results_up = [res[:4] for res in results]
-            results_low = [res[4:] for res in results]
+        tp_up, fp_up, fn_up, tn_up = map(list, zip(*results_up))
+        tp_low, fp_low, fn_low, tn_low = map(list, zip(*results_low))
 
-            tp_up, fp_up, fn_up, tn_up = map(list, zip(*results_up))
-            tp_low, fp_low, fn_low, tn_low = map(list, zip(*results_low))
+        tp_up = np.asarray(tp_up, dtype=np.float32)
+        fp_up = np.asarray(fp_up, dtype=np.float32)
+        fn_up = np.asarray(fn_up, dtype=np.float32)
+        tn_up = np.asarray(tn_up, dtype=np.float32)
+        tp_low = np.asarray(tp_low, dtype=np.float32)
+        fp_low = np.asarray(fp_low, dtype=np.float32)
+        fn_low = np.asarray(fn_low, dtype=np.float32)
+        tn_low = np.asarray(tn_low, dtype=np.float32)
 
-            tp_up = np.asarray(tp_up, dtype=np.float32)
-            fp_up = np.asarray(fp_up, dtype=np.float32)
-            fn_up = np.asarray(fn_up, dtype=np.float32)
-            tn_up = np.asarray(tn_up, dtype=np.float32)
-            tp_low = np.asarray(tp_low, dtype=np.float32)
-            fp_low = np.asarray(fp_low, dtype=np.float32)
-            fn_low = np.asarray(fn_low, dtype=np.float32)
-            tn_low = np.asarray(tn_low, dtype=np.float32)
+        # Mask
+        purity_up = tp_up / np.maximum(tp_up + fp_up, 1e-12)
+        purity_low = tp_low / np.maximum(tp_low + fp_low, 1e-12)
+        compl_up = tp_up / np.maximum(tp_up + fn_up, 1e-12)
+        compl_low = tp_low / np.maximum(tp_low + fn_low, 1e-12)
+        failure_up = fp_up / np.maximum(fp_up + tn_up, 1e-12)
+        failure_low = fp_low / np.maximum(fp_low + tn_low, 1e-12)
 
-            # Mask
-            purity_up = tp_up / np.maximum(tp_up + fp_up, 1e-12)
-            purity_low = tp_low / np.maximum(tp_low + fp_low, 1e-12)
-            compl_up = tp_up / np.maximum(tp_up + fn_up, 1e-12)
-            compl_low = tp_low / np.maximum(tp_low + fn_low, 1e-12)
-            failure_up = fp_up / np.maximum(fp_up + tn_up, 1e-12)
-            failure_low = fp_low / np.maximum(fp_low + tn_low, 1e-12)
+        if self.thresholded_quantity == "purity":
+            mask_threshold_up = purity_up > self.buffered_threshold
+            mask_threshold_low = purity_low > self.buffered_threshold
+            mask_maximized_up = compl_up > self.maximized_quantity_min
+            mask_maximized_low = compl_low > self.maximized_quantity_min
+        else:
+            mask_threshold_up = compl_up > self.buffered_threshold
+            mask_threshold_low = compl_low > self.buffered_threshold
+            mask_maximized_up = purity_up > self.maximized_quantity_min
+            mask_maximized_low = purity_low > self.maximized_quantity_min
 
-            if self.thresholded_quantity == "purity":
-                mask_threshold_up = purity_up > self.buffered_threshold
-                mask_threshold_low = purity_low > self.buffered_threshold
-                mask_maximized_up = compl_up > self.maximized_quantity_min
-                mask_maximized_low = compl_low > self.maximized_quantity_min
-            else:
-                mask_threshold_up = compl_up > self.buffered_threshold
-                mask_threshold_low = compl_low > self.buffered_threshold
-                mask_maximized_up = purity_up > self.maximized_quantity_min
-                mask_maximized_low = purity_low > self.maximized_quantity_min
+        mask_up = (
+            (mask_threshold_up)
+            & (mask_maximized_up)
+            & (compl_up > 0.0)
+            & (purity_up > 0.0)
+            & (failure_up < 1.0)
+        )
+        mask_low = (
+            (mask_threshold_low)
+            & (mask_maximized_low)
+            & (compl_low > 0.0)
+            & (purity_low > 0.0)
+            & (failure_low < 1.0)
+        )
 
-            mask_up = (
-                (mask_threshold_up)
-                & (mask_maximized_up)
-                & (compl_up > 0.0)
-                & (purity_up > 0.0)
-                & (failure_up < 1.0)
-            )
-            mask_low = (
-                (mask_threshold_low)
-                & (mask_maximized_low)
-                & (compl_low > 0.0)
-                & (purity_low > 0.0)
-                & (failure_low < 1.0)
-            )
+        sub_dict = {}
 
-            sub_dict = {}
-            sub_dict[0] = {
-                "c": test_colors[mask_up].tolist(),
-                "purity": purity_up[mask_up].astype(np.float32).tolist(),
-                "completeness": compl_up[mask_up].astype(np.float32).tolist(),
-            }
-            sub_dict[1] = {
-                "c": test_colors[mask_low].astype(np.float32).tolist(),
-                "purity": purity_low[mask_low].astype(np.float32).tolist(),
-                "completeness": compl_low[mask_low].astype(np.float32).tolist(),
-            }
+        params_f, p_f, cpl_f = self._filter_useful_cuts(
+            test_colors[mask_up],
+            purity_up[mask_up],
+            compl_up[mask_up],
+        )
+        sub_dict[0] = {
+            "c": params_f[:, 0].tolist(),
+            "purity": p_f.tolist(),
+            "completeness": cpl_f.tolist(),
+        }
 
-            self.dict_all[z_l][(mag1, mag2)][(mag1, mag2)] = sub_dict
+        params_f, p_f, cpl_f = self._filter_useful_cuts(
+            test_colors[mask_low],
+            purity_low[mask_low],
+            compl_low[mask_low],
+        )
+        sub_dict[1] = {
+            "c": params_f[:, 0].tolist(),
+            "purity": p_f.tolist(),
+            "completeness": cpl_f.tolist(),
+        }
 
-            # Two-color cuts
-            if cross_colors:
+        self.dict_all[z_lim][(mag1, mag2)][(mag1, mag2)] = sub_dict
 
-                for mag3, mag4 in cross_colors:
+        # Two-color cuts
+        if cross_colors:
 
-                    shared_color2 = cross_shared_arrays[(mag3, mag4)]
-                    color2 = cross_color_arrays[(mag3, mag4)]
+            for mag3, mag4 in cross_colors:
 
-                    sc_grid = []
-                    for s in self.s_samples:
-                        c_min, c_max = c_domain_given_s(color1, color2, s)
-                        n_c = int((c_max - c_min) / self.c_precision) + 1
-                        c_grid = np.linspace(c_min, c_max, n_c, dtype=np.float32)
+                shared_color2 = cross_shared_arrays[(mag3, mag4)]
+                color2 = cross_color_arrays[(mag3, mag4)]
 
-                        for c in c_grid:
-                            sc_grid.append((s, c))
+                sc_grid = []
+                for s in self.s_samples:
+                    c_min, c_max = c_domain_given_s(color1, color2, s)
+                    n_c = int((c_max - c_min) / self.c_precision) + 1
+                    c_grid = np.linspace(c_min, c_max, n_c, dtype=np.float32)
 
-                    with mp.Pool(
-                        N_cpu,
-                        initializer=init_worker,
-                        initargs=(shared_color1, shared_color2, shared_target_mask),
-                    ) as pool:
-                        results = pool.map(compute_for_cross_worker, sc_grid)
+                    for c in c_grid:
+                        sc_grid.append((s, c))
 
-                    # Transpose result list for each metric
-                    tp_all, fp_all, fn_all, tn_all = [], [], [], []
+                with mp.Pool(
+                    N_cpu,
+                    initializer=init_worker,
+                    initargs=(shared_color1, shared_color2, shared_target_mask),
+                ) as pool:
+                    results = pool.map(compute_for_cross_worker, sc_grid)
 
-                    for res in results:  # each res has 4 entries: one per condition
-                        tp_c, fp_c, fn_c, tn_c = zip(*res)
-                        tp_all.append(list(tp_c))
-                        fp_all.append(list(fp_c))
-                        fn_all.append(list(fn_c))
-                        tn_all.append(list(tn_c))
+                # Transpose result list for each metric
+                tp_all, fp_all, fn_all, tn_all = [], [], [], []
 
-                    tp_all = np.asarray(tp_all, dtype=np.float32)
-                    fp_all = np.asarray(fp_all, dtype=np.float32)
-                    fn_all = np.asarray(fn_all, dtype=np.float32)
-                    tn_all = np.asarray(tn_all, dtype=np.float32)
+                for res in results:  # each res has 4 entries: one per condition
+                    tp_c, fp_c, fn_c, tn_c = zip(*res)
+                    tp_all.append(list(tp_c))
+                    fp_all.append(list(fp_c))
+                    fn_all.append(list(fn_c))
+                    tn_all.append(list(tn_c))
 
-                    sc_grid = np.asarray(sc_grid, dtype=np.float32)
+                tp_all = np.asarray(tp_all, dtype=np.float32)
+                fp_all = np.asarray(fp_all, dtype=np.float32)
+                fn_all = np.asarray(fn_all, dtype=np.float32)
+                tn_all = np.asarray(tn_all, dtype=np.float32)
 
-                    # Mask
-                    purity = tp_all / np.maximum(tp_all + fp_all, 1e-12)
-                    compl = tp_all / np.maximum(tp_all + fn_all, 1e-12)
-                    failure = fp_all / np.maximum(fp_all + tn_all, 1e-12)
+                sc_grid = np.asarray(sc_grid, dtype=np.float32)
 
-                    if self.thresholded_quantity == "purity":
-                        mask_threshold = purity > self.buffered_threshold
-                        mask_maximized = compl > self.maximized_quantity_min
-                    else:
-                        mask_threshold = compl > self.buffered_threshold
-                        mask_maximized = purity > self.maximized_quantity_min
+                # Mask
+                purity = tp_all / np.maximum(tp_all + fp_all, 1e-12)
+                compl = tp_all / np.maximum(tp_all + fn_all, 1e-12)
+                failure = fp_all / np.maximum(fp_all + tn_all, 1e-12)
 
-                    mask_per_condition = (
-                        (mask_threshold)
-                        & (mask_maximized)
-                        & (compl > 0.0)
-                        & (purity > 0.0)
-                        & (failure < 1.0)
-                    )
+                if self.thresholded_quantity == "purity":
+                    mask_threshold = purity > self.buffered_threshold
+                    mask_maximized = compl > self.maximized_quantity_min
+                else:
+                    mask_threshold = compl > self.buffered_threshold
+                    mask_maximized = purity > self.maximized_quantity_min
 
-                    # Save structure per condition index (0, 1, 2, 3)
-                    sub_dict = {}
+                mask_per_condition = (
+                    (mask_threshold)
+                    & (mask_maximized)
+                    & (compl > 0.0)
+                    & (purity > 0.0)
+                    & (failure < 1.0)
+                )
 
-                    for cond_index in range(4):
-                        mask = mask_per_condition[:, cond_index]
+                # Save structure per condition index (0, 1, 2, 3)
+                sub_dict = {}
 
-                        if np.any(mask):
-                            sub_dict[cond_index] = {
-                                "s": sc_grid[mask, 0].tolist(),
-                                "c": sc_grid[mask, 1].tolist(),
-                                "purity": purity[mask, cond_index]
-                                .astype(np.float32)
-                                .tolist(),
-                                "completeness": compl[mask, cond_index]
-                                .astype(np.float32)
-                                .tolist(),
-                            }
+                for cond_index in range(4):
+                    mask = mask_per_condition[:, cond_index]
 
-                    self.dict_all[z_l][(mag1, mag2)][(mag3, mag4)] = sub_dict
+                    if np.any(mask):
+                        params_f, p_f, cpl_f = self._filter_useful_cuts(
+                            sc_grid[mask][:, :2],
+                            purity[mask, cond_index],
+                            compl[mask, cond_index],
+                        )
+
+                        sub_dict[cond_index] = {
+                            "s": params_f[:, 0].tolist(),
+                            "c": params_f[:, 1].tolist(),
+                            "purity": p_f.tolist(),
+                            "completeness": cpl_f.tolist(),
+                        }
+
+                self.dict_all[z_lim][(mag1, mag2)][(mag3, mag4)] = sub_dict
 
     def process(self, z_lim, cpu_number=None):
         """
@@ -393,7 +471,7 @@ class MeasureLinear:
 
         for i in range(len(self.colors)):
             self._apply_cuts(
-                [z_lim],
+                z_lim,
                 self.colors[i][0],
                 self.colors[i][1],
                 cross_colors=self.colors[i + 1 : len(self.colors)],

@@ -101,8 +101,8 @@ class CalibrateGrid:
         self.td = target_definition
 
         if isinstance(thresholded_quantity_min, float):
-            self.thresholded_quantity_min = [thresholded_quantity_min] * len(
-                self.td.z_lim
+            self.thresholded_quantity_min = np.asarray(
+                [thresholded_quantity_min] * len(self.td.z_lim)
             )
         else:
             if len(thresholded_quantity_min) != len(self.td.z_lim):
@@ -110,7 +110,7 @@ class CalibrateGrid:
                     f"thresholded_quantity_min length ({len(thresholded_quantity_min)}) "
                     f"must match z_lim length ({len(self.td.z_lim)})"
                 )
-            self.thresholded_quantity_min = thresholded_quantity_min
+            self.thresholded_quantity_min = np.asarray(thresholded_quantity_min)
         for t in self.thresholded_quantity_min:
             if not (0.0 <= t < 1.0):
                 raise ValueError(
