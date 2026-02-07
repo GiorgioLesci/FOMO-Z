@@ -19,7 +19,7 @@ from scipy.interpolate import BSpline
 from .tools import set_input_variable_precision
 
 
-class SelectObject:
+class ColorSelection:
     """Apply precomputed optimal color selections to datasets."""
 
     def __init__(self):
@@ -252,15 +252,15 @@ class SelectObject:
 
     def load_parameters(self, calibration):
         """
-        Load selection parameters from a ``CalibrateLinear`` instance.
+        Load selection parameters from a ``CalibrationLinear`` instance.
 
         Load precomputed optimal color cut parameters
         and reconstruct interpolator objects.
 
         Parameters
         ----------
-        calibration : CalibrateLinear
-            `CalibrateLinear` object.
+        calibration : CalibrationLinear
+            `CalibrationLinear` object.
 
         Returns
         -------

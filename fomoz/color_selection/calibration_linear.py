@@ -39,7 +39,7 @@ yaml.add_representer(list, inline_list_representer)
 yaml.add_representer(list, inline_list_representer, Dumper=yaml.SafeDumper)
 
 
-class CalibrateLinear:
+class CalibrationLinear:
     """Calibrate linear color selections."""
 
     def __init__(
@@ -146,8 +146,7 @@ class CalibrateLinear:
             `thresholded_quantity_min - threshold_buffer`, are not
             considered in the optimization process. This is useful to avoid filling memory
             with unused information. The default value is 0.05, namely a 5 percentage point
-            subtraction. If this value is too small, the optimization method in
-            `CalibrateLinear` raises an error.
+            subtraction. If this value is too small, the optimization method raises an error.
         s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
             Array of slope values, s_j, for generating linear cuts in color-color space.
             These samples must be strictly positive.

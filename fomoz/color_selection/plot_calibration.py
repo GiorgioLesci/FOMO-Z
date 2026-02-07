@@ -14,8 +14,8 @@ import numexpr as ne
 import numpy as np
 from scipy.interpolate import BSpline
 
-from .calibrate_linear import CalibrateLinear
-from .select_object import SelectObject
+from .calibration_linear import CalibrationLinear
+from .color_selection import ColorSelection
 from .tools import (
     check_ax_limits,
     check_plot_type,
@@ -42,7 +42,7 @@ class PlotCalibration:
 
         Parameters
         ----------
-        calibrations : CalibrateLinear, CalibrateGrid, or list/tuple thereof
+        calibrations : CalibrationLinear, CalibrationGrid, or list/tuple thereof
             One or more calibration objects to plot.
         labels : list or str, optional
             If not None, it defines the legend labels for each calibration. Default is None.
@@ -110,7 +110,7 @@ class PlotCalibration:
             alpha parameter of the 68% confidence interval. Default is 0.3.
         interp_points : array-like, optional
             Limiting redshift points. If not None, derive the metrics at these points
-            using interpolations. Valid only for CalibrateLinear instances. Default is None.
+            using interpolations. Valid only for CalibrationLinear instances. Default is None.
         """
         if metric not in ["C", "P", "F"]:
             raise ValueError(
@@ -149,8 +149,8 @@ class PlotCalibration:
                     alpha=0.3,
                 )
 
-            if interp_points is not None and isinstance(calibration, CalibrateLinear):
-                sel = SelectObject()
+            if interp_points is not None and isinstance(calibration, CalibrationLinear):
+                sel = ColorSelection()
                 sel.load_parameters(calibration)
 
                 dataset = calibration.dataset
@@ -238,7 +238,7 @@ class PlotCalibration:
             alpha parameter of the 68% confidence interval. Default is 0.3.
         interp_points : array-like, optional
             Limiting redshift points. If not None, derive the metrics at these points
-            using interpolations. Valid only for CalibrateLinear instances. Default is None.
+            using interpolations. Valid only for CalibrationLinear instances. Default is None.
         output_file_path : str, optional
             Concatenation of the output file path and name.
             If None, the plot is not saved to file. Default is None.
@@ -823,7 +823,7 @@ class PlotCalibration:
         cut_key : str
             Key corresponding to the optimal color condition.
             The list of optimal color conditions can be obtained
-            using `CalibrateLinear.get_keys()`.
+            using `CalibrationLinear.get_keys()`.
         interp_points : array-like, optional
             Limiting redshift points. If not None, derive the parameters
             at these points using interpolations. Default is None.
@@ -857,8 +857,8 @@ class PlotCalibration:
         """
         calib = self.calibrations[calibration_index]
         assert isinstance(
-            calib, CalibrateLinear
-        ), f"Expected CalibrateLinear, got {type(calib).__name__}"
+            calib, CalibrationLinear
+        ), f"Expected CalibrationLinear, got {type(calib).__name__}"
 
         entry = calib.dict[cut_key]
         z_lim = np.unique(entry["knots"])
@@ -922,7 +922,7 @@ class PlotCalibration:
             loc=loclegend,
             fontsize=legend_fontsize,
             title_fontsize=legend_fontsize,
-            title=r"$" + cut_key.replace("*", "\,") + "$",
+            title = r"$" + cut_key.replace("*", r"\,") + "$",
         )
 
         if output_file_path is not None:

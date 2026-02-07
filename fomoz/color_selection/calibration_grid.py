@@ -22,7 +22,7 @@ from .target_definition import TargetDefinition
 from .tools import c_domain, color_bin_edges, compute_metrics, prob_target
 
 
-class CalibrateGrid:
+class CalibrationGrid:
     """Calibrate grid color selections."""
 
     def __init__(
@@ -40,7 +40,10 @@ class CalibrateGrid:
         r"""
         Class calibrating optimal grid color selections.
 
-        This class... (also, talk about the threshold alpha!)
+        This class implements a general approach which identifies optimal selection regions
+        in color-color spaces by directly exploring discretized grids.
+
+        ... (also, talk about the threshold alpha!)
 
         Parameters
         ----------

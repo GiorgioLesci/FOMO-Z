@@ -11,9 +11,9 @@ import pandas as pd
 import pytest
 import yaml
 
-from fomoz.color_selection.calibrate_linear import CalibrateLinear
+from fomoz.color_selection.calibration_linear import CalibrationLinear
 from fomoz.color_selection.dataset import Dataset
-from fomoz.color_selection.select_object import SelectObject
+from fomoz.color_selection.color_selection import ColorSelection
 from fomoz.color_selection.target_definition import TargetDefinition
 from fomoz.color_selection.tools import (
     MeasureLinear,
@@ -97,9 +97,9 @@ def reference_measure_instance(
 def reference_calibration_linear_instance(
     reference_dataset_instance, reference_target_definition_instance
 ):
-    """Create an CalibrateLinear instance with reference.csv data for testing."""
+    """Create an CalibrationLinear instance with reference.csv data for testing."""
     thresholded_quantity_min = 0.9
-    calibration = CalibrateLinear(
+    calibration = CalibrationLinear(
         reference_dataset_instance,
         reference_target_definition_instance,
         thresholded_quantity_min,
@@ -438,12 +438,12 @@ class TestCalibrationProcess:
 
 
 ############################
-### select_object.py ###
+### color_selection.py ###
 ############################
 
 
-class TestSelectObject:
-    """Test cases for SelectObject.process() method with reference.csv."""
+class TestColorSelection:
+    """Test cases for ColorSelection.process() method with reference.csv."""
 
     def test_process(self, reference_dataset, reference_calibration_linear_instance):
         """Test process method with reference data and check the number of selected objects."""
@@ -455,7 +455,7 @@ class TestSelectObject:
         zl_new = np.arange(min(calibration.td.z_lim), max(calibration.td.z_lim), 0.01)
 
         # Select
-        sel = SelectObject()
+        sel = ColorSelection()
         sel.load_parameters(calibration)
         sel.process(zl_new, test_sample)
         mask = sel.mask
