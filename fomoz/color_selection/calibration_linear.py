@@ -50,7 +50,7 @@ class CalibrationLinear:
         maximized_quantity="completeness",
         maximized_quantity_min=0.05,
         threshold_buffer=0.05,
-        s_samples=np.linspace(0.3, 1.7, 30),
+        s_samples=np.linspace(0.3, 2.5, 50),
         c_precision=0.05,
         k=1,
         step=0.0001,
@@ -62,7 +62,9 @@ class CalibrationLinear:
 
         This class implements methods that aim to select objects that occupy the
         outskirts of color-color distributions, a characteristic feature of, e.g.,
-        background galaxy populations.
+        background galaxy populations. For other science cases, refer to the
+        `CalibrationGrid` class.
+        
 
         The following color conditions are considered in each color-color space:
 
@@ -139,7 +141,7 @@ class CalibrationLinear:
             Only single color conditions that meet the requirement on
             this parameter are considered. The default
             value is 0.05, namely 5%. This threshold is useful to exclude random fluctuations
-            and reduce statistical uncertainties on selection purity and completeness.
+            and reduce statistical uncertainties on global purity and completeness.
         threshold_buffer : float, default=0.05
             Quantity subtracted from `thresholded_quantity_min`.
             Color conditions not satisfying the final threshold, namely

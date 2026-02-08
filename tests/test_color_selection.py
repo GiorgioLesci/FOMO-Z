@@ -103,6 +103,7 @@ def reference_calibration_linear_instance(
         reference_dataset_instance,
         reference_target_definition_instance,
         thresholded_quantity_min,
+        s_samples=np.linspace(0.3, 1.7, 30),
         maximized_quantity_min=0,
         step=0.0001,
         k=3,

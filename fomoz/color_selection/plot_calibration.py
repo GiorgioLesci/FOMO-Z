@@ -72,10 +72,8 @@ class PlotCalibration:
                     f"number of calibrations ({self.n_calibrations})."
                 )
             self.labels = labels
-        elif labels is None:
-            self.labels = [labels] * self.n_calibrations
         else:
-            raise TypeError("labels can be either None, list, or tuple.")
+            self.labels = [labels] * self.n_calibrations
 
     def plot_metric(
         self,
