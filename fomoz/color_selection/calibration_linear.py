@@ -11,6 +11,7 @@ import copy
 import multiprocessing as mp
 import os
 import pickle
+import warnings
 
 import numexpr as ne
 import numpy as np
@@ -353,9 +354,12 @@ class CalibrationLinear:
         while current_thresh > 0:
 
             if current_thresh <= self.buffered_threshold[i_z]:
-                errMsg = "The current threshold in the iterative process is lower"
-                errMsg += " than or equal to the buffered threshold set in the"
-                errMsg += " TargetDefinition class. Increase threshold_buffer in the constructor."
+                errMsg = "For z_l={z_l}, the current threshold in the iterative process is lower"
+                errMsg += " than or equal to the buffered threshold. Try to increase threshold_buffer in the constructor."
+                errMsg += " Consider also the fact that your requirements can not be met."
+                errMsg += " To check this, try to set threshold_buffer equal to thresholded_quantity_min."
+                errMsg += " If convergence is not attained, check the reference sample."
+                errMsg += f" The global P, C, and F are {P_tot[i_z]}, {C_tot[i_z]}, and {F_tot[i_z]}, respectively."
                 raise ValueError(errMsg)
 
             if current_thresh > start_threshold:
@@ -490,11 +494,6 @@ class CalibrationLinear:
                 F_tot_new,
             )
 
-            #if F_tot_new[i_z] == 1.0:
-            #    err_msg = "No effective selection found:"
-            #    err_msg += f" the failure rate is 1 at z_l={z_l}."
-            #    raise ValueError(err_msg)
-
             if self.thresholded_quantity == "purity":
                 threshold_condition = P_tot_new[i_z] >= threshold_tot_min
             else:
@@ -511,7 +510,14 @@ class CalibrationLinear:
                     dict_steps[iteration] = nested
                     iteration += 1
             else:
+                if F_tot_new[i_z] == 1.0:
+                    err_msg = "No effective selection found for z_l={z_l}:"
+                    err_msg += f" the failure rate is 1."
+                    raise warnings.warn(err_msg, UserWarning)
                 break  # below the threshold
+
+        if current_thresh <= 0:
+            raise ValueError("Could not find an effective selection for z_l={z_l}.")
 
         self.attained_threshold[i_z] = current_thresh
         return z_l, best_by_key, dict_steps
