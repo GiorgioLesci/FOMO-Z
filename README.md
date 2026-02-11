@@ -16,7 +16,24 @@ In the figure above, an example of the optimization process implemented in the `
 ```bash
 git clone https://github.com/GiorgioLesci/FOMO-Z.git
 cd FOMO-Z
+```
+
+To install outside any environment (generally not recommended), run
+```bash
 pip install .
+```
+
+### Conda environment
+Alternatively, create the conda environment:
+```bash
+conda create -n fomoz python=3.9 "numpy<2" scipy astropy pyyaml -c conda-forge
+conda activate fomoz
+pip install .
+```
+
+To activate the environment, run
+```bash
+conda activate fomoz
 ```
 
 ### Development installation

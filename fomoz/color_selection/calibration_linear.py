@@ -490,10 +490,10 @@ class CalibrationLinear:
                 F_tot_new,
             )
 
-            if F_tot_new[i_z] == 1.0:
-                err_msg = "No effective selection found:"
-                err_msg += f" the failure rate is 1 at z_l={z_l}."
-                raise ValueError(err_msg)
+            #if F_tot_new[i_z] == 1.0:
+            #    err_msg = "No effective selection found:"
+            #    err_msg += f" the failure rate is 1 at z_l={z_l}."
+            #    raise ValueError(err_msg)
 
             if self.thresholded_quantity == "purity":
                 threshold_condition = P_tot_new[i_z] >= threshold_tot_min
@@ -683,7 +683,7 @@ class CalibrationLinear:
         file_name,
         reference_sample_name="",
         notes="",
-        write_also_metrics=True,
+        write_metrics=True,
     ):
         """
         Save the optimal color selection to a YAML file.
@@ -703,7 +703,7 @@ class CalibrationLinear:
             ``reference_sample`` entry of the dictionary.
         notes : str, optional
             Additional notes entering the metadata.
-        write_also_metrics : bool, optional
+        write_metrics : bool, optional
             If True, write the `FOMO-Z_{file_name}_metrics.csv` file containing
             purity, completeness, and failure rate
             as a function of limiting redshift, and their errors.
@@ -739,7 +739,7 @@ class CalibrationLinear:
             yaml.safe_dump(dictionary, f, sort_keys=False, allow_unicode=True)
 
         # Write metrics
-        if write_also_metrics:
+        if write_metrics:
 
             metrics_data = {
                 "z_lim": self.td.z_lim,
