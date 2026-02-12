@@ -523,7 +523,7 @@ class CalibrationLinear:
         if current_thresh <= 0:
             errMsg = f"For z_l={z_l}, the convergence is attained for a value larger than the user-defined thresholded_quantity_min."
             errMsg += f" The current global P, C, and F are {P_tot[i_z]}, {C_tot[i_z]}, and {F_tot[i_z]}, respectively."
-            raise warnings.warn(errMsg)
+            raise ValueError(errMsg)
 
         self.attained_threshold[i_z] = current_thresh
         return z_l, best_by_key, dict_steps

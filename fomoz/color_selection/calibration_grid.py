@@ -316,8 +316,8 @@ class CalibrationGrid:
             prob_min_bin -= self.step
 
         if prob_min_bin <= 0:
-            errMsg = f"Could not find a calibration for the redshift value {self.td.z_lim[i_z]}."
-            errMsg += f" The global P, C, and F are {self.P[i_z]}, {self.C[i_z]}, and {self.F[i_z]}, respectively."
+            errMsg = f"For z_l={self.td.z_lim[i_z]}, the convergence is attained for a value larger than the user-defined thresholded_quantity_min."
+            errMsg += f" The current global P, C, and F are {self.P[i_z]}, {self.C[i_z]}, and {self.F[i_z]}, respectively."
             raise ValueError(errMsg)
 
         # Remove not robust bins, namely those with probability to have per-bin purity
