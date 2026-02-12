@@ -147,9 +147,10 @@ class MeasureLinear:
         completeness_vals,
     ):
         """
+        Keep only optimal color cuts.
+
         Keep only color cut parameters that are optimal for at least one
         threshold step in the iterative optimization process.
-
         A cut is kept if it maximizes the non-thresholded quantity at any
         threshold value T = 1 - n * step, with T > buffered_threshold.
 

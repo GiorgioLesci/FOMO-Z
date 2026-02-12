@@ -65,7 +65,7 @@ class CalibrationLinear:
         outskirts of color-color distributions, a characteristic feature of, e.g.,
         background galaxy populations. For other science cases, refer to the
         `CalibrationGrid` class.
-        
+
 
         The following color conditions are considered in each color-color space:
 
@@ -354,12 +354,16 @@ class CalibrationLinear:
         while current_thresh > 0:
 
             if current_thresh <= self.buffered_threshold[i_z]:
-                errMsg = "For z_l={z_l}, the current threshold in the iterative process is lower"
-                errMsg += " than or equal to the buffered threshold. Try to increase threshold_buffer in the constructor."
-                errMsg += " Consider also the fact that your requirements can not be met."
+                errMsg = f"For z_l={z_l}, the current threshold in the iterative process is lower"
+                errMsg += " than or equal to the buffered threshold."
+                errMsg += f" The current global P, C, and F are {P_tot[i_z]}, {C_tot[i_z]}, and {F_tot[i_z]}, respectively."
+                errMsg += " Try to increase threshold_buffer in the constructor."
+                errMsg += " Consider also the possibility that your requirements can not be met."
+                errMsg += " For example, the minimum global purity (or completeness) set by the user could be too low."
+                errMsg += " This can happen for low-redshift background selections, where the number"
+                errMsg += " of contaminants is low."
                 errMsg += " To check this, try to set threshold_buffer equal to thresholded_quantity_min."
-                errMsg += " If convergence is not attained, check the reference sample."
-                errMsg += f" The global P, C, and F are {P_tot[i_z]}, {C_tot[i_z]}, and {F_tot[i_z]}, respectively."
+                errMsg += " This guarantees convergence."
                 raise ValueError(errMsg)
 
             if current_thresh > start_threshold:
@@ -511,13 +515,15 @@ class CalibrationLinear:
                     iteration += 1
             else:
                 if F_tot_new[i_z] == 1.0:
-                    err_msg = "No effective selection found for z_l={z_l}:"
-                    err_msg += f" the failure rate is 1."
-                    raise warnings.warn(err_msg, UserWarning)
+                    errMsg = f"No effective selection found for z_l={z_l}:"
+                    errMsg += " the failure rate is 1."
+                    raise warnings.warn(errMsg, UserWarning)
                 break  # below the threshold
 
         if current_thresh <= 0:
-            raise ValueError("Could not find an effective selection for z_l={z_l}.")
+            errMsg = f"For z_l={z_l}, the convergence is attained for a value larger than the user-defined thresholded_quantity_min."
+            errMsg += f" The current global P, C, and F are {P_tot[i_z]}, {C_tot[i_z]}, and {F_tot[i_z]}, respectively."
+            raise warnings.warn(errMsg)
 
         self.attained_threshold[i_z] = current_thresh
         return z_l, best_by_key, dict_steps
@@ -690,12 +696,14 @@ class CalibrationLinear:
         reference_sample_name="",
         notes="",
         write_metrics=True,
+        write_redshift_distributions=True,
+        n_bins_redshift=200,
     ):
         """
-        Save the optimal color selection to a YAML file.
+        Save the optimal color selection.
 
-        The dictionary of iterative-threshold cuts is serialized
-        and written to file.
+        The dictionary of optimal cuts is saved to a YAML file.
+        Metrics and redshift distributions, are saved to CSV files.
 
         Parameters
         ----------
@@ -713,6 +721,20 @@ class CalibrationLinear:
             If True, write the `FOMO-Z_{file_name}_metrics.csv` file containing
             purity, completeness, and failure rate
             as a function of limiting redshift, and their errors.
+        write_redshift_distributions : bool, optional
+            If True, write the `FOMO-Z_{file_name}_redshift_distributions.csv` file,
+            containing the binned redshift distributions of color-selected objects.
+            This file contains the redshift bins and the histograms for each limiting
+            redshift point provided to `TargetDefinition`.
+            Histograms are derived using the `get_redshift_distribution` method.
+            The first two columns of the file contain bin edges and bin centers,
+            respectively. Subsequent columns contain the redshift distributions
+            corresponding to each limiting redshift value provided to `TargetDefinition`.
+            These histograms are normalized such that their integral is 1. All histograms
+            share the same bin edges.
+        n_bins_redshift : optional
+            Number of redshift histogram bins. Used only if `write_redshift_distributions`
+            is True.
 
         Raises
         ------
@@ -737,7 +759,7 @@ class CalibrationLinear:
         dictionary["metadata"]["reference_sample"] = reference_sample_name
         dictionary["metadata"]["notes"] = "Produced with the FOMO-Z code. " + notes
 
-        # Write
+        # Write the dictionary
         os.makedirs(output_dir, exist_ok=True)
         file_path = os.path.join(output_dir, f"FOMO-Z_{file_name}.yaml")
 
@@ -760,6 +782,33 @@ class CalibrationLinear:
             metrics_df = pd.DataFrame(metrics_data)
             file_path = os.path.join(output_dir, f"FOMO-Z_{file_name}_metrics.csv")
             metrics_df.to_csv(file_path, index=False)
+
+        # Write the redshift distributions
+        if write_redshift_distributions:
+
+            bin_edges = np.linspace(
+                min(self.dataset["redshift"]),
+                max(self.dataset["redshift"]),
+                n_bins_redshift + 1,
+            )
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+            dist_df = pd.DataFrame(
+                {
+                    "bin_edge_low": bin_edges[:-1],
+                    "bin_edge_high": bin_edges[1:],
+                    "bin_center": bin_centers,
+                }
+            )
+
+            for i in range(len(self.td.z_lim)):
+                hist = self.get_redshift_distribution(i, bin_edges, normalize=True)
+                dist_df[f"z_lim_{i}"] = hist
+
+            file_path = os.path.join(
+                output_dir, f"FOMO-Z_{file_name}_redshift_distributions.csv"
+            )
+            dist_df.to_csv(file_path, index=False)
 
     def get_keys(self):
         """
@@ -834,3 +883,28 @@ class CalibrationLinear:
             mask |= ne.evaluate(key, local_dict=local_dict)
 
         return mask
+
+    def get_redshift_distribution(self, zl_index, bin_edges, normalize=True):
+        """
+        Get the redshift distribution of color-selected objects.
+
+        Returns the redshift distribution relative to the input limiting redshift.
+
+        Parameters
+        ------
+        zl_index : int
+            Index of the redshift threshold in TargetDefinition.z_lim.
+        bin_edges : array-like
+            Number of histogram bins.
+        normalize : bool, optional
+            If true, the output histogram is a PDF. Otherwise, it is a count histogram.
+
+        Returns
+        -------
+        histogram : numpy.array
+            Array of histogram values.
+        """
+        mask = self.get_mask(zl_index, color_condition="all")
+        dataset = self.dataset["redshift"][mask]
+        hist, _ = np.histogram(dataset, bins=bin_edges, density=normalize)
+        return hist

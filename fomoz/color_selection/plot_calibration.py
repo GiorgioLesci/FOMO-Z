@@ -920,7 +920,7 @@ class PlotCalibration:
             loc=loclegend,
             fontsize=legend_fontsize,
             title_fontsize=legend_fontsize,
-            title = r"$" + cut_key.replace("*", r"\,") + "$",
+            title=r"$" + cut_key.replace("*", r"\,") + "$",
         )
 
         if output_file_path is not None:

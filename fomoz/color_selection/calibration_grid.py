@@ -316,9 +316,9 @@ class CalibrationGrid:
             prob_min_bin -= self.step
 
         if prob_min_bin <= 0:
-            raise ValueError(
-                f"Could not find a calibration for the redshift value {self.td.z_lim[i_z]}."
-            )
+            errMsg = f"Could not find a calibration for the redshift value {self.td.z_lim[i_z]}."
+            errMsg += f" The global P, C, and F are {self.P[i_z]}, {self.C[i_z]}, and {self.F[i_z]}, respectively."
+            raise ValueError(errMsg)
 
         # Remove not robust bins, namely those with probability to have per-bin purity
         # p < prob_min_bin larger than alpha. Following the Bayes' theorem, we have
@@ -552,3 +552,28 @@ class CalibrationGrid:
             mask[valid] |= dictionary[cs]["mask"][zl_index][i1, i2]
 
         return mask
+
+    def get_redshift_distribution(self, zl_index, bin_edges, normalize=True):
+        """
+        Get the redshift distribution of color-selected objects.
+
+        Returns the redshift distribution relative to the input limiting redshift.
+
+        Parameters
+        ------
+        zl_index : int
+            Index of the redshift threshold in TargetDefinition.z_lim.
+        bin_edges : array-like
+            Number of histogram bins.
+        normalize : bool, optional
+            If true, the output histogram is a PDF. Otherwise, it is a count histogram.
+
+        Returns
+        -------
+        histogram : numpy.array
+            Array of histogram values.
+        """
+        mask = self.get_mask(zl_index, color_space="all")
+        dataset = self.dataset["redshift"][mask]
+        hist, _ = np.histogram(dataset, bins=bin_edges, density=normalize)
+        return hist
