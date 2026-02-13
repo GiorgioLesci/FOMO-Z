@@ -332,8 +332,9 @@ class CalibrationLinear:
 
         if start_threshold <= threshold_tot_min:
             raise ValueError(
-                f"At z_l={z_l}, the starting threshold, {start_threshold},"
-                f" is <= than the global threshold, {threshold_tot_min}."
+                f"At z_l={z_l}, the minimum value of {self.thresholded_quantity}"
+                f" attained by single cuts, {start_threshold},"
+                f" is <= than the required global threshold, {threshold_tot_min}."
             )
 
         # Start the iterative process
@@ -363,7 +364,6 @@ class CalibrationLinear:
                 errMsg += " This can happen for low-redshift background selections, where the number"
                 errMsg += " of contaminants is low."
                 errMsg += " To check this, try to set threshold_buffer equal to thresholded_quantity_min."
-                errMsg += " This guarantees convergence."
                 raise ValueError(errMsg)
 
             if current_thresh > start_threshold:
@@ -698,6 +698,8 @@ class CalibrationLinear:
         write_metrics=True,
         write_redshift_distributions=True,
         n_bins_redshift=200,
+        min_redshift=0.0,
+        max_redshift=4.0,
     ):
         """
         Save the optimal color selection.
@@ -732,9 +734,13 @@ class CalibrationLinear:
             corresponding to each limiting redshift value provided to `TargetDefinition`.
             These histograms are normalized such that their integral is 1. All histograms
             share the same bin edges.
-        n_bins_redshift : optional
+        n_bins_redshift : int, optional
             Number of redshift histogram bins. Used only if `write_redshift_distributions`
             is True.
+        min_redshift : float, optional
+            Minimum redshift. Used only if `write_redshift_distributions` is True.
+        max_redshift : float, optional
+            Maximum redshift. Used only if `write_redshift_distributions` is True.
 
         Raises
         ------
@@ -786,11 +792,7 @@ class CalibrationLinear:
         # Write the redshift distributions
         if write_redshift_distributions:
 
-            bin_edges = np.linspace(
-                min(self.dataset["redshift"]),
-                max(self.dataset["redshift"]),
-                n_bins_redshift + 1,
-            )
+            bin_edges = np.linspace(min_redshift, max_redshift, n_bins_redshift + 1)
             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
             dist_df = pd.DataFrame(

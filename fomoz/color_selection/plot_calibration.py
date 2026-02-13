@@ -79,8 +79,9 @@ class PlotCalibration:
         self,
         metric,
         ax,
+        plot_style="errorbar",
         show_legend=False,
-        linestyle="-",
+        linestyle="o",
         color="k",
         alpha=0.3,
         interp_points=None,
@@ -98,14 +99,19 @@ class PlotCalibration:
             "P" (purity), "F" (failure rate).
         ax : matplotlib.axes.Axes
             Axis object.
+        plot_style : str, optional
+            Possibilities are: "errorbar" (dots with error bars),
+            "band" (line and 68% confidence band).
         show_legend : bool, optional
             If True, show the legend label. Default is False.
         linestyle : list or str, optional
-            Line style. Default is "-".
+            Style of the marker (if plot_style=="errorbar") or of the line
+            (if plot_style=="band"). Default is "o".
         color : list or str, optional
             Line color. Default is "k".
         alpha : float, optional
             alpha parameter of the 68% confidence interval. Default is 0.3.
+            Used only if plot_style equals "band"
         interp_points : array-like, optional
             Limiting redshift points. If not None, derive the metrics at these points
             using interpolations. Valid only for CalibrationLinear instances. Default is None.
@@ -130,22 +136,35 @@ class PlotCalibration:
                 y = calibration.F
                 y_std = calibration.F_std
 
-            ax.plot(
-                z_lim,
-                y * 100.0,
-                color=color[i],
-                linestyle=linestyle[i],
-                label=self.labels[i] if show_legend else None,
-            )
-
-            if not np.any(np.isnan(y_std)):  # Add error bands if available
-                ax.fill_between(
+            if plot_style == "band":
+                ax.plot(
                     z_lim,
-                    (y - y_std) * 100.0,
-                    (y + y_std) * 100.0,
+                    y * 100.0,
                     color=color[i],
-                    alpha=0.3,
+                    linestyle=linestyle[i],
+                    label=self.labels[i] if show_legend else None,
                 )
+                if not np.any(np.isnan(y_std)):
+                    ax.fill_between(
+                        z_lim,
+                        (y - y_std) * 100.0,
+                        (y + y_std) * 100.0,
+                        color=color[i],
+                        alpha=0.3,
+                    )
+            elif plot_style == "errorbar":
+                ax.errorbar(
+                    z_lim,
+                    y * 100.0,
+                    y_std * 100.0,
+                    c=color[i],
+                    fmt=linestyle[i],
+                    markersize=5,
+                    capsize=5,
+                    label=self.labels[i] if show_legend else None,
+                )
+            else:
+                raise ValueError(f"Invalid plot_style value ({plot_style}).")
 
             if interp_points is not None and isinstance(calibration, CalibrationLinear):
                 sel = ColorSelection()
@@ -184,11 +203,12 @@ class PlotCalibration:
         loclegend="upper right",
         show_legend=False,
         legend_fontsize=13,
+        plot_style="errorbar",
         labelsize=13,
         xlabel=r"$z_{\rm l}$",
         math_ylabels=False,
         fontsize=15,
-        linestyle="-",
+        linestyle="o",
         color="k",
         show_axes_grid=False,
         alpha=0.3,
@@ -218,6 +238,9 @@ class PlotCalibration:
             If True, show the legend. Default is False.
         legend_fontsize : float, optional
             Size of the legend entries. Default is 15.
+        plot_style : str, optional
+            Possibilities are: "errorbar" (dots with error bars),
+            "band" (line and 68% confidence band).
         labelsize : float, optional
             Size of the tick labels. Default is 13.
         xlabel : str, optional
@@ -227,7 +250,8 @@ class PlotCalibration:
         fontsize : float, optional
             Size of the axis labels. Default is 15.
         linestyle : list or str, optional
-            Line style. Default is "-".
+            Style of the marker (if plot_style=="errorbar") or of the line
+            (if plot_style=="band"). Default is "o".
         color : list or str, optional
             Line color. Default is "k".
         show_axes_grid : bool, optional
@@ -268,6 +292,7 @@ class PlotCalibration:
             self.plot_metric(
                 metric,
                 ax[i],
+                plot_style=plot_style,
                 show_legend=show_legend if i == 0 else False,
                 linestyle=linestyle,
                 color=color,
