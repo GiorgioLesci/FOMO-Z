@@ -41,8 +41,8 @@ class Dataset:
             Names of the photometric bands to include in the analysis.
         z_gal_string : str, default='redshift'
             Column name in `dataset` that contains the galaxy redshift values.
-        missing_data : int or float, default=-99
-            Value used in the dataset to denote missing entries. These are replaced
+        missing_data : int, float, or list, default=-99
+            Value(s) used in the dataset to denote missing entries. These are replaced
             with NaN for consistency (if missing data in your data set are NaN,
             you don't need to specify it).
         custom_colors : list of tuple(str, str), optional
@@ -93,15 +93,20 @@ class Dataset:
             errMsg += "Please rename it or set z_gal_string='redshift'."
             raise ValueError(errMsg)
 
+        # Keep only the needed columns
         needed_columns = [z_gal_string] + bands
         self.dataset = dataset[needed_columns].copy()
-        for band in bands:
-            self.dataset[band] = self.dataset[band].replace(missing_data, np.nan)
+
+        # Check for missing data - photometric bands
+        self.dataset[bands] = self.dataset[bands].replace(missing_data, np.nan)
+
+        # Check for missing data - redshifts
         self.dataset = self.dataset.rename(columns={z_gal_string: "redshift"})
         self.dataset["redshift"] = self.dataset["redshift"].replace(
             missing_data, np.nan
         )
 
+        # Set bands, colors, and color spaces
         self.bands = bands
 
         if custom_colors is None:

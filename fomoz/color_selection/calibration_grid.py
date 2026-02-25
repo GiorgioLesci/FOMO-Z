@@ -41,9 +41,28 @@ class CalibrationGrid:
         Class calibrating optimal grid color selections.
 
         This class implements a general approach which identifies optimal selection regions
-        in color-color spaces by directly exploring discretized grids.
+        in color-color spaces by directly exploring discretized grids. At each point of
+        these color-color grids, the following probability to find a target
+        object is computed:
 
-        ... (also, talk about the threshold alpha!)
+        $P_T = \frac{N_T}{N_S}\,,$
+
+        where $N_T$ is the number of target objects in the color-color bin, and
+        $N_S$ is the total number of objects in the reference sample falling in the bin.
+
+        For each limiting redshift value specified in `TargetDefinition`,
+        this method searches for the set of cuts that
+        ($\delta\mathcal{P}_{\rm step}$: `step`,
+        $\mathcal{P}_{\rm min}$: `thresholded_quantity_min`,
+        $\mathcal{C}$: `maximized_quantity`):
+        - Update $\mathcal{P}_{\rm iter}^n = 1 - n\,\delta\mathcal{P}_{\rm step}$,
+          where $n$ is the iteration index, starting from 0.
+        - Remove the color-color bins where $P_T < \mathcal{P}_{\rm iter}^n$.
+        - Compute the global purity $\mathcal{P}$, assuming that all color-color
+          bins yield a significant measurement of $P_T$. If $\mathcal{P}>\mathcal{P}_{\rm min}$,
+          repeat from step 1.
+        - Mask not significant bins, based on the value of `alpha`. Then, recompute
+          the selection metrics.
 
         Parameters
         ----------
@@ -67,11 +86,23 @@ class CalibrationGrid:
             storage requirements.
         alpha : float, default=0.1
             Significance level used to discard statistically non-robust grid bins.
-            A bin is considered as significant only if the posterior
-            probability that its true per-bin purity is below the optimized
-            threshold is smaller than `alpha`. Default is 0.1, namely 10% probability.
-            To avoid the bin significance classification, and include all possible bins,
-            set this parameter equal to 1.
+            For each bin, let k be the number of target objects (successes) out of
+            n total objects (trials), and let p denote the true per-bin purity.
+            Assuming a Binomial likelihood P(k | p, n) and a uniform prior on p
+            over the interval [0, 1], the posterior distribution P(p | k, n)
+            follows a Beta distribution.
+            A bin is considered statistically significant only if the posterior
+            probability that its true purity lies below the minimum acceptable
+            purity p_min satisfies:
+
+                P(p < p_min | k, n) < alpha.
+
+            Therefore, alpha represents the maximum tolerated posterior probability
+            that a bin's true purity is below the required threshold.
+            The default value alpha = 0.1 corresponds to allowing at most a 10%
+            posterior probability that the bin purity is below p_min.
+            To disable this statistical filtering and retain all bins,
+            set alpha = 1.
         step : float, default=0.0001
             Defines the threshold reduction on grid elements. Default is 0.0001.
         do_bootstrap : bool, default=True
@@ -233,6 +264,7 @@ class CalibrationGrid:
             dictionary[cs]["valid"] = valid
             dictionary[cs]["color1_index"] = i1
             dictionary[cs]["color2_index"] = i2
+            dictionary[cs]["mask"] = {}
 
     def _process_for_one_z(self, args):
         r"""
@@ -256,10 +288,11 @@ class CalibrationGrid:
 
         # Loop over color-color spaces to pre-compute statistics on the grids
         dict_stats = {}  # temporary dict containing grid statistics and masks
+
         for cs in self.color_spaces:
 
             # Dictionary initializations
-            self.dict[cs]["mask"] = {}
+            self.dict[cs]["mask"][i_z] = {}
 
             dict_stats[cs] = {}
             dict_stats[cs]["mask"] = {}
@@ -281,7 +314,7 @@ class CalibrationGrid:
 
         while prob_min_bin > 0.0:
 
-            # Mask bins below the bin-level prob threshold
+            # Mask definition
             for cs in self.color_spaces:
                 mask = dict_stats[cs]["prob"] >= prob_min_bin
                 dict_stats[cs]["mask"][i_z] = mask
@@ -327,42 +360,37 @@ class CalibrationGrid:
         # number of trials. We assume that P(k | p, n) is a Binomial distribution and
         # P(p | n) = [0, 1] is a uniform prior.
         # Our selection criterion is P(p < p_min | k, n) < alpha.
+        dict_significant = {}
 
-        if self.alpha < 1.0:
+        for cs in self.color_spaces:
 
-            dict_significant = {}
+            dict_significant[cs] = {}
+            dict_significant[cs]["mask"] = {}
+            shape = dict_stats[cs]["prob"].shape
+            dict_significant[cs]["mask"] = np.zeros(shape, dtype=bool)
 
-            for cs in self.color_spaces:
+            for i in range(shape[0]):
+                for j in range(shape[1]):
+                    k = dict_stats[cs]["N_good"][i][j]
+                    n = dict_stats[cs]["N_total"][i][j]
+                    if n == 0:
+                        continue
+                    # Given the observed data (k successes out of n), compute the posterior
+                    # probability that (true purity < prob_min_bin) is smaller than alpha.
+                    significant = beta.cdf(prob_min_bin, k + 1, n - k + 1) < self.alpha
+                    dict_significant[cs]["mask"][i, j] = significant
 
-                dict_significant[cs] = {}
-                dict_significant[cs]["mask"] = {}
-                shape = dict_stats[cs]["prob"].shape
-                dict_significant[cs]["mask"] = np.zeros(shape, dtype=bool)
+        # Re-define the masks and re-evaluate the metrics
+        for cs in self.color_spaces:
+            self.dict[cs]["mask"][i_z] = (
+                dict_stats[cs]["mask"][i_z] & dict_significant[cs]["mask"]
+            )
 
-                for i in range(shape[0]):
-                    for j in range(shape[1]):
-                        k = dict_stats[cs]["N_good"][i][j]
-                        n = dict_stats[cs]["N_total"][i][j]
-                        if n == 0:
-                            continue
-                        # Given the observed data (k successes out of n), compute the posterior
-                        # probability that (true purity < prob_min_bin) is smaller than alpha.
-                        significant = (
-                            beta.cdf(prob_min_bin, k + 1, n - k + 1) < self.alpha
-                        )
-                        dict_significant[cs]["mask"][i, j] = significant
-
-            # Re-define the masks and re-evaluate the metrics
-            for cs in self.color_spaces:
-                self.dict[cs]["mask"][i_z] = (
-                    dict_stats[cs]["mask"][i_z] & dict_significant[cs]["mask"]
-                )
-
-            mask = self.get_mask(i_z)
-            TP, FP, FN, TN = compute_metrics(mask, self.target_mask[i_z])
-            self.P[i_z] = TP / (TP + FP) if TP + FP > 0 else 0.0
-            self.C[i_z] = TP / (TP + FN) if TP + FN > 0 else 0.0
-            self.F[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0
+        mask = self.get_mask(i_z)
+        TP, FP, FN, TN = compute_metrics(mask, self.target_mask[i_z])
+        self.P[i_z] = TP / (TP + FP) if TP + FP > 0 else 0.0
+        self.C[i_z] = TP / (TP + FN) if TP + FN > 0 else 0.0
+        self.F[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0
 
     def _estimate_errors(self):
         """
@@ -476,10 +504,8 @@ class CalibrationGrid:
         """
         print("\nRunning the grid color selection calibration...")
 
-        results = [
+        for i_z in tqdm(range(len(self.td.z_lim)), desc="Looping over z_lim points"):
             self._process_for_one_z((i_z, store_iterations, cpu_number))
-            for i_z in tqdm(range(len(self.td.z_lim)), desc="Looping over z_lim points")
-        ]
 
         # Compute bootstrap errors
         if self.do_bootstrap:

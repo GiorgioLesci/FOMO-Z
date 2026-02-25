@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from fomoz.color_selection.calibration_linear import CalibrationLinear
+from fomoz.color_selection.calibration_grid import CalibrationGrid
 from fomoz.color_selection.dataset import Dataset
 from fomoz.color_selection.color_selection import ColorSelection
 from fomoz.color_selection.target_definition import TargetDefinition
@@ -92,7 +93,7 @@ def reference_measure_instance(
     return measure
 
 
-# Shared fixture for calibration instance
+# Shared fixtures for calibration instances
 @pytest.fixture
 def reference_calibration_linear_instance(
     reference_dataset_instance, reference_target_definition_instance
@@ -107,6 +108,22 @@ def reference_calibration_linear_instance(
         maximized_quantity_min=0,
         step=0.0001,
         k=3,
+    )
+
+    return calibration
+
+
+@pytest.fixture
+def reference_calibration_grid_instance(
+    reference_dataset_instance, reference_target_definition_instance
+):
+    """Create an CalibrationGrid instance with reference.csv data for testing."""
+    thresholded_quantity_min = 0.9
+    calibration = CalibrationGrid(
+        reference_dataset_instance,
+        reference_target_definition_instance,
+        thresholded_quantity_min,
+        step=0.0001,
     )
 
     return calibration
@@ -409,33 +426,56 @@ class TestMeasureProcess:
 class TestCalibrationProcess:
     """Test cases for the process() method with reference.csv."""
 
-    def test_process(self, reference_calibration_linear_instance):
-        """Test process method with reference data and check C, P, F values."""
-        calibration = reference_calibration_linear_instance
+    def test_process(
+        self, reference_calibration_linear_instance, reference_calibration_grid_instance
+    ):
+        """Test process methods with reference data and check C, P, F values."""
 
-        # Run process (iterative method)
+        # CalibrationLinear
+        calibration = reference_calibration_linear_instance
         calibration.process(cpu_number=1)
 
-        # Check that C_tot and P_tot arrays are populated correctly
         assert len(calibration.C) == len(calibration.td.z_lim)
         assert len(calibration.P) == len(calibration.td.z_lim)
 
-        # Check against known expected values
         expected_C = [0.93014534, 0.9308524]
         expected_P = [0.90407838, 0.90270666]
         expected_F = [0.43672199, 0.31843575]
 
         assert np.allclose(
             calibration.C, expected_C
-        ), f"Completeness mismatch: expected {expected_C}, got {calibration.C}"
+        ), f"Completeness mismatch for CalibrationLinear: expected {expected_C}, got {calibration.C}"
 
         assert np.allclose(
             calibration.P, expected_P
-        ), f"Purity mismatch: expected {expected_P}, got {calibration.P}"
+        ), f"Purity mismatch for CalibrationLinear: expected {expected_P}, got {calibration.P}"
 
         assert np.allclose(
             calibration.F, expected_F
-        ), f"Failure rate mismatch: expected {expected_F}, got {calibration.F}"
+        ), f"Failure rate mismatch for CalibrationLinear: expected {expected_F}, got {calibration.F}"
+
+        # CalibrationGrid
+        calibration = reference_calibration_grid_instance
+        calibration.process(cpu_number=1)
+
+        assert len(calibration.C) == len(calibration.td.z_lim)
+        assert len(calibration.P) == len(calibration.td.z_lim)
+
+        expected_C = [0.9273324, 0.93034951]
+        expected_P = [0.9286385, 0.91652217]
+        expected_F = [0.3153527, 0.26895451]
+
+        assert np.allclose(
+            calibration.C, expected_C
+        ), f"Completeness mismatch for CalibrationGrid: expected {expected_C}, got {calibration.C}"
+
+        assert np.allclose(
+            calibration.P, expected_P
+        ), f"Purity mismatch for CalibrationGrid: expected {expected_P}, got {calibration.P}"
+
+        assert np.allclose(
+            calibration.F, expected_F
+        ), f"Failure rate mismatch for CalibrationGrid: expected {expected_F}, got {calibration.F}"
 
 
 ############################
