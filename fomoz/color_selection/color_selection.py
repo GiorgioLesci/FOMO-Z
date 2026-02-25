@@ -14,9 +14,12 @@ import re
 import numexpr as ne
 import numpy as np
 import yaml
+from astropy.io import fits
 from scipy.interpolate import BSpline
 
 from .tools import set_input_variable_precision
+from .calibration_linear import CalibrationLinear
+from .calibration_grid import CalibrationGrid
 
 
 class ColorSelection:
@@ -42,17 +45,18 @@ class ColorSelection:
             Boolean masks for each redshift in the grid, computed after calling
             ``process``.
         """
-        self.dict = {}
+        self.dict_linear = {}
+        self.dict_grid = {}
         self.mask = []
 
     def _reconstruct_interpolators(self):
         """
-        Reconstruct interpolator objects.
+        Reconstruct interpolator objects for linear color selections.
 
         This method reconstructs the
         interpolator functions for each cut expression.
 
-        After reconstruction, the `self.dict` entries will also include:
+        After reconstruction, the `self.dict_linear` entries will also include:
           - ``c_interp`` : `scipy.interpolate.BSpline`
               The interpolator object for the intercept parameter.
           - ``s_interp`` : `scipy.interpolate.BSpline`, optional
@@ -61,14 +65,14 @@ class ColorSelection:
         Returns
         -------
         None
-            Updates ``self.dict`` in place with the loaded dictionary and
+            Updates ``self.dict_linear`` in place with the loaded dictionary and
             reconstructed interpolator objects.
         """
-        bands = self.dict["metadata"]["bands"]
+        bands = self.dict_linear["metadata"]["bands"]
         if "c" in bands or "s" in bands:
             raise ValueError("Band keys cannot equal 'c' or 's'.")
 
-        for key, entry in self.dict.items():
+        for key, entry in self.dict_linear.items():
 
             # skip metadata
             if key == "metadata":
@@ -102,9 +106,9 @@ class ColorSelection:
                         extrapolate=False,
                     )
 
-    def _select_objects(self, z_lim, mags):
+    def _linear_selection(self, z_lim, mags):
         """
-        Select based on linear color cuts.
+        Select based a linear calibration derived with `CalibrationLinear`.
 
         Select objects at a given redshift threshold.
         - If calibrated limiting redshifts are lower limits:
@@ -116,7 +120,7 @@ class ColorSelection:
           - if `z_lim` > `z_max`, then `z_lim` = `z_max` is imposed;
           - if `z_lim` < `z_min`, then no selection is applied.
 
-        For each cut expression in ``self.dict``, this method:
+        For each cut expression in ``self.dict_linear``, this method:
         1. Interpolates (or uses fixed) cut parameters ``c`` and ``s``
            at the given redshift.
         2. Evaluates the corresponding logical expression with the
@@ -141,7 +145,7 @@ class ColorSelection:
         local_dict = dict(mags)
         local_dict["c"] = None
         local_dict["s"] = None
-        for expr, expr_data in self.dict.items():
+        for expr, expr_data in self.dict_linear.items():
 
             # skip meta data
             if expr == "metadata":
@@ -151,9 +155,11 @@ class ColorSelection:
             z_l_points = expr_data["knots"]
 
             z_l = z_lim
-            if self.dict["metadata"]["z_l_is_lower_limit"] and z_lim < min(z_l_points):
+            if self.dict_linear["metadata"]["z_l_is_lower_limit"] and z_lim < min(
+                z_l_points
+            ):
                 z_l = min(z_l_points)
-            elif not self.dict["metadata"]["z_l_is_lower_limit"] and z_lim > max(
+            elif not self.dict_linear["metadata"]["z_l_is_lower_limit"] and z_lim > max(
                 z_l_points
             ):
                 z_l = max(z_l_points)
@@ -161,7 +167,7 @@ class ColorSelection:
             # apply the selection
             condition = (
                 z_l <= max(z_l_points)
-                if self.dict["metadata"]["z_l_is_lower_limit"]
+                if self.dict_linear["metadata"]["z_l_is_lower_limit"]
                 else z_l >= min(z_l_points)
             )
             if condition:
@@ -205,7 +211,7 @@ class ColorSelection:
         dataset : pandas.DataFrame
             Table containing the photometric dataset. Must have columns
             corresponding to the magnitude names stored in
-            ``self.dict['metadata']['bands']``.
+            ``self.dict_linear['metadata']['bands']``.
         missing_data : int, float, or list, default=-99
             Value(s) used in the dataset to denote missing entries. These are replaced
             with NaN for consistency (if missing data in your data set are NaN,
@@ -218,7 +224,7 @@ class ColorSelection:
             redshift in ``z_lim``.
         """
         # First checks
-        if not self.dict:
+        if not self.dict_linear:
             raise ValueError(
                 "A color cut dictionary must be set",
                 "before the call of this function.",
@@ -226,7 +232,7 @@ class ColorSelection:
 
         self.z_lim = set_input_variable_precision(z_lim)
 
-        required_bands = self.dict["metadata"]["bands"]
+        required_bands = self.dict_linear["metadata"]["bands"]
         missing_bands = [band for band in required_bands if band not in dataset.columns]
         if missing_bands:
             raise ValueError(
@@ -242,62 +248,90 @@ class ColorSelection:
 
         # Magnitude mapping
         mags = {
-            band: dataset[band].to_numpy() for band in self.dict["metadata"]["bands"]
+            band: dataset[band].to_numpy()
+            for band in self.dict_linear["metadata"]["bands"]
         }
 
         # Apply the selection
         self.mask = []
         for z_l in self.z_lim:
-            self.mask.append(self._select_objects(z_l, mags))
+            self.mask.append(self._linear_selection(z_l, mags))
 
     def load_parameters(self, calibration):
         """
-        Load selection parameters from a ``CalibrationLinear`` instance.
+        Load selection parameters from a ``CalibrationLinear`` or ``CalibrationGrid`` instance.
 
-        Load precomputed optimal color cut parameters
-        and reconstruct interpolator objects.
+        Load precomputed optimal color cut parameters and reconstruct interpolator objects
+        in case of linear color selection.
 
         Parameters
         ----------
         calibration : CalibrationLinear
-            `CalibrationLinear` object.
+            `CalibrationLinear` or `CalibrationGrid` object.
 
         Returns
         -------
         None
-            Updates ``self.dict`` in place with the loaded dictionary and
-            reconstructed interpolator objects.
+            Updates ``self.dict_linear`` or ``self.dict_grid`` in place
+            with the loaded dictionary and reconstructed interpolator objects (if linear).
         """
         dictionary = calibration.dict
-        self.dict = copy.deepcopy(dictionary)
-        self._reconstruct_interpolators()
+
+        if isinstance(dictionary, CalibrationLinear):
+            self.dict_linear = copy.deepcopy(dictionary)
+            self._reconstruct_interpolators()
+            print("CalibrationLinear parameters succesfully loaded.")
+        elif isinstance(dictionary, CalibrationGrid):
+            self.dict_grid = copy.deepcopy(dictionary)
+            print("CalibrationGrid parameters succesfully loaded.")
+        else:
+            raise ValueError("Wrong type of the calibration parameter.")
 
     def load_parameters_from_file(self, input_dir, file_name):
         """
         Load selection parameters from file.
 
-        Load precomputed optimal color cut parameters from a YAML file
-        and reconstruct interpolator objects.
-
-        This method reads a YAML-formatted dictionary of optimal selection cuts
-        from file.
+        This function acts depending on the format of the input file.
+          - If .yaml, the selection is interpreted as a `CalibrationLinear` selection.
+            In this case, this function loads precomputed optimal color cut parameters
+            from the YAML file and reconstruct interpolator objects.
+          - If .fits, the selection is interpreted as a `CalibrationGrid` selection.
+            In this case, this function loads precomputed optimal color-color masks
+            defined on grids.
 
         Parameters
         ----------
         input_dir : str
-            Directory where the YAML file is stored.
+            Directory where the input file is stored.
         file_name : str
-            Name of the file to load (must include extension, e.g. "cuts.yaml").
+            Name of the file to load (must include extension).
 
         Returns
         -------
         None
-            Updates ``self.dict`` in place with the loaded dictionary and
-            reconstructed interpolator objects.
+            Updates ``self.dict_linear`` or ``self.dict_grid`` in place
+            with the loaded dictionary and reconstructed interpolator objects (if linear).
         """
         file_path = os.path.join(input_dir, file_name)
+        _, ext = os.path.splitext(file_name)
+        ext = ext.lower()
 
-        with open(file_path, "r", encoding="utf-8") as f:
-            self.dict = yaml.safe_load(f)
+        if ext == ".yaml":
+            with open(file_path, "r", encoding="utf-8") as f:
+                self.dict_linear = yaml.safe_load(f)
 
-        self._reconstruct_interpolators()
+            self._reconstruct_interpolators()
+
+            print("CalibrationLinear parameters successfully loaded from file.")
+
+        elif ext == ".fits":
+            with fits.open(file_path) as hdul:
+                self.dict_grid = {"header": dict(hdul[0].header), "data": hdul[0].data}
+
+            print("CalibrationGrid parameters successfully loaded from file.")
+
+        else:
+            raise ValueError(
+                f"Unsupported file format '{ext}'. "
+                "Only '.yaml' and '.fits' files are supported."
+            )
