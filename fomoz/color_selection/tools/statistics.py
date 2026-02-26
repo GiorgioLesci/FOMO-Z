@@ -419,3 +419,40 @@ def prob_target(metadata, cs, dataset, target_mask):
     prob[nonzero] = N_good[nonzero] / N_total[nonzero]
 
     return prob, N_good, N_total
+
+
+def get_color_color_mask(zl_index, color_space, dictionary):
+    """
+    Get the color-color grid calibration mask.
+
+    Returns the calibration mask relative to the input limiting redshift.
+
+    Parameters
+    ------
+    zl_index : int
+        Index of the redshift threshold in TargetDefinition.z_lim.
+    color_space : str or tuple
+        It can be either "all" (all color-color spaces) or one of
+        the available color-color spaces, in the form `((band1, band2), (band3, band4))`.
+    dictionary : dict
+        The color-color space dictionary, containing grid masks.
+
+    Returns
+    -------
+    mask : numpy.array
+        Array of booleans.
+    """
+    N_objects = len(dictionary[color_space[0]]["valid"])
+    mask = np.full(N_objects, False)
+    for cs in color_space:
+
+        # Assign each galaxy to a bin.
+        # Here, out-of-grid points are excluded.
+        i1 = dictionary[cs]["color1_index"]
+        i2 = dictionary[cs]["color2_index"]
+
+        # Select
+        valid = dictionary[cs]["valid"]
+        mask[valid] |= dictionary[cs]["mask"][zl_index][i1, i2]
+
+    return mask

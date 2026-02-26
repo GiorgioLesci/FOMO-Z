@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 from .dataset import Dataset
 from .target_definition import TargetDefinition
-from .tools import c_domain, color_bin_edges, compute_metrics, prob_target
+from .tools import c_domain, color_bin_edges, compute_metrics, prob_target, get_color_color_mask
 
 
 class CalibrationGrid:
@@ -564,20 +564,7 @@ class CalibrationGrid:
         if dictionary is None:
             dictionary = self.dict
 
-        N_objects = len(dictionary[color_space[0]]["valid"])
-        mask = np.full(N_objects, False)
-        for cs in color_space:
-
-            # Assign each galaxy to a bin.
-            # Here, out-of-grid points are excluded.
-            i1 = dictionary[cs]["color1_index"]
-            i2 = dictionary[cs]["color2_index"]
-
-            # Select
-            valid = dictionary[cs]["valid"]
-            mask[valid] |= dictionary[cs]["mask"][zl_index][i1, i2]
-
-        return mask
+        return get_color_color_mask(zl_index, color_space, dictionary)
 
     def get_redshift_distribution(self, zl_index, bin_edges, normalize=True):
         """

@@ -17,7 +17,7 @@ import yaml
 from astropy.io import fits
 from scipy.interpolate import BSpline
 
-from .tools import set_input_variable_precision
+from .tools import set_input_variable_precision, get_color_color_mask
 from .calibration_linear import CalibrationLinear
 from .calibration_grid import CalibrationGrid
 
@@ -195,6 +195,9 @@ class ColorSelection:
         For each redshift in ``z_lim``, this method evaluates the stored
         color conditions based on the magnitudes in ``dataset`` and produces
         a boolean mask. All results are stored in ``self.mask``.
+        It is possible to load both a `CalibrationLinear` and a `CalibrationGrid`
+        selection. In this case, they'll be related through a OR operator.
+
         - If calibrated limiting redshifts are lower limits:
           - if `z_lim` is lower than the minimum limiting redshift, `z_min`,
             the selection is applied as if `z_lim` equals `z_min`;
@@ -203,6 +206,12 @@ class ColorSelection:
         - If calibrated limiting redshifts are upper limits:
           - if `z_lim` > `z_max`, then `z_lim` = `z_max` is imposed;
           - if `z_lim` < `z_min`, then no selection is applied.
+
+        `CalibrationLinear` selections handle `z_lim` values falling between
+        the limiting redshifts used in the calibration through interpolations.
+        For `CalibrationGrid`, instead, if `z_1 < z_lim < z_2`, we impose:
+        - `z_lim = z_2` if the limiting redshifts are lower limits.
+        - `z_lim = z_1` if the limiting redshifts are upper limits.
 
         Parameters
         ----------
@@ -224,15 +233,25 @@ class ColorSelection:
             redshift in ``z_lim``.
         """
         # First checks
-        if not self.dict_linear:
-            raise ValueError(
-                "A color cut dictionary must be set",
-                "before the call of this function.",
-            )
-
         self.z_lim = set_input_variable_precision(z_lim)
 
-        required_bands = self.dict_linear["metadata"]["bands"]
+        if not self.dict_linear and not self.dict_grid:
+            raise ValueError(
+                "A color cut dictionary must be set before the call of this function."
+            )
+
+        # Determine required bands
+        if self.dict_linear and self.dict_grid:
+            required_bands = self.dict_linear["metadata"]["bands"]
+            if required_bands != self.dict_grid["metadata"]["bands"]:
+                raise ValueError(
+                    "The two input selections are calibrated on different sets of photometric bands."
+                )
+        elif self.dict_linear:
+            required_bands = self.dict_linear["metadata"]["bands"]
+        elif self.dict_grid:
+            required_bands = self.dict_grid["metadata"]["bands"]
+
         missing_bands = [band for band in required_bands if band not in dataset.columns]
         if missing_bands:
             raise ValueError(
@@ -244,18 +263,51 @@ class ColorSelection:
             )
 
         # Handle missing data
+        dataset = dataset.copy()
         dataset[required_bands] = dataset[required_bands].replace(missing_data, np.nan)
+        N_objects = len(dataset)
 
         # Magnitude mapping
-        mags = {
-            band: dataset[band].to_numpy()
-            for band in self.dict_linear["metadata"]["bands"]
-        }
+        mags = {band: dataset[band].to_numpy() for band in required_bands}
 
         # Apply the selection
         self.mask = []
-        for z_l in self.z_lim:
-            self.mask.append(self._linear_selection(z_l, mags))
+        for i_z, z_l in enumerate(self.z_lim):
+
+            mask_linear = np.full(N_objects, False)
+            mask_grid = np.full(N_objects, False)
+
+            if self.dict_linear:
+                mask_linear = self._linear_selection(z_l, mags)
+
+            if self.dict_grid:
+
+                z_l_calib = self.dict_grid["metadata"]["z_l"]
+                z_min = np.min(z_l_calib)
+                z_max = np.max(z_l_calib)
+                i_z = None
+
+                if self.dict_grid["metadata"]["z_l_is_lower_limit"]:
+                    if z_l < z_min:
+                        i_z = 0
+                    elif z_l > z_max:
+                        i_z = None  # No selection
+                    else:
+                        i_z = np.where(z_l_calib >= z_l)[0][0]
+                else:
+                    if z_l < z_min:
+                        i_z = None  # No selection
+                    elif z_l > z_max:
+                        i_z = len(z_l_calib) - 1
+                    else:
+                        i_z = np.where(z_l_calib <= z_l)[0][0]
+                
+                if i_z is not None:
+                    mask_grid = get_color_color_mask(
+                        i_z, self.dict_grid.keys(), self.dict_grid
+                    )
+            
+            self.mask.append(mask_linear | mask_grid)
 
     def load_parameters(self, calibration):
         """
@@ -277,11 +329,11 @@ class ColorSelection:
         """
         dictionary = calibration.dict
 
-        if isinstance(dictionary, CalibrationLinear):
+        if isinstance(calibration, CalibrationLinear):
             self.dict_linear = copy.deepcopy(dictionary)
             self._reconstruct_interpolators()
             print("CalibrationLinear parameters succesfully loaded.")
-        elif isinstance(dictionary, CalibrationGrid):
+        elif isinstance(calibration, CalibrationGrid):
             self.dict_grid = copy.deepcopy(dictionary)
             print("CalibrationGrid parameters succesfully loaded.")
         else:
