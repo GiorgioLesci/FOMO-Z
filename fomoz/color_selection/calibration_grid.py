@@ -19,7 +19,13 @@ from tqdm import tqdm
 
 from .dataset import Dataset
 from .target_definition import TargetDefinition
-from .tools import c_domain, color_bin_edges, compute_metrics, prob_target, get_color_color_mask
+from .tools import (
+    c_domain,
+    color_bin_edges,
+    compute_metrics,
+    prob_target,
+    get_color_color_mask,
+)
 
 
 class CalibrationGrid:

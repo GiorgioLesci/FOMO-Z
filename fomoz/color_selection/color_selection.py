@@ -272,7 +272,7 @@ class ColorSelection:
 
         # Apply the selection
         self.mask = []
-        for i_z, z_l in enumerate(self.z_lim):
+        for z_l in self.z_lim:
 
             mask_linear = np.full(N_objects, False)
             mask_grid = np.full(N_objects, False)
@@ -282,9 +282,10 @@ class ColorSelection:
 
             if self.dict_grid:
 
-                z_l_calib = self.dict_grid["metadata"]["z_l"]
-                z_min = np.min(z_l_calib)
-                z_max = np.max(z_l_calib)
+                tol = 1e-6
+                z_l_calib = np.asarray(self.dict_grid["metadata"]["z_l"])
+                z_min = np.min(z_l_calib) - tol
+                z_max = np.max(z_l_calib) + tol
                 i_z = None
 
                 if self.dict_grid["metadata"]["z_l_is_lower_limit"]:
@@ -293,20 +294,24 @@ class ColorSelection:
                     elif z_l > z_max:
                         i_z = None  # No selection
                     else:
-                        i_z = np.where(z_l_calib >= z_l)[0][0]
+                        indices = np.where(z_l_calib >= z_l - tol)[0]
+                        i_z = indices[0] if len(indices) > 0 else None
                 else:
                     if z_l < z_min:
                         i_z = None  # No selection
                     elif z_l > z_max:
                         i_z = len(z_l_calib) - 1
                     else:
-                        i_z = np.where(z_l_calib <= z_l)[0][0]
-                
+                        indices = np.where(z_l_calib <= z_l + tol)[0]
+                        i_z = indices[-1] if len(indices) > 0 else None
+
                 if i_z is not None:
                     mask_grid = get_color_color_mask(
-                        i_z, self.dict_grid.keys(), self.dict_grid
+                        i_z,
+                        [k for k in self.dict_grid if k != "metadata"],
+                        self.dict_grid,
                     )
-            
+
             self.mask.append(mask_linear | mask_grid)
 
     def load_parameters(self, calibration):

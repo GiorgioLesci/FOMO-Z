@@ -486,22 +486,30 @@ class TestCalibrationProcess:
 class TestColorSelection:
     """Test cases for ColorSelection.process() method with reference.csv."""
 
-    def test_process(self, reference_dataset, reference_calibration_linear_instance):
+    def test_process(
+        self,
+        reference_dataset,
+        reference_calibration_linear_instance,
+        reference_calibration_grid_instance,
+    ):
         """Test process method with reference data and check the number of selected objects."""
         calibration = reference_calibration_linear_instance
         calibration.process(cpu_number=1)
 
-        # "Test" sample and test z_l points
+        calibration_grid = reference_calibration_grid_instance
+        calibration_grid.process(cpu_number=1)
+
+        # "Test" sample
         test_sample = reference_dataset
+
+        # Select - linear
         zl_new = np.arange(min(calibration.td.z_lim), max(calibration.td.z_lim), 0.01)
 
-        # Select
         sel = ColorSelection()
         sel.load_parameters(calibration)
         sel.process(zl_new, test_sample)
         mask = sel.mask
 
-        # Check the number of selected objects
         expected_N = [4389, 4360, 4336, 4311, 4278, 4243, 4219, 4185, 4153, 4121, 4101]
 
         assert len(expected_N) == len(mask)
@@ -509,7 +517,30 @@ class TestColorSelection:
         for i in range(len(zl_new)):
             assert np.allclose(
                 np.sum(mask[i]), expected_N[i]
-            ), f"Number of selected galaxies mismatch for the {i}-th test z_l: expected {expected_N[i]}, got {np.sum(mask[i])}"
+            ), f"[Linear calibration]: Number of selected galaxies mismatch for the {i}-th test z_l: expected {expected_N[i]}, got {np.sum(mask[i])}"
+
+        # Select - grid
+        zl_new = [
+            calibration_grid.td.z_lim[0] - 0.05,
+            calibration_grid.td.z_lim[0],
+            calibration_grid.td.z_lim[0] + 0.05,
+            calibration_grid.td.z_lim[1],
+            calibration_grid.td.z_lim[1] + 0.05,
+        ]
+
+        sel = ColorSelection()
+        sel.load_parameters(calibration_grid)
+        sel.process(zl_new, test_sample)
+        mask = sel.mask
+
+        expected_N = [4260, 4260, 4037, 4037, 0]
+
+        assert len(expected_N) == len(mask)
+
+        for i in range(len(zl_new)):
+            assert np.allclose(
+                np.sum(mask[i]), expected_N[i]
+            ), f"[Grid calibration]: Number of selected galaxies mismatch for the {i}-th test z_l: expected {expected_N[i]}, got {np.sum(mask[i])}"
 
 
 if __name__ == "__main__":
