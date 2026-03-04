@@ -141,7 +141,7 @@ class PlotCalibration:
                     z_lim,
                     y * 100.0,
                     color=color[i],
-                    linestyle=linestyle[i],
+                    #linestyle=linestyle[i],
                     label=self.labels[i] if show_legend else None,
                 )
                 if not np.any(np.isnan(y_std)):

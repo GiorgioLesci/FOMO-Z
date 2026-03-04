@@ -25,7 +25,8 @@ def compute_metrics(mask, target_mask):
     mask : array-like of bool
         Boolean mask of selected objects by color cuts.
     target_mask : np.ndarray
-        Boolean mask of target objects (satisfying redshift + additional rules).
+        Mask of target object probabilities (i.e., probability to
+        satisfy redshift selections + additional rules).
 
     Returns
     -------
@@ -38,16 +39,16 @@ def compute_metrics(mask, target_mask):
     TN : int
         True Negatives.
     """
-    if mask.shape != target_mask.shape:
-        raise ValueError(
-            f"Mask shapes do not match: mask has shape {mask.shape}, "
-            f"target_mask has shape {target_mask.shape}"
-        )
-
-    TP = np.count_nonzero(mask & target_mask)
-    FP = np.count_nonzero(mask & ~target_mask)
-    FN = np.count_nonzero(~mask & target_mask)
-    TN = np.count_nonzero(~mask & ~target_mask)
+    if target_mask.dtype == bool:
+        TP = np.count_nonzero(mask & target_mask)
+        FP = np.count_nonzero(mask & ~target_mask)
+        FN = np.count_nonzero(~mask & target_mask)
+        TN = np.count_nonzero(~mask & ~target_mask)
+    else:
+        TP = np.sum(target_mask[mask])
+        FP = np.sum(1.0 - target_mask[mask])
+        FN = np.sum(target_mask[~mask])
+        TN = np.sum(1.0 - target_mask[~mask])
 
     return TP, FP, FN, TN
 
