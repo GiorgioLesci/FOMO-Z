@@ -7,6 +7,7 @@ This module handles dataset properties.
 """
 
 from itertools import combinations
+import re
 
 import numpy as np
 import pandas as pd
@@ -92,6 +93,14 @@ class Dataset:
             errMsg = "Dataset already contains a 'redshift' column. "
             errMsg += "Please rename it or set z_gal_string='redshift'."
             raise ValueError(errMsg)
+
+        # Check if band keys have allowed names
+        allowed_pattern = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+        for band in bands:
+            if not allowed_pattern.fullmatch(band):
+                raise ValueError(
+                    f"Invalid band name '{band}'. Must start with letter/underscore and contain only letters, numbers, underscores."
+                )
 
         # Keep only the needed columns
         needed_columns = [z_gal_string] + bands
