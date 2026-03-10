@@ -90,11 +90,11 @@ class TargetDefinition:
 
         self.additional_rules = additional_rules
 
-    def get_target_mask(self, dataset, z_lim):
+    def get_target_mask(self, dataset, z_lim, PDZs):
         """
         Create a mask identifying galaxies that satisfy a set of conditions.
 
-        This function generates a 2D boolean mask array where each row corresponds
+        This function generates a 2D mask array where each row corresponds
         to a different redshift limit and each column corresponds to a galaxy in the
         dataset. A value of `True` indicates that a galaxy meets all selection criteria
         for that particular redshift limit.
@@ -106,6 +106,10 @@ class TargetDefinition:
             and any additional properties referenced in `self.additional_rules`.
         z_lim : numpy.array of float
             Limiting redshift points.
+        PDZs : list of array-like, default=None
+            Redshift probability functions (normalization is not required) used
+            in the metrics computation. If None, point-estimates are used
+            (whose key is defined by the "redshift" key in the data set).
 
         Returns
         -------
@@ -121,14 +125,22 @@ class TargetDefinition:
         - The returned mask can be used directly for calculating completeness, purity,
           and other selection metrics.
         """
-        target_mask = np.full((len(z_lim), len(dataset)), False, dtype=bool)
+        if PDZs is None:
+            dtype = bool
+        else:
+            dtype = float
+
+        target_mask = np.full((len(z_lim), len(dataset)), False, dtype=dtype)
+
         for i, zz in enumerate(z_lim):
 
             # Limiting redshift
-            if self.is_zlim_lower:
+            if self.is_zlim_lower and PDZs is None:
                 target_mask[i] = dataset["redshift"] > zz
-            else:
+            elif self.is_zlim_lower == False and PDZs is None:
                 target_mask[i] = dataset["redshift"] < zz
+            else:
+                NotImplementedError
 
             # Additional rules
             if self.additional_rules is None:

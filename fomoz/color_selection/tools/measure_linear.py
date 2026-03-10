@@ -439,7 +439,7 @@ class MeasureLinear:
 
                 self.dict_all[z_lim][(mag1, mag2)][(mag3, mag4)] = sub_dict
 
-    def process(self, z_lim, cpu_number=None):
+    def process(self, z_lim, PDZs, cpu_number=None):
         """
         Apply all color cuts and compute summary statistics.
 
@@ -451,6 +451,10 @@ class MeasureLinear:
         ----------
         z_lim : float
             Limiting redshift.
+        PDZs : list of array-like, default=None
+            Redshift probability functions (normalization is not required) used
+            in the metrics computation. If None, point-estimates are used
+            (whose key is defined by the "redshift" key in the data set).
         cpu_number : int or None, optional
             Number of CPUs to use for parallel processing when applying cuts.
             - If `None`, defaults to `max(mp.cpu_count() - 2, 1)`.
@@ -468,7 +472,7 @@ class MeasureLinear:
                 "z_lim must be one of the elements of TargetDefinition's z_lim"
             )
 
-        self.target_mask = self.td.get_target_mask(self.dataset, [z_lim])[0]
+        self.target_mask = self.td.get_target_mask(self.dataset, [z_lim], PDZs)[0]
 
         for i in range(len(self.colors)):
             self._apply_cuts(

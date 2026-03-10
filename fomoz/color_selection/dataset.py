@@ -21,6 +21,7 @@ class Dataset:
         dataset,
         bands,
         z_gal_string="redshift",
+        PDZs=None,
         missing_data=-99,
         custom_colors=None,
     ):
@@ -41,7 +42,14 @@ class Dataset:
         bands : list of str
             Names of the photometric bands to include in the analysis.
         z_gal_string : str, default='redshift'
-            Column name in `dataset` that contains the galaxy redshift values.
+            Column name in `dataset` that contains the point-estimate redshift values.
+            Used in the metrics computation only if `PDZs` is None. It is always
+            used to derive the redshift distributions by the `get_redshift_distribution`
+            methods of the calibration classes.
+        PDZs : list of array-like, default=None
+            Redshift probability functions (normalization is not required) used
+            in the metrics computation. If not provided, point-estimates are used
+            (whose key is defined by `z_gal_string`).
         missing_data : int, float, or list, default=-99
             Value(s) used in the dataset to denote missing entries. These are replaced
             with NaN for consistency (if missing data in your data set are NaN,
@@ -76,13 +84,13 @@ class Dataset:
         if not all(isinstance(b, str) for b in bands):
             raise TypeError("bands must contain only strings")
 
+        if "c" in bands or "s" in bands:
+            raise ValueError("Band keys cannot equal 'c' or 's'.")
+
         if z_gal_string not in dataset.columns:
             errMsg = f"z_gal_string='{z_gal_string}' "
             errMsg += "not found in dataset columns."
             raise KeyError(errMsg)
-
-        if "c" in bands or "s" in bands:
-            raise ValueError("Band keys cannot equal 'c' or 's'.")
 
         if z_gal_string in bands:
             errMsg = f"z_gal_string='{z_gal_string}' conflicts "
@@ -94,8 +102,13 @@ class Dataset:
             errMsg += "Please rename it or set z_gal_string='redshift'."
             raise ValueError(errMsg)
 
+        if PDZs and np.asarray(PDZs).shape[0] != len(dataset):
+            raise ValueError("PDZs.shape[0] != len(dataset)")
+
+        self.PDZs = PDZs
+
         # Check if band keys have allowed names
-        allowed_pattern = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+        allowed_pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
         for band in bands:
             if not allowed_pattern.fullmatch(band):
                 raise ValueError(

@@ -196,6 +196,7 @@ class CalibrationLinear:
         self.dataset = dataset.dataset
         self.bands = dataset.bands
         self.colors = dataset.colors
+        self.PDZs = dataset.PDZs
         self.td = target_definition
 
         if isinstance(thresholded_quantity_min, float):
@@ -262,7 +263,9 @@ class CalibrationLinear:
         self.attained_threshold = np.zeros(len(self.td.z_lim))
 
         # Create the target mask
-        self.target_mask = self.td.get_target_mask(self.dataset, self.td.z_lim)
+        self.target_mask = self.td.get_target_mask(
+            self.dataset, self.td.z_lim, self.PDZs
+        )
 
     def _process_for_one_z(self, args):
         r"""
@@ -309,7 +312,7 @@ class CalibrationLinear:
             self.c_precision,
             self.step,
         )
-        measure.process(z_l, cpu_number=cpu_number)
+        measure.process(z_l, self.PDZs, cpu_number=cpu_number)
 
         # Get the correct dictionary
         self.dict[z_l] = {}
@@ -566,7 +569,7 @@ class CalibrationLinear:
                 ) - bt_sample[mag2].values.astype(np.float32)
 
             # Get the target mask
-            target_mask = self.td.get_target_mask(bt_sample, self.td.z_lim)
+            target_mask = self.td.get_target_mask(bt_sample, self.td.z_lim, self.PDZs)
 
             # Compute the metrics
             C_temp = np.zeros(len(self.td.z_lim))
@@ -642,7 +645,6 @@ class CalibrationLinear:
         print("\nRunning the linear color cut calibration...")
 
         # Pre-compute colors
-        self.redshift = self.dataset["redshift"].values.astype(np.float32)
         self.color_cache = {}
         for mag1, mag2 in self.colors:
             self.color_cache[(mag1, mag2)] = self.dataset[mag1].values.astype(
@@ -670,7 +672,7 @@ class CalibrationLinear:
             self.F,
         )
 
-        del self.redshift, self.color_cache
+        del self.color_cache
 
         # Compute bootstrap errors
         if self.do_bootstrap:
