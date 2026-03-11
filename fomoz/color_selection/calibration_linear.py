@@ -196,7 +196,8 @@ class CalibrationLinear:
         self.dataset = dataset.dataset
         self.bands = dataset.bands
         self.colors = dataset.colors
-        self.PDZs = dataset.PDZs
+        self.CDZs = dataset.CDZs
+        self.PDZ_x = dataset.PDZ_x
         self.td = target_definition
 
         if isinstance(thresholded_quantity_min, float):
@@ -263,8 +264,8 @@ class CalibrationLinear:
         self.attained_threshold = np.zeros(len(self.td.z_lim))
 
         # Create the target mask
-        self.target_mask = self.td.get_target_mask(
-            self.dataset, self.td.z_lim, self.PDZs
+        self.target_mask = self.td._get_target_mask(
+            self.dataset, self.td.z_lim, self.CDZs, self.PDZ_x
         )
 
     def _process_for_one_z(self, args):
@@ -312,7 +313,7 @@ class CalibrationLinear:
             self.c_precision,
             self.step,
         )
-        measure.process(z_l, self.PDZs, cpu_number=cpu_number)
+        measure.process(z_l, self.CDZs, self.PDZ_x, cpu_number=cpu_number)
 
         # Get the correct dictionary
         self.dict[z_l] = {}
@@ -569,7 +570,9 @@ class CalibrationLinear:
                 ) - bt_sample[mag2].values.astype(np.float32)
 
             # Get the target mask
-            target_mask = self.td.get_target_mask(bt_sample, self.td.z_lim, self.PDZs)
+            target_mask = self.td._get_target_mask(
+                bt_sample, self.td.z_lim, self.CDZs, self.PDZ_x
+            )
 
             # Compute the metrics
             C_temp = np.zeros(len(self.td.z_lim))

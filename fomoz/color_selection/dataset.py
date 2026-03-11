@@ -22,6 +22,7 @@ class Dataset:
         bands,
         z_gal_string="redshift",
         PDZs=None,
+        PDZ_x=None,
         missing_data=-99,
         custom_colors=None,
     ):
@@ -46,10 +47,12 @@ class Dataset:
             Used in the metrics computation only if `PDZs` is None. It is always
             used to derive the redshift distributions by the `get_redshift_distribution`
             methods of the calibration classes.
-        PDZs : list of array-like, default=None
+        PDZs : array-like of array-like, default=None
             Redshift probability functions (normalization is not required) used
             in the metrics computation. If not provided, point-estimates are used
-            (whose key is defined by `z_gal_string`).
+            (whose key is defined by `z_gal_string`). Must have shape `(len(dataset), len(PDZ_x))`.
+        PDZ_x : array-like, default=None
+            Redshift values where PDZs[i] is computed.
         missing_data : int, float, or list, default=-99
             Value(s) used in the dataset to denote missing entries. These are replaced
             with NaN for consistency (if missing data in your data set are NaN,
@@ -102,10 +105,30 @@ class Dataset:
             errMsg += "Please rename it or set z_gal_string='redshift'."
             raise ValueError(errMsg)
 
-        if PDZs and np.asarray(PDZs).shape[0] != len(dataset):
-            raise ValueError("PDZs.shape[0] != len(dataset)")
+        # PDZs
+        self.CDZs = None
+        self.PDZ_x = np.asarray(PDZ_x)
 
-        self.PDZs = PDZs
+        if PDZs is not None:
+
+            # Check the input values
+            if np.asarray(PDZs).shape[0] != len(dataset):
+                raise ValueError("PDZs.shape[0] != len(dataset)")
+            if np.asarray(PDZs).shape[1] != len(PDZ_x):
+                raise ValueError("PDZs.shape[1] != len(PDZ_x)")
+            if not np.all(np.diff(PDZ_x) > 0):
+                raise ValueError("PDZ_x must be strictly increasing (sorted).")
+
+            # Normalize
+            total_int = np.trapz(np.asarray(PDZs), np.asarray(PDZ_x), axis=1)
+            PDZs_norm = np.asarray(PDZs) / total_int[:, None]
+            
+            dz = np.diff(np.asarray(PDZ_x))
+            cdf = np.zeros_like(PDZs_norm)
+            cdf[:,1:] = np.cumsum(
+                0.5 * (PDZs_norm[:,:-1] + PDZs_norm[:,1:]) * dz, axis=1
+            )
+            self.CDZs = cdf
 
         # Check if band keys have allowed names
         allowed_pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")

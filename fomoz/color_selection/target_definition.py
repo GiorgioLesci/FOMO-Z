@@ -90,7 +90,7 @@ class TargetDefinition:
 
         self.additional_rules = additional_rules
 
-    def get_target_mask(self, dataset, z_lim, PDZs):
+    def _get_target_mask(self, dataset, z_lim, CDZs, PDZ_x):
         """
         Create a mask identifying galaxies that satisfy a set of conditions.
 
@@ -106,15 +106,17 @@ class TargetDefinition:
             and any additional properties referenced in `self.additional_rules`.
         z_lim : numpy.array of float
             Limiting redshift points.
-        PDZs : list of array-like, default=None
-            Redshift probability functions (normalization is not required) used
+        CDZs : array-like of array-like
+            Cumulative redshift distributions (normalization IS REQUIRED) used
             in the metrics computation. If None, point-estimates are used
             (whose key is defined by the "redshift" key in the data set).
+        PDZ_x : array-like
+            Redshift values where CDZs[i] is computed.
 
         Returns
         -------
-        target_mask : numpy.ndarray of bool
-            2D boolean array with shape (len(z_lim), len(dataset)).
+        target_mask : numpy.ndarray
+            2D mask with shape (len(z_lim), len(dataset)).
             target_mask[i, j] = True indicates that galaxy j satisfies all selection
             criteria for redshift limit z_lim[i].
 
@@ -125,22 +127,32 @@ class TargetDefinition:
         - The returned mask can be used directly for calculating completeness, purity,
           and other selection metrics.
         """
-        if PDZs is None:
+        if CDZs is None:
             dtype = bool
         else:
             dtype = float
+            idxs = np.searchsorted(PDZ_x, z_lim, side="left")
+            idxs = np.clip(idxs, 0, len(PDZ_x)-1)
 
         target_mask = np.full((len(z_lim), len(dataset)), False, dtype=dtype)
 
         for i, zz in enumerate(z_lim):
 
             # Limiting redshift
-            if self.is_zlim_lower and PDZs is None:
+            if self.is_zlim_lower and CDZs is None:
                 target_mask[i] = dataset["redshift"] > zz
-            elif self.is_zlim_lower == False and PDZs is None:
+            
+            elif self.is_zlim_lower == False and CDZs is None:
                 target_mask[i] = dataset["redshift"] < zz
+
             else:
-                NotImplementedError
+
+                if self.is_zlim_lower:
+                    probs = 1 - CDZs[:, idxs[i]]
+                else:
+                    probs = CDZs[:, idxs[i]]
+
+                target_mask[i] = probs
 
             # Additional rules
             if self.additional_rules is None:
@@ -156,16 +168,16 @@ class TargetDefinition:
                 data = dataset[property_name]
 
                 if operator == ">":
-                    target_mask[i] &= data > threshold
+                    target_mask[i] *= data > threshold
                 elif operator == "<":
-                    target_mask[i] &= data < threshold
+                    target_mask[i] *= data < threshold
                 elif operator == ">=":
-                    target_mask[i] &= data >= threshold
+                    target_mask[i] *= data >= threshold
                 elif operator == "<=":
-                    target_mask[i] &= data <= threshold
+                    target_mask[i] *= data <= threshold
                 elif operator == "==":
-                    target_mask[i] &= data == threshold
+                    target_mask[i] *= data == threshold
                 elif operator == "!=":
-                    target_mask[i] &= data != threshold
+                    target_mask[i] *= data != threshold
 
         return target_mask

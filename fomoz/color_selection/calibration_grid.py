@@ -137,7 +137,8 @@ class CalibrationGrid:
         self.dataset = dataset.dataset
         self.bands = dataset.bands
         self.colors = dataset.colors
-        self.PDZs = dataset.PDZs
+        self.CDZs = dataset.CDZs
+        self.PDZ_x = dataset.PDZ_x
         self.color_spaces = dataset.color_spaces
         self.td = target_definition
 
@@ -192,8 +193,8 @@ class CalibrationGrid:
         self._update_dict(self.dict, self.dataset)
 
         # Create the target mask
-        self.target_mask = self.td.get_target_mask(
-            self.dataset, self.td.z_lim, self.PDZs
+        self.target_mask = self.td._get_target_mask(
+            self.dataset, self.td.z_lim, self.CDZs, self.PDZ_x
         )
 
     def _update_dict_metadata(self, dictionary, dataset):
@@ -447,7 +448,9 @@ class CalibrationGrid:
             P_temp = np.zeros(len(self.td.z_lim))
             F_temp = np.zeros(len(self.td.z_lim))
 
-            target_mask = self.td.get_target_mask(bt_sample, self.td.z_lim, self.PDZs)
+            target_mask = self.td._get_target_mask(
+                bt_sample, self.td.z_lim, self.CDZs, self.PDZ_x
+            )
             for i_z in range(len(self.td.z_lim)):
                 mask = self.get_mask(i_z, dictionary=dict_temp)
                 TP, FP, FN, TN = compute_metrics(mask, target_mask[i_z])
