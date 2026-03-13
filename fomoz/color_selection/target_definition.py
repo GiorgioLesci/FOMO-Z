@@ -116,7 +116,8 @@ class TargetDefinition:
         Returns
         -------
         target_mask : numpy.ndarray
-            2D mask with shape (len(z_lim), len(dataset)).
+            2D mask with shape (len(z_lim), len(dataset)) multiplied by prior weights
+            (if provided to the `Dataset` class).
             target_mask[i, j] = True indicates that galaxy j satisfies all selection
             criteria for redshift limit z_lim[i].
 
@@ -127,21 +128,23 @@ class TargetDefinition:
         - The returned mask can be used directly for calculating completeness, purity,
           and other selection metrics.
         """
-        if CDZs is None:
-            dtype = bool
+        input_weights = np.asarray(dataset["weights"].values)
+        if CDZs is None and np.allclose(input_weights, 1.0):
+            target_mask = np.full((len(z_lim), len(dataset)), False, dtype=bool)
         else:
-            dtype = float
-            idxs = np.searchsorted(PDZ_x, z_lim, side="left")
-            idxs = np.clip(idxs, 0, len(PDZ_x)-1)
+            target_mask = np.full((len(z_lim), len(dataset)), 0.0, dtype=float)
+            weights = input_weights
 
-        target_mask = np.full((len(z_lim), len(dataset)), False, dtype=dtype)
+        if CDZs is not None:
+            idxs = np.searchsorted(PDZ_x, z_lim, side="left")
+            idxs = np.clip(idxs, 0, len(PDZ_x) - 1)
 
         for i, zz in enumerate(z_lim):
 
             # Limiting redshift
             if self.is_zlim_lower and CDZs is None:
                 target_mask[i] = dataset["redshift"] > zz
-            
+
             elif self.is_zlim_lower == False and CDZs is None:
                 target_mask[i] = dataset["redshift"] < zz
 
@@ -152,7 +155,11 @@ class TargetDefinition:
                 else:
                     probs = CDZs[:, idxs[i]]
 
-                target_mask[i] = probs
+                target_mask[i] = np.clip(probs, 0.0, 1.0)
+
+            # Multiply by the prior weights
+            if not np.issubdtype(target_mask.dtype, np.bool_):
+                target_mask[i] *= weights
 
             # Additional rules
             if self.additional_rules is None:
@@ -168,16 +175,21 @@ class TargetDefinition:
                 data = dataset[property_name]
 
                 if operator == ">":
-                    target_mask[i] *= data > threshold
+                    condition = data > threshold
                 elif operator == "<":
-                    target_mask[i] *= data < threshold
+                    condition = data < threshold
                 elif operator == ">=":
-                    target_mask[i] *= data >= threshold
+                    condition = data >= threshold
                 elif operator == "<=":
-                    target_mask[i] *= data <= threshold
+                    condition = data <= threshold
                 elif operator == "==":
-                    target_mask[i] *= data == threshold
+                    condition = data == threshold
                 elif operator == "!=":
-                    target_mask[i] *= data != threshold
+                    condition = data != threshold
+
+                if np.issubdtype(target_mask.dtype, np.bool_):
+                    target_mask[i] &= condition
+                else:
+                    target_mask[i] *= condition
 
         return target_mask

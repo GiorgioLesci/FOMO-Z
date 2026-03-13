@@ -139,6 +139,7 @@ class CalibrationGrid:
         self.colors = dataset.colors
         self.CDZs = dataset.CDZs
         self.PDZ_x = dataset.PDZ_x
+        self.weights = np.array(self.dataset["weights"].values)
         self.color_spaces = dataset.color_spaces
         self.td = target_definition
 
@@ -332,7 +333,7 @@ class CalibrationGrid:
             mask = self.get_mask(i_z, dictionary=dict_stats)
 
             # Total completeness and purity
-            TP, FP, FN, TN = compute_metrics(mask, self.target_mask[i_z])
+            TP, FP, FN, TN = compute_metrics(mask, self.target_mask[i_z], self.weights)
             C = TP / (TP + FN) if TP + FN > 0 else 0.0
             P = TP / (TP + FP) if TP + FP > 0 else 0.0
 
@@ -397,7 +398,7 @@ class CalibrationGrid:
             )
 
         mask = self.get_mask(i_z)
-        TP, FP, FN, TN = compute_metrics(mask, self.target_mask[i_z])
+        TP, FP, FN, TN = compute_metrics(mask, self.target_mask[i_z], self.weights)
         self.P[i_z] = TP / (TP + FP) if TP + FP > 0 else 0.0
         self.C[i_z] = TP / (TP + FN) if TP + FN > 0 else 0.0
         self.F[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0
@@ -453,7 +454,7 @@ class CalibrationGrid:
             )
             for i_z in range(len(self.td.z_lim)):
                 mask = self.get_mask(i_z, dictionary=dict_temp)
-                TP, FP, FN, TN = compute_metrics(mask, target_mask[i_z])
+                TP, FP, FN, TN = compute_metrics(mask, target_mask[i_z], self.weights)
                 C_temp[i_z] = TP / (TP + FN) if TP + FN > 0 else 0.0
                 P_temp[i_z] = TP / (TP + FP) if TP + FP > 0 else 0.0
                 F_temp[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0

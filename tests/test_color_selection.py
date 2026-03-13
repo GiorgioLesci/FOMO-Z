@@ -19,9 +19,6 @@ from fomoz.color_selection.target_definition import TargetDefinition
 from fomoz.color_selection.tools import (
     MeasureLinear,
     build_nested_dict,
-    compute_for_cross,
-    compute_for_simple,
-    compute_metrics,
     float_representer,
     interpolate_parameters,
     make_yaml_serializable,
@@ -41,7 +38,9 @@ def reference_dataset():
     if not os.path.exists(data_path):
         pytest.skip(f"Reference dataset not found at {data_path}")
 
-    return pd.read_csv(data_path, comment="#")
+    df = pd.read_csv(data_path, comment="#")
+    df["weights"] = 1
+    return df
 
 
 # Shared fixture for dataset instance

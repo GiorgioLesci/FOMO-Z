@@ -13,11 +13,11 @@ from scipy.interpolate import UnivariateSpline
 from .color_domain import color_bin_edges
 
 
-def compute_metrics(mask, target_mask):
+def compute_metrics(mask, target_mask, weights):
     """
     Compute classification metrics (TP, FP, FN, TN).
 
-    The function computes true/false positives and true/false negatives
+    This function computes true/false positives and true/false negatives
     based on the input masks.
 
     Parameters
@@ -26,29 +26,43 @@ def compute_metrics(mask, target_mask):
         Boolean mask of selected objects by color cuts.
     target_mask : np.ndarray
         Mask of target object probabilities (i.e., probability to
-        satisfy redshift selections + additional rules).
+        satisfy redshift selections + additional rules), multiplied
+        by `weights`.
+    weights : np.ndarray
+        Per-object weights.
 
     Returns
     -------
-    TP : int
+    TP : float
         True Positives.
-    FP : int
+    FP : float
         False Positives.
-    FN : int
+    FN : float
         False Negatives.
-    TN : int
+    TN : float
         True Negatives.
     """
-    if target_mask.dtype == bool:
-        TP = np.count_nonzero(mask & target_mask)
-        FP = np.count_nonzero(mask & ~target_mask)
-        FN = np.count_nonzero(~mask & target_mask)
-        TN = np.count_nonzero(~mask & ~target_mask)
+    if (
+        np.issubdtype(target_mask.dtype, np.bool_)
+        or np.issubdtype(target_mask.dtype, np.int8)
+    ) and np.allclose(weights, 1.0):
+        sel = mask
+        tgt = target_mask
+
+        TP = np.count_nonzero(sel & tgt)
+        FP = np.count_nonzero(sel) - TP
+        FN = np.count_nonzero(tgt) - TP
+        TN = len(mask) - TP - FP - FN
+
     else:
-        TP = np.sum(target_mask[mask])
-        FP = np.sum(1.0 - target_mask[mask])
-        FN = np.sum(target_mask[~mask])
-        TN = np.sum(1.0 - target_mask[~mask])
+        TP = target_mask[mask].sum()
+        FN = target_mask[~mask].sum()
+
+        n_sel = weights[mask].sum()
+        n_unsel = weights[~mask].sum()
+
+        FP = n_sel - TP
+        TN = n_unsel - FN
 
     return TP, FP, FN, TN
 
@@ -57,7 +71,7 @@ def compute_for_simple(args):
     """
     Compute classification metrics for a simple threshold on a single color.
 
-    The function applies a threshold `c` on a color array,
+    This function applies a threshold `c` on a color array,
     generating two masks:
     - `mask_up` for objects with color > c
     - `mask_low` for objects with color < c
@@ -75,6 +89,8 @@ def compute_for_simple(args):
             Array of color values for the objects.
         - target_mask : np.ndarray
             Boolean mask of target objects (satisfying redshift + additional rules).
+        - weights : np.ndarray
+            Prior weights.
 
     Returns
     -------
@@ -84,13 +100,13 @@ def compute_for_simple(args):
         where the suffix `_up` refers to the mask `color > c` and `_low`
         refers to `color < c`.
     """
-    c, color, target_mask = args
+    c, color, target_mask, weights = args
     mask_up = color > c
     mask_low = color < c
 
     return [
-        *compute_metrics(mask_up, target_mask),
-        *compute_metrics(mask_low, target_mask),
+        *compute_metrics(mask_up, target_mask, weights),
+        *compute_metrics(mask_low, target_mask, weights),
     ]
 
 
@@ -117,6 +133,8 @@ def compute_for_cross(args):
             Second color feature array.
         - target_mask : np.ndarray
             Boolean mask of target objects (satisfying redshift + additional rules).
+        - weights : np.ndarray
+            Prior weights.
 
     Returns
     -------
@@ -129,7 +147,7 @@ def compute_for_cross(args):
         3. `color1 <  s * color2 + c`
         4. `color1 < -s * color2 + c`
     """
-    s, c, color1, color2, target_mask = args
+    s, c, color1, color2, target_mask, weights = args
 
     cuts = [
         color1 > s * color2 + c,
@@ -138,11 +156,11 @@ def compute_for_cross(args):
         color1 < -s * color2 + c,
     ]
 
-    return [compute_metrics(mask, target_mask) for mask in cuts]
+    return [compute_metrics(mask, target_mask, weights) for mask in cuts]
 
 
 def combine_optimal_cuts(
-    z_lim, color_cache, target_mask, dictionary, C_tot, P_tot, F_tot
+    z_lim, color_cache, target_mask, weights, dictionary, C_tot, P_tot, F_tot
 ):
     """
     Combine optimal color cuts and compute global metrics.
@@ -160,6 +178,8 @@ def combine_optimal_cuts(
         values are numpy arrays of color values.
     target_mask : np.ndarray
         Boolean mask of target objects (satisfying redshift + additional rules).
+    weights : np.ndarray
+        Prior weights.
     dictionary : dict
         Dictionary of selected optimal cuts,
         where each entry contains the metrics for a cut.
@@ -216,7 +236,7 @@ def combine_optimal_cuts(
 
                         mask_total |= mask
 
-        TP, FP, FN, TN = compute_metrics(mask_total, target_mask[i])
+        TP, FP, FN, TN = compute_metrics(mask_total, target_mask[i], weights)
 
         C_tot[i] = TP / (TP + FN) if TP + FN > 0 else 0.0
         P_tot[i] = TP / (TP + FP) if TP + FP > 0 else 0.0

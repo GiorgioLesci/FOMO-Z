@@ -198,6 +198,7 @@ class CalibrationLinear:
         self.colors = dataset.colors
         self.CDZs = dataset.CDZs
         self.PDZ_x = dataset.PDZ_x
+        self.weights = np.array(self.dataset["weights"].values)
         self.td = target_definition
 
         if isinstance(thresholded_quantity_min, float):
@@ -496,6 +497,7 @@ class CalibrationLinear:
                 self.td.z_lim,
                 self.color_cache,
                 self.target_mask,
+                self.weights,
                 {z_l: nested},
                 C_tot_new,
                 P_tot_new,
@@ -583,6 +585,7 @@ class CalibrationLinear:
                 self.td.z_lim,
                 color_cache,
                 target_mask,
+                self.weights,
                 self.dict,
                 C_temp,
                 P_temp,
@@ -669,6 +672,7 @@ class CalibrationLinear:
             self.td.z_lim,
             self.color_cache,
             self.target_mask,
+            self.weights,
             self.dict,
             self.C,
             self.P,

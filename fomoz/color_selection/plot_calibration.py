@@ -177,7 +177,9 @@ class PlotCalibration:
                 for j, z_l in enumerate(interp_points):
                     target_mask = calibration.td.get_target_mask(dataset, [z_l])
                     TP, FP, FN, TN = compute_metrics(
-                        np.array(sel.mask[j]), np.array(target_mask[0])
+                        np.array(sel.mask[j]),
+                        np.array(target_mask[0]),
+                        calibration.weights,
                     )
                     if metric == "C":
                         y.append(TP / (TP + FN) * 100.0 if TP + FN > 0 else 0.0)

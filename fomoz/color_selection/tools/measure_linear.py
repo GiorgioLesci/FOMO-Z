@@ -11,7 +11,6 @@ import multiprocessing as mp
 
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 
 from .color_domain import c_domain, c_domain_given_s
 from .statistics import compute_for_cross, compute_for_simple
@@ -21,9 +20,16 @@ from .variable_handler import set_input_variable_precision
 GLOBAL_color1 = None
 GLOBAL_color2 = None
 GLOBAL_shared_mask = None
+GLOBAL_shared_weights = None
 
 
-def init_worker(shared_c1, shared_c2, shared_target_mask):
+def init_worker(
+    shared_c1,
+    shared_c2,
+    shared_target_mask,
+    shared_target_mask_dtype,
+    shared_target_weights,
+):
     """
     Initialize global data shared across worker processes using shared memory.
 
@@ -38,16 +44,26 @@ def init_worker(shared_c1, shared_c2, shared_target_mask):
         Shared memory array for the second color data. Use None if not available.
     shared_target_mask : multiprocessing.sharedctypes.SynchronizedArray
         Shared memory array for galaxy redshift values.
+    shared_target_mask_dtype : type
+        Variable type.
+    shared_target_weights : multiprocessing.sharedctypes.SynchronizedArray
+        Shared memory array for prior weights.
     """
-    global GLOBAL_color1, GLOBAL_color2, GLOBAL_shared_mask
+    global GLOBAL_color1, GLOBAL_color2, GLOBAL_shared_mask, GLOBAL_shared_weights
     GLOBAL_color1 = (
         np.frombuffer(shared_c1.get_obj(), dtype=np.float32) if shared_c1 else None
     )
     GLOBAL_color2 = (
         np.frombuffer(shared_c2.get_obj(), dtype=np.float32) if shared_c2 else None
     )
-    bool_array = np.frombuffer(shared_target_mask.get_obj(), dtype=np.int8)
-    GLOBAL_shared_mask = bool_array.astype(bool)
+
+    GLOBAL_shared_mask = np.frombuffer(
+        shared_target_mask.get_obj(), dtype=shared_target_mask_dtype
+    )
+
+    GLOBAL_shared_weights = np.frombuffer(
+        shared_target_weights.get_obj(), dtype=np.float32
+    )
 
 
 def compute_for_simple_worker(args):
@@ -57,9 +73,11 @@ def compute_for_simple_worker(args):
     Parameters are passed via `args` to remain compatible with `pool.map`.
     See `compute_for_simple` for full documentation.
     """
-    global GLOBAL_color1, GLOBAL_shared_mask
+    global GLOBAL_color1, GLOBAL_shared_mask, GLOBAL_shared_weights
     c = args
-    return compute_for_simple((c, GLOBAL_color1, GLOBAL_shared_mask))
+    return compute_for_simple(
+        (c, GLOBAL_color1, GLOBAL_shared_mask, GLOBAL_shared_weights)
+    )
 
 
 def compute_for_cross_worker(args):
@@ -69,9 +87,11 @@ def compute_for_cross_worker(args):
     Parameters are passed via `args` to remain compatible with `pool.map`.
     See `compute_for_cross` for full documentation.
     """
-    global GLOBAL_color1, GLOBAL_color2, GLOBAL_shared_mask
+    global GLOBAL_color1, GLOBAL_color2, GLOBAL_shared_mask, GLOBAL_shared_weights
     s, c = args
-    return compute_for_cross((s, c, GLOBAL_color1, GLOBAL_color2, GLOBAL_shared_mask))
+    return compute_for_cross(
+        (s, c, GLOBAL_color1, GLOBAL_color2, GLOBAL_shared_mask, GLOBAL_shared_weights)
+    )
 
 
 class MeasureLinear:
@@ -132,6 +152,7 @@ class MeasureLinear:
         self.dict_all = {}
         self.td = target_definition
         self.dataset = dataset
+        self.weights = np.asarray(dataset["weights"].values)
         self.colors = colors
         self.thresholded_quantity = thresholded_quantity
         self.maximized_quantity_min = maximized_quantity_min
@@ -252,20 +273,30 @@ class MeasureLinear:
         test_colors = np.linspace(vmin, vmax, n_steps, dtype=np.float32)
 
         # Create shared arrays
-        shared_color1 = mp.Array("f", color1)  # 'f' for float32
+        shared_color1 = mp.Array("f", len(color1))
+        np.frombuffer(shared_color1.get_obj(), dtype=np.float32)[:] = color1
 
         cross_color_arrays = {}
         cross_shared_arrays = {}
         if cross_colors:
             for mag3, mag4 in cross_colors:
-                color2 = self.dataset[mag3].values.astype(np.float32) - self.dataset[
+                color2 = self.dataset[mag3].to_numpy(dtype=np.float32) - self.dataset[
                     mag4
-                ].values.astype(np.float32)
+                ].to_numpy(dtype=np.float32)
                 cross_color_arrays[(mag3, mag4)] = color2
-                cross_shared_arrays[(mag3, mag4)] = mp.Array("f", color2)
+                shared = mp.Array("f", len(color2))
+                np.frombuffer(shared.get_obj(), dtype=np.float32)[:] = color2
+                cross_shared_arrays[(mag3, mag4)] = shared
 
         # Proceed with the measurements
-        shared_target_mask = mp.Array("b", [bool(x) for x in self.target_mask])
+        shared_weights = mp.Array("f", self.weights.astype(np.float32))
+
+        if np.issubdtype(self.target_mask.dtype, np.bool_):
+            shared_target_mask = mp.Array("b", self.target_mask.astype(np.int8))
+            mask_dtype = np.int8
+        else:
+            shared_target_mask = mp.Array("f", self.target_mask.astype(np.float32))
+            mask_dtype = np.float32
 
         if z_lim not in self.dict_all:
             self.dict_all[z_lim] = {}
@@ -277,24 +308,25 @@ class MeasureLinear:
         with mp.Pool(
             N_cpu,
             initializer=init_worker,
-            initargs=(shared_color1, None, shared_target_mask),
+            initargs=(
+                shared_color1,
+                None,
+                shared_target_mask,
+                mask_dtype,
+                shared_weights,
+            ),
         ) as pool:
             results = pool.map(compute_for_simple_worker, test_colors)
 
-        results_up = [res[:4] for res in results]
-        results_low = [res[4:] for res in results]
-
-        tp_up, fp_up, fn_up, tn_up = map(list, zip(*results_up))
-        tp_low, fp_low, fn_low, tn_low = map(list, zip(*results_low))
-
-        tp_up = np.asarray(tp_up, dtype=np.float32)
-        fp_up = np.asarray(fp_up, dtype=np.float32)
-        fn_up = np.asarray(fn_up, dtype=np.float32)
-        tn_up = np.asarray(tn_up, dtype=np.float32)
-        tp_low = np.asarray(tp_low, dtype=np.float32)
-        fp_low = np.asarray(fp_low, dtype=np.float32)
-        fn_low = np.asarray(fn_low, dtype=np.float32)
-        tn_low = np.asarray(tn_low, dtype=np.float32)
+        res = np.asarray(results, dtype=np.float32)
+        tp_up = res[:, 0]
+        fp_up = res[:, 1]
+        fn_up = res[:, 2]
+        tn_up = res[:, 3]
+        tp_low = res[:, 4]
+        fp_low = res[:, 5]
+        fn_low = res[:, 6]
+        tn_low = res[:, 7]
 
         # Mask
         purity_up = tp_up / np.maximum(tp_up + fp_up, 1e-12)
@@ -364,19 +396,27 @@ class MeasureLinear:
                 shared_color2 = cross_shared_arrays[(mag3, mag4)]
                 color2 = cross_color_arrays[(mag3, mag4)]
 
-                sc_grid = []
+                sc_list = []
                 for s in self.s_samples:
                     c_min, c_max = c_domain_given_s(color1, color2, s)
                     n_c = int((c_max - c_min) / self.c_precision) + 1
                     c_grid = np.linspace(c_min, c_max, n_c, dtype=np.float32)
 
-                    for c in c_grid:
-                        sc_grid.append((s, c))
+                    sc = np.column_stack((np.full_like(c_grid, s), c_grid))
+                    sc_list.append(sc)
+
+                sc_grid = np.vstack(sc_list)
 
                 with mp.Pool(
                     N_cpu,
                     initializer=init_worker,
-                    initargs=(shared_color1, shared_color2, shared_target_mask),
+                    initargs=(
+                        shared_color1,
+                        shared_color2,
+                        shared_target_mask,
+                        mask_dtype,
+                        shared_weights,
+                    ),
                 ) as pool:
                     results = pool.map(compute_for_cross_worker, sc_grid)
 
@@ -474,7 +514,9 @@ class MeasureLinear:
                 "z_lim must be one of the elements of TargetDefinition's z_lim"
             )
 
-        self.target_mask = self.td._get_target_mask(self.dataset, [z_lim], CDZs, PDZ_x)[0]
+        self.target_mask = self.td._get_target_mask(self.dataset, [z_lim], CDZs, PDZ_x)[
+            0
+        ]
 
         for i in range(len(self.colors)):
             self._apply_cuts(

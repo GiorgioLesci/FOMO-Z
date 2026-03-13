@@ -23,6 +23,7 @@ class Dataset:
         z_gal_string="redshift",
         PDZs=None,
         PDZ_x=None,
+        weights=None,
         missing_data=-99,
         custom_colors=None,
     ):
@@ -33,7 +34,9 @@ class Dataset:
 
         This class standardizes input photometric data and handles missing values.
         If `custom_colors` is not provided, all possible colors based on the input
-        set of bands are considered.
+        set of bands are considered. In the calibrations, objects can be weighted
+        based on prior weights and/or photo-z probability density functions.
+        These weighting schemes increase the execution time.
 
         Parameters
         ----------
@@ -52,7 +55,9 @@ class Dataset:
             in the metrics computation. If not provided, point-estimates are used
             (whose key is defined by `z_gal_string`). Must have shape `(len(dataset), len(PDZ_x))`.
         PDZ_x : array-like, default=None
-            Redshift values where PDZs[i] is computed.
+            Redshift values where `PDZs[i]` is computed.
+        weights : array-like, default=None
+            Prior per-object weights used to compute the selection metrics.
         missing_data : int, float, or list, default=-99
             Value(s) used in the dataset to denote missing entries. These are replaced
             with NaN for consistency (if missing data in your data set are NaN,
@@ -122,11 +127,11 @@ class Dataset:
             # Normalize
             total_int = np.trapz(np.asarray(PDZs), np.asarray(PDZ_x), axis=1)
             PDZs_norm = np.asarray(PDZs) / total_int[:, None]
-            
+
             dz = np.diff(np.asarray(PDZ_x))
             cdf = np.zeros_like(PDZs_norm)
-            cdf[:,1:] = np.cumsum(
-                0.5 * (PDZs_norm[:,:-1] + PDZs_norm[:,1:]) * dz, axis=1
+            cdf[:, 1:] = np.cumsum(
+                0.5 * (PDZs_norm[:, :-1] + PDZs_norm[:, 1:]) * dz, axis=1
             )
             self.CDZs = cdf
 
@@ -150,6 +155,12 @@ class Dataset:
         self.dataset["redshift"] = self.dataset["redshift"].replace(
             missing_data, np.nan
         )
+
+        # Prior weights
+        if weights is None:
+            self.dataset["weights"] = np.ones(len(self.dataset))
+        else:
+            self.dataset["weights"] = weights
 
         # Set bands, colors, and color spaces
         self.bands = bands
