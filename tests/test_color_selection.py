@@ -52,6 +52,16 @@ def reference_dataset_instance(reference_dataset):
     return dataset
 
 
+@pytest.fixture
+def reference_dataset_instance_weights(reference_dataset):
+    """Create a Dataset instance with reference.csv data for testing."""
+    bands = ["g", "r", "i"]
+    dataset = Dataset(
+        reference_dataset, bands, weights=np.full(len(reference_dataset), 0.1)
+    )
+    return dataset
+
+
 # Shared fixture for reference color list
 @pytest.fixture
 def reference_colors(reference_dataset):
@@ -113,6 +123,25 @@ def reference_calibration_linear_instance(
 
 
 @pytest.fixture
+def reference_calibration_linear_instance_weights(
+    reference_dataset_instance_weights, reference_target_definition_instance
+):
+    """Create an CalibrationLinear instance with reference.csv data for testing."""
+    thresholded_quantity_min = 0.9
+    calibration = CalibrationLinear(
+        reference_dataset_instance_weights,
+        reference_target_definition_instance,
+        thresholded_quantity_min,
+        s_samples=np.linspace(0.3, 1.7, 30),
+        maximized_quantity_min=0,
+        step=0.0001,
+        k=3,
+    )
+
+    return calibration
+
+
+@pytest.fixture
 def reference_calibration_grid_instance(
     reference_dataset_instance, reference_target_definition_instance
 ):
@@ -120,6 +149,22 @@ def reference_calibration_grid_instance(
     thresholded_quantity_min = 0.9
     calibration = CalibrationGrid(
         reference_dataset_instance,
+        reference_target_definition_instance,
+        thresholded_quantity_min,
+        step=0.0001,
+    )
+
+    return calibration
+
+
+@pytest.fixture
+def reference_calibration_grid_instance_weights(
+    reference_dataset_instance_weights, reference_target_definition_instance
+):
+    """Create an CalibrationGrid instance with reference.csv data for testing."""
+    thresholded_quantity_min = 0.9
+    calibration = CalibrationGrid(
+        reference_dataset_instance_weights,
         reference_target_definition_instance,
         thresholded_quantity_min,
         step=0.0001,
@@ -455,6 +500,59 @@ class TestCalibrationProcess:
 
         # CalibrationGrid
         calibration = reference_calibration_grid_instance
+        calibration.process(cpu_number=1)
+
+        assert len(calibration.C) == len(calibration.td.z_lim)
+        assert len(calibration.P) == len(calibration.td.z_lim)
+
+        expected_C = [0.9273324, 0.93034951]
+        expected_P = [0.9286385, 0.91652217]
+        expected_F = [0.3153527, 0.26895451]
+
+        assert np.allclose(
+            calibration.C, expected_C
+        ), f"Completeness mismatch for CalibrationGrid: expected {expected_C}, got {calibration.C}"
+
+        assert np.allclose(
+            calibration.P, expected_P
+        ), f"Purity mismatch for CalibrationGrid: expected {expected_P}, got {calibration.P}"
+
+        assert np.allclose(
+            calibration.F, expected_F
+        ), f"Failure rate mismatch for CalibrationGrid: expected {expected_F}, got {calibration.F}"
+
+    def test_process_with_weights(
+        self,
+        reference_calibration_linear_instance_weights,
+        reference_calibration_grid_instance_weights,
+    ):
+        """Test process methods with reference data and check C, P, F values."""
+
+        # CalibrationLinear
+        calibration = reference_calibration_linear_instance_weights
+        calibration.process(cpu_number=1)
+
+        assert len(calibration.C) == len(calibration.td.z_lim)
+        assert len(calibration.P) == len(calibration.td.z_lim)
+
+        expected_C = [0.93014534, 0.9308524]
+        expected_P = [0.90407838, 0.90270666]
+        expected_F = [0.43672199, 0.31843575]
+
+        assert np.allclose(
+            calibration.C, expected_C
+        ), f"Completeness mismatch for CalibrationLinear: expected {expected_C}, got {calibration.C}"
+
+        assert np.allclose(
+            calibration.P, expected_P
+        ), f"Purity mismatch for CalibrationLinear: expected {expected_P}, got {calibration.P}"
+
+        assert np.allclose(
+            calibration.F, expected_F
+        ), f"Failure rate mismatch for CalibrationLinear: expected {expected_F}, got {calibration.F}"
+
+        # CalibrationGrid
+        calibration = reference_calibration_grid_instance_weights
         calibration.process(cpu_number=1)
 
         assert len(calibration.C) == len(calibration.td.z_lim)

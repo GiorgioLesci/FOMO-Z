@@ -264,9 +264,9 @@ class MeasureLinear:
         N_cpu = max(1, N_cpu)  # Ensure at least 1 process
 
         # Precompute base arrays
-        color1 = self.dataset[mag1].values.astype(np.float32) - self.dataset[
+        color1 = self.dataset[mag1].to_numpy(dtype=np.float32) - self.dataset[
             mag2
-        ].values.astype(np.float32)
+        ].to_numpy(dtype=np.float32)
 
         vmin, vmax = c_domain(color1)
         n_steps = int((vmax - vmin) / self.c_precision) + 1

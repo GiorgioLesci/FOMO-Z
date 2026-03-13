@@ -193,9 +193,15 @@ class CalibrationGrid:
         self._update_dict_metadata(self.dict, self.dataset)
         self._update_dict(self.dict, self.dataset)
 
-        # Create the target mask
+        # Create the target masks
         self.target_mask = self.td._get_target_mask(
             self.dataset, self.td.z_lim, self.CDZs, self.PDZ_x
+        )
+
+        dataset_unweighted = self.dataset.copy()
+        dataset_unweighted["weights"] = np.ones(len(self.dataset))
+        self.target_mask_unweighted = self.td._get_target_mask(
+            dataset_unweighted, self.td.z_lim, None, None
         )
 
     def _update_dict_metadata(self, dictionary, dataset):
@@ -313,7 +319,12 @@ class CalibrationGrid:
 
             # Probability to get target galaxies
             prob, N_good, N_total = prob_target(
-                self.dict["metadata"], cs, self.dataset, self.target_mask[i_z]
+                self.dict["metadata"],
+                cs,
+                self.dataset,
+                self.target_mask[i_z],
+                self.target_mask_unweighted[i_z],
+                self.weights,
             )
             dict_stats[cs]["prob"] = prob
             dict_stats[cs]["N_good"] = N_good
