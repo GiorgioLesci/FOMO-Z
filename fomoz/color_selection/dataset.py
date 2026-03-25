@@ -24,7 +24,7 @@ class Dataset:
         PDZs=None,
         PDZ_x=None,
         weights=None,
-        missing_data=-99,
+        missing_data=[99, -99],
         custom_colors=None,
     ):
         """
@@ -58,7 +58,7 @@ class Dataset:
             Redshift values where `PDZs[i]` is computed.
         weights : array-like, default=None
             Prior per-object weights used to compute the selection metrics.
-        missing_data : int, float, or list, default=-99
+        missing_data : int, float, or list, default=[99, -99]
             Value(s) used in the dataset to denote missing entries. These are replaced
             with NaN for consistency (if missing data in your data set are NaN,
             you don't need to specify it).
