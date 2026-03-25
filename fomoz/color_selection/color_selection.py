@@ -188,7 +188,7 @@ class ColorSelection:
 
         return mask
 
-    def process(self, z_lim, dataset, missing_data=-99):
+    def process(self, z_lim, dataset, missing_data=[99, -99]):
         """
         Apply optimal color selections to a dataset.
 
@@ -221,7 +221,7 @@ class ColorSelection:
             Table containing the photometric dataset. Must have columns
             corresponding to the magnitude names stored in
             ``self.dict_linear['metadata']['bands']``.
-        missing_data : int, float, or list, default=-99
+        missing_data : int, float, or list, default=[99, -99]
             Value(s) used in the dataset to denote missing entries. These are replaced
             with NaN for consistency (if missing data in your data set are NaN,
             you don't need to specify it).
