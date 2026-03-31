@@ -92,8 +92,8 @@ class Dataset:
         if not all(isinstance(b, str) for b in bands):
             raise TypeError("bands must contain only strings")
 
-        if "c" in bands or "s" in bands:
-            raise ValueError("Band keys cannot equal 'c' or 's'.")
+        if any("c" in b or "s" in b for b in bands):
+            raise ValueError("Band keys cannot contain the characters 'c' or 's'.")
 
         if z_gal_string not in dataset.columns:
             errMsg = f"z_gal_string='{z_gal_string}' "
