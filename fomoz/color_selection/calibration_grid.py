@@ -595,6 +595,7 @@ class CalibrationGrid:
         Get the redshift distribution of color-selected objects.
 
         Returns the redshift distribution relative to the input limiting redshift.
+        If weights were provided to `Dataset`, these histograms are weighted accordingly.
 
         Parameters
         ------
@@ -612,5 +613,7 @@ class CalibrationGrid:
         """
         mask = self.get_mask(zl_index, color_space="all")
         dataset = self.dataset["redshift"][mask]
-        hist, _ = np.histogram(dataset, bins=bin_edges, density=normalize)
+        hist, _ = np.histogram(
+            dataset, bins=bin_edges, density=normalize, weights=self.weights[mask]
+        )
         return hist
