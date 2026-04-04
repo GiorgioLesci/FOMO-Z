@@ -562,7 +562,7 @@ class CalibrationLinear:
             indices = np.random.choice(
                 len(self.dataset), size=len(self.dataset), replace=True
             )
-            bt_sample = self.dataset.iloc[indices]
+            bt_sample = self.dataset.iloc[indices].copy()
 
             # Pre-compute colors
             color_cache = {}
@@ -572,8 +572,9 @@ class CalibrationLinear:
                 ) - bt_sample[mag2].values.astype(np.float32)
 
             # Get the target mask
+            bt_CDZs = self.CDZs[indices] if self.CDZs is not None else None
             target_mask = self.td._get_target_mask(
-                bt_sample, self.td.z_lim, self.CDZs, self.PDZ_x
+                bt_sample, self.td.z_lim, bt_CDZs, self.PDZ_x
             )
 
             # Compute the metrics
@@ -585,7 +586,7 @@ class CalibrationLinear:
                 self.td.z_lim,
                 color_cache,
                 target_mask,
-                self.weights,
+                bt_sample["weights"],
                 self.dict,
                 C_temp,
                 P_temp,
@@ -598,8 +599,6 @@ class CalibrationLinear:
             P_stats[1] += P_temp**2.0
             F_stats[0] += F_temp
             F_stats[1] += F_temp**2.0
-
-            del bt_sample, C_temp, P_temp, F_temp
 
         C_mean = C_stats[0] / self.n_bootstraps
         P_mean = P_stats[0] / self.n_bootstraps

@@ -145,7 +145,7 @@ class Dataset:
 
         # Keep only the needed columns
         needed_columns = [z_gal_string] + bands
-        self.dataset = dataset[needed_columns].copy()
+        self.dataset = dataset[needed_columns].copy().reset_index(drop=True)
 
         # Check for missing data - photometric bands
         self.dataset[bands] = self.dataset[bands].replace(missing_data, np.nan)

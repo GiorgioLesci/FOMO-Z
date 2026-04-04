@@ -443,7 +443,7 @@ class CalibrationGrid:
             indices = np.random.choice(
                 len(self.dataset), size=len(self.dataset), replace=True
             )
-            bt_sample = self.dataset.iloc[indices]
+            bt_sample = self.dataset.iloc[indices].copy()
 
             # Pre-compute colors
             dict_temp = {}
@@ -460,12 +460,15 @@ class CalibrationGrid:
             P_temp = np.zeros(len(self.td.z_lim))
             F_temp = np.zeros(len(self.td.z_lim))
 
+            bt_CDZs = self.CDZs[indices] if self.CDZs is not None else None
             target_mask = self.td._get_target_mask(
-                bt_sample, self.td.z_lim, self.CDZs, self.PDZ_x
+                bt_sample, self.td.z_lim, bt_CDZs, self.PDZ_x
             )
             for i_z in range(len(self.td.z_lim)):
                 mask = self.get_mask(i_z, dictionary=dict_temp)
-                TP, FP, FN, TN = compute_metrics(mask, target_mask[i_z], self.weights)
+                TP, FP, FN, TN = compute_metrics(
+                    mask, target_mask[i_z], bt_sample["weights"]
+                )
                 C_temp[i_z] = TP / (TP + FN) if TP + FN > 0 else 0.0
                 P_temp[i_z] = TP / (TP + FP) if TP + FP > 0 else 0.0
                 F_temp[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0
@@ -476,8 +479,6 @@ class CalibrationGrid:
             P_stats[1] += P_temp**2.0
             F_stats[0] += F_temp
             F_stats[1] += F_temp**2.0
-
-            del bt_sample, C_temp, P_temp, F_temp
 
         C_mean = C_stats[0] / self.n_bootstraps
         P_mean = P_stats[0] / self.n_bootstraps
