@@ -192,6 +192,11 @@ class CalibrationLinear:
         attained_threshold : np.array
             Single-cut threshold attained in the optimization process.
             Each element corresponds to a limiting redshift value.
+
+        Notes
+        -----
+        Purity maximization is not implemented yet. `maximized_quantity == "completeness"`
+        is the only accepted value.
         """
         self.dataset = dataset.dataset
         self.bands = dataset.bands
@@ -224,6 +229,7 @@ class CalibrationLinear:
         if maximized_quantity == "completeness":
             self.thresholded_quantity = "purity"
         else:
+            raise NotImplementedError("Purity maximization is not implemented yet.")
             self.thresholded_quantity = "completeness"
 
         if isinstance(maximized_quantity_min, (float, int)):

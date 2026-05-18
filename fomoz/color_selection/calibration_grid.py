@@ -133,6 +133,11 @@ class CalibrationGrid:
             Total completeness error.
         F_std : numpy.array
             Total failure rate error.
+
+        Notes
+        -----
+        Purity maximization is not implemented yet. `maximized_quantity == "completeness"`
+        is the only accepted value.
         """
         self.dataset = dataset.dataset
         self.bands = dataset.bands
@@ -166,6 +171,7 @@ class CalibrationGrid:
         if maximized_quantity == "completeness":
             self.thresholded_quantity = "purity"
         else:
+            raise NotImplementedError("Purity maximization is not implemented yet.")
             self.thresholded_quantity = "completeness"
 
         self.grid_precision = float(grid_precision)
