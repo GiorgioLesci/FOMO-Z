@@ -34,7 +34,9 @@ class TargetDefinition:
         z_lim : float or array-like
             Float or array of redshift limits.
             It can represent either lower of higher limit values, depending on
-            the value of `is_zlim_lower`.
+            the value of `is_zlim_lower`. To calibrate a selection of objects
+            in a definite redshift range, use the input parameter `additional_rules`.
+            This allows for the definition of the second edge of the redshift bin.
         is_zlim_lower : bool, default = True
             If True, `z_lim` is a set of lower redshift limits. Otherwise, `z_lim`
             is a set of higher limits.
@@ -45,6 +47,13 @@ class TargetDefinition:
             combined through the AND logical operator.
             Example: ``[ ["logM", ">", 10.0], ["u", "<", 24.0] ]``.
             Supported operators: ">", "<", ">=", "<=", "==", "!=".
+            Additional rules are the same for all values of `z_lim`.
+
+        Notes
+        -----
+        - If `additional_rules` contains redshift requirements and redshift PDFs
+          were provided to the `Dataset` class, the resulting mask
+          accounts for this by integrating the redshift PDFs accordingly.
         """
         self.z_lim = set_input_variable_precision(z_lim)
         for z_l in self.z_lim:
@@ -87,6 +96,13 @@ class TargetDefinition:
                     errMsg = f"Rule {i}: operator '{operator}' is not supported. "
                     errMsg += f"Must be one of {valid_operators}"
                     raise ValueError(errMsg)
+
+                if property_name == "redshift":
+                    errMsg = f"The additional rule on redshift has a not valid operator ({operator}). Check the parameter is_zlim_lower."
+                    if is_zlim_lower and operator not in ["<", "<="]:
+                        raise ValueError(errMsg)
+                    elif is_zlim_lower == False and operator not in [">", ">="]:
+                        raise ValueError(errMsg)
 
         self.additional_rules = additional_rules
 
@@ -139,6 +155,15 @@ class TargetDefinition:
             idxs = np.searchsorted(PDZ_x, z_lim, side="left")
             idxs = np.clip(idxs, 0, len(PDZ_x) - 1)
 
+            # If an additional redshift rule is present, precompute its CDF index
+            z_additional = None
+            if self.additional_rules is not None:
+                redshift_rules = [r for r in self.additional_rules if r[0] == "redshift"]
+                if redshift_rules:
+                    z_additional = redshift_rules[0][2]  # threshold
+                    idx_additional = np.searchsorted(PDZ_x, z_additional, side="left")
+                    idx_additional = np.clip(idx_additional, 0, len(PDZ_x) - 1)
+
         for i, zz in enumerate(z_lim):
 
             # Limiting redshift
@@ -150,10 +175,17 @@ class TargetDefinition:
 
             else:
 
-                if self.is_zlim_lower:
-                    probs = 1 - CDZs[:, idxs[i]]
+                if z_additional is not None:
+                    if self.is_zlim_lower:
+                        probs = CDZs[:, idx_additional] - CDZs[:, idxs[i]]
+                    else:
+                        probs = CDZs[:, idxs[i]] - CDZs[:, idx_additional]
+
                 else:
-                    probs = CDZs[:, idxs[i]]
+                    if self.is_zlim_lower:
+                        probs = 1 - CDZs[:, idxs[i]]
+                    else:
+                        probs = CDZs[:, idxs[i]]
 
                 target_mask[i] = np.clip(probs, 0.0, 1.0)
 
@@ -166,6 +198,10 @@ class TargetDefinition:
                 continue
 
             for property_name, operator, threshold in self.additional_rules:
+
+                # Skip redshift rule if CDZs are used (already absorbed in the integral above)
+                if property_name == "redshift" and CDZs is not None:
+                    continue
 
                 if property_name not in dataset.columns:
                     errMsg = f"The property '{property_name}' "
