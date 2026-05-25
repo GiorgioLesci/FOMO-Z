@@ -158,7 +158,9 @@ class TargetDefinition:
             # If an additional redshift rule is present, precompute its CDF index
             z_additional = None
             if self.additional_rules is not None:
-                redshift_rules = [r for r in self.additional_rules if r[0] == "redshift"]
+                redshift_rules = [
+                    r for r in self.additional_rules if r[0] == "redshift"
+                ]
                 if redshift_rules:
                     z_additional = redshift_rules[0][2]  # threshold
                     idx_additional = np.searchsorted(PDZ_x, z_additional, side="left")

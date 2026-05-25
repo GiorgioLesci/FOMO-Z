@@ -390,7 +390,7 @@ def distribution_contours(x, y, nbins, levels):
     return X, Y, H_norm, level_density
 
 
-def prob_target(metadata, cs, dataset, target_mask, target_mask_unweighted, weights):
+def prob_target(metadata, cs, dataset, target_mask, weights):
     """
     Compute the per-bin probability of selecting target objects in a 2D color–color grid.
 
@@ -405,8 +405,6 @@ def prob_target(metadata, cs, dataset, target_mask, target_mask_unweighted, weig
         Input dataset containing the photometric bands used to compute colors.
     target_mask : numpy.ndarray of bool or floats
         Float (possibly weighted) mask selecting target objects (e.g. high-redshift galaxies).
-    target_mask_unweighted : numpy.ndarray of bool or floats
-        Boolean unweighted mask selecting target objects.
     weights : numpy.array of floats
         Prior weights.
 
@@ -415,9 +413,9 @@ def prob_target(metadata, cs, dataset, target_mask, target_mask_unweighted, weig
     prob : numpy.ndarray
         2D array of per-bin probabilities, defined as the ratio of target objects
         to total objects in each color–color bin.
-    N_good : numpy.ndarray
-        2D array of per-bin number of target objects.
-    N_total : numpy.ndarray
+    n_successes : numpy.ndarray
+        2D array.
+    n_trials : numpy.ndarray
         2D array of per-bin total number objects.
     """
     color1_min, color1_max = metadata["color_limits"][cs[0]]
@@ -433,7 +431,12 @@ def prob_target(metadata, cs, dataset, target_mask, target_mask_unweighted, weig
         color1, color2, bins=[color1_bins, color2_bins], weights=weights
     )
 
-    N_total, _, _ = np.histogram2d(color1, color2, bins=[color1_bins, color2_bins])
+    # n_trials
+    n_trials_denominator, _, _ = np.histogram2d(
+        color1, color2, bins=[color1_bins, color2_bins], weights=weights**2.0
+    )
+
+    n_trials = n_total * n_total / n_trials_denominator
 
     # Per-bin number of galaxies fulfilling the input conditions
     # and per-bin probability to get good objects
@@ -444,18 +447,11 @@ def prob_target(metadata, cs, dataset, target_mask, target_mask_unweighted, weig
         weights=target_mask.astype(float),
     )[0]
 
-    N_good = np.histogram2d(
-        color1,
-        color2,
-        bins=[color1_bins, color2_bins],
-        weights=target_mask_unweighted,
-    )[0]
-
     prob = np.zeros_like(n_good, dtype=float)
     nonzero = n_total > 0
     prob[nonzero] = n_good[nonzero] / n_total[nonzero]
 
-    return prob, N_good, N_total
+    return prob, prob * n_trials, n_trials
 
 
 def get_color_color_mask(zl_index, color_space, dictionary):

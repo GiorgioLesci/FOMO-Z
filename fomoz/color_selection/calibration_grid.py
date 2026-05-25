@@ -329,12 +329,11 @@ class CalibrationGrid:
                 cs,
                 self.dataset,
                 self.target_mask[i_z],
-                self.target_mask_unweighted[i_z],
                 self.weights,
             )
             dict_stats[cs]["prob"] = prob
-            dict_stats[cs]["N_good"] = N_good
-            dict_stats[cs]["N_total"] = N_total
+            dict_stats[cs]["k"] = N_good
+            dict_stats[cs]["n"] = N_total
 
         # Remove bins with prob below a fixed threshold iteratively
         prob_min_bin = 1.0  # starting bin-level probability
@@ -399,13 +398,16 @@ class CalibrationGrid:
 
             for i in range(shape[0]):
                 for j in range(shape[1]):
-                    k = dict_stats[cs]["N_good"][i][j]
-                    n = dict_stats[cs]["N_total"][i][j]
+                    k = dict_stats[cs]["k"][i][j]
+                    n = dict_stats[cs]["n"][i][j]
                     if n == 0:
                         continue
                     # Given the observed data (k successes out of n), compute the posterior
                     # probability that (true purity < prob_min_bin) is smaller than alpha.
-                    significant = beta.cdf(prob_min_bin, k + 1, n - k + 1) < self.alpha
+                    significant = (
+                        beta.cdf(prob_min_bin, k + 1, np.maximum(n - k, 0) + 1)
+                        < self.alpha
+                    )
                     dict_significant[cs]["mask"][i, j] = significant
 
         # Re-define the masks and re-evaluate the metrics
