@@ -5,5 +5,5 @@ from .calibration_linear import *
 from .color_selection import *
 from .dataset import *
 from .plot_calibration import *
-from .target_definition import *
+from .selection_definition import *
 from .tools import *

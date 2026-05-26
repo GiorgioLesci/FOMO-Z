@@ -18,7 +18,7 @@ from scipy.stats import beta
 from tqdm import tqdm
 
 from .dataset import Dataset
-from .target_definition import TargetDefinition
+from .selection_definition import SelectionDefinition
 from .tools import (
     c_domain,
     color_bin_edges,
@@ -34,7 +34,7 @@ class CalibrationGrid:
     def __init__(
         self,
         dataset: Dataset,
-        target_definition: TargetDefinition,
+        target_definition: SelectionDefinition,
         thresholded_quantity_min,
         maximized_quantity="completeness",
         grid_precision=0.15,
@@ -56,7 +56,7 @@ class CalibrationGrid:
         where $N_T$ is the number of target objects in the color-color bin, and
         $N_S$ is the total number of objects in the reference sample falling in the bin.
 
-        For each limiting redshift value specified in `TargetDefinition`,
+        For each limiting redshift value specified in `SelectionDefinition`,
         this method searches for the set of cuts that
         ($\delta\mathcal{P}_{\rm step}$: `step`,
         $\mathcal{P}_{\rm min}$: `thresholded_quantity_min`,
@@ -74,8 +74,8 @@ class CalibrationGrid:
         ----------
         dataset : Dataset
             A `Dataset` object containing the dataset and band information.
-        target_definition : TargetDefinition
-            A `TargetDefinition` object containing target selections (e.g. redshift thresholds).
+        target_definition : SelectionDefinition
+            A `SelectionDefinition` object containing target selections (e.g. redshift thresholds).
         thresholded_quantity_min : float or array-like
             Required minimum for the thresholded quantity, namely
             global purity (if `maximized_quantity == "completeness"`)
@@ -504,7 +504,7 @@ class CalibrationGrid:
         Perform the iterative search for optimal color selection grids.
 
         Here, either completeness or purity are maximized, depending on what was
-        set in the `TargetDefinition` instance given in input to the constructor of this class.
+        set in the `SelectionDefinition` instance given in input to the constructor of this class.
 
         Parameters
         ----------
@@ -573,7 +573,7 @@ class CalibrationGrid:
         Parameters
         ------
         zl_index : int
-            Index of the redshift threshold in TargetDefinition.z_lim.
+            Index of the redshift threshold in SelectionDefinition.z_lim.
         color_space : str or tuple, optional
             It can be either "all" (all color-color spaces) or one of
             the available color-color spaces, in the form `((band1, band2), (band3, band4))`.
@@ -609,7 +609,7 @@ class CalibrationGrid:
         Parameters
         ------
         zl_index : int
-            Index of the redshift threshold in TargetDefinition.z_lim.
+            Index of the redshift threshold in SelectionDefinition.z_lim.
         bin_edges : array-like
             Number of histogram bins.
         normalize : bool, optional

@@ -15,7 +15,7 @@ from fomoz.color_selection.calibration_linear import CalibrationLinear
 from fomoz.color_selection.calibration_grid import CalibrationGrid
 from fomoz.color_selection.dataset import Dataset
 from fomoz.color_selection.color_selection import ColorSelection
-from fomoz.color_selection.target_definition import TargetDefinition
+from fomoz.color_selection.selection_definition import SelectionDefinition
 from fomoz.color_selection.tools import (
     MeasureLinear,
     build_nested_dict,
@@ -74,9 +74,9 @@ def reference_colors(reference_dataset):
 # Shared fixture for target_definition instance
 @pytest.fixture
 def reference_target_definition_instance():
-    """Create a TargetDefinition instance."""
+    """Create a SelectionDefinition instance."""
     z_lim = [0.5, 0.6]
-    target_definition = TargetDefinition(z_lim)
+    target_definition = SelectionDefinition(z_lim)
     return target_definition
 
 
@@ -444,7 +444,7 @@ class TestMeasureProcess:
         z_l = [0.3]  # Single z limit
 
         # Create a new Measure instance with single z limit
-        td = TargetDefinition(z_l)
+        td = SelectionDefinition(z_l)
         measure = MeasureLinear(
             reference_dataset,
             reference_colors,

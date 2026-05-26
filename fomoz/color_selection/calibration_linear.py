@@ -20,7 +20,7 @@ import yaml
 from tqdm import tqdm
 
 from .dataset import Dataset
-from .target_definition import TargetDefinition
+from .selection_definition import SelectionDefinition
 from .tools import (
     MeasureLinear,
     build_nested_dict,
@@ -46,7 +46,7 @@ class CalibrationLinear:
     def __init__(
         self,
         dataset: Dataset,
-        target_definition: TargetDefinition,
+        target_definition: SelectionDefinition,
         thresholded_quantity_min,
         maximized_quantity="completeness",
         maximized_quantity_min=0.05,
@@ -93,7 +93,7 @@ class CalibrationLinear:
         `thresholded_quantity_min`.
         Also bootstrap errors on the metrics are derived.
 
-        For each limiting redshift value specified in `TargetDefinition`,
+        For each limiting redshift value specified in `SelectionDefinition`,
         this method searches for the set of cuts that
         ($\delta\mathcal{P}_{\rm step}$: `step`,
         $\mathcal{C}_{\rm min}$: `maximized_quantity_min`,
@@ -123,8 +123,8 @@ class CalibrationLinear:
         ----------
         dataset : Dataset
             A `Dataset` object containing the dataset and band information.
-        target_definition : TargetDefinition
-            A `TargetDefinition` object containing target selections (e.g. redshift thresholds).
+        target_definition : SelectionDefinition
+            A `SelectionDefinition` object containing target selections (e.g. redshift thresholds).
         thresholded_quantity_min : float or array-like
             Required minimum for the thresholded quantity, namely
             global purity (if `maximized_quantity == "completeness"`)
@@ -622,7 +622,7 @@ class CalibrationLinear:
         Perform the iterative search for optimal linear color conditions.
 
         Here, either completeness or purity are maximized, depending on what was
-        set in the `TargetDefinition` instance given in input to the constructor of this class.
+        set in the `SelectionDefinition` instance given in input to the constructor of this class.
 
         Parameters
         ----------
@@ -741,11 +741,11 @@ class CalibrationLinear:
             If True, write the `FOMO-Z_{file_name}_redshift_distributions.csv` file,
             containing the binned redshift distributions of color-selected objects.
             This file contains the redshift bins and the histograms for each limiting
-            redshift point provided to `TargetDefinition`.
+            redshift point provided to `SelectionDefinition`.
             Histograms are derived using the `get_redshift_distribution` method.
             The first two columns of the file contain bin edges and bin centers,
             respectively. Subsequent columns contain the redshift distributions
-            corresponding to each limiting redshift value provided to `TargetDefinition`.
+            corresponding to each limiting redshift value provided to `SelectionDefinition`.
             These histograms are normalized such that their integral is 1. All histograms
             share the same bin edges. If weights were provided to `Dataset`, these histograms
             are weighted accordingly.
@@ -857,7 +857,7 @@ class CalibrationLinear:
         Parameters
         ------
         zl_index : int
-            Index of the redshift threshold in TargetDefinition.z_lim.
+            Index of the redshift threshold in SelectionDefinition.z_lim.
         color_condition : str, optional
             It can be either "all" (all optimal color conditions) or one of
             the optimal color conditions. The latter can be obtained from `self.get_keys()`.
@@ -911,7 +911,7 @@ class CalibrationLinear:
         Parameters
         ------
         zl_index : int
-            Index of the redshift threshold in TargetDefinition.z_lim.
+            Index of the redshift threshold in SelectionDefinition.z_lim.
         bin_edges : array-like
             Number of histogram bins.
         normalize : bool, optional
