@@ -10,6 +10,7 @@ applying a calibrated color selection for any redshift threshold.
 import copy
 import os
 import re
+import itertools
 
 import numexpr as ne
 import numpy as np
@@ -17,7 +18,11 @@ import yaml
 from astropy.io import fits
 from scipy.interpolate import BSpline
 
-from .tools import set_input_variable_precision, get_color_color_mask
+from .tools import (
+    set_input_variable_precision,
+    get_color_color_mask,
+    update_dict,
+)
 from .calibration_linear import CalibrationLinear
 from .calibration_grid import CalibrationGrid
 
@@ -270,6 +275,15 @@ class ColorSelection:
         # Magnitude mapping
         mags = {band: dataset[band].to_numpy() for band in required_bands}
 
+        # In case of grid selections, update the dictionary
+        if self.dict_grid:
+            self.dict_grid = update_dict(
+                self.dict_grid,
+                dataset,
+                self.dict_grid["metadata"],
+                reset_dictionary=False,
+            )
+
         # Apply the selection
         self.mask = []
         for z_l in self.z_lim:
@@ -383,7 +397,43 @@ class ColorSelection:
 
         elif ext == ".fits":
             with fits.open(file_path) as hdul:
-                self.dict_grid = {"header": dict(hdul[0].header), "data": hdul[0].data}
+                primary_header = hdul[0].header
+                z_l = list(hdul["ZL_VALUES"].data["z_l"])
+                z_l_is_lower_limit = bool(primary_header["ZLISLOW"])
+                bands = primary_header["BANDS"].split()
+
+                self.dict_grid = {
+                    "metadata": {
+                        "z_l": z_l,
+                        "z_l_is_lower_limit": z_l_is_lower_limit,
+                        "bands": bands,
+                    }
+                }
+
+                for hdu in hdul:
+                    if not hdu.name.startswith("MASK_"):
+                        continue
+
+                    cs_str = hdu.name[5:]  # strip "MASK_" prefix
+                    mask_hdu = hdu
+
+                    cs_key = (
+                        (
+                            mask_hdu.header["C1BAND1"].strip(),
+                            mask_hdu.header["C1BAND2"].strip(),
+                        ),
+                        (
+                            mask_hdu.header["C2BAND1"].strip(),
+                            mask_hdu.header["C2BAND2"].strip(),
+                        ),
+                    )
+
+                    mask_3d = np.asarray(mask_hdu.data, dtype=bool)
+                    mask_dict = {i: mask_3d[i] for i in range(mask_3d.shape[0])}
+
+                    self.dict_grid[cs_key] = {
+                        "mask": mask_dict,
+                    }
 
             print("CalibrationGrid parameters successfully loaded from file.")
 

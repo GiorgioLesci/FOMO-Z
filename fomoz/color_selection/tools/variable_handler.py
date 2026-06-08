@@ -9,6 +9,8 @@ dictionary reshaping.
 
 import numpy as np
 
+from .color_domain import color_bin_edges
+
 
 def set_input_variable_precision(var, prec=6):
     """
@@ -285,3 +287,60 @@ def inline_list_representer(dumper, data):
         YAML sequence node configured for inline representation.
     """
     return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
+
+
+def update_dict(dictionary, dataset, metadata, reset_dictionary=True):
+    r"""
+    Update the input dictionary, given the input data set.
+
+    Used by the `CalibrationGrid` class.
+
+    Parameters
+    ----------
+    dictionary : dict
+        Dictionary.
+    dataset : pandas.DataFrame
+        Input dataset containing photometric bands.
+    metadata : dict
+        Dictionary metadata
+    reset_dictionary : bool, default=True
+        If true, reset the `dictionary` entries and replace them.
+
+    Returns
+    -------
+    dict
+        The updated dictionary
+    """
+    # Color values and object index dictionary
+    dict_colors = {}
+    for color in metadata["colors"]:
+
+        value = dataset[color[0]].values - dataset[color[1]].values
+
+        # keep the color-color grids fixed to the initial ones,
+        # i.e. those in dictionary
+        color_min, color_max = metadata["color_limits"][color]
+        value_bins = color_bin_edges(color_min, color_max, metadata["grid_precision"])
+
+        index = np.digitize(value, value_bins) - 1
+        nbins = len(value_bins) - 1
+        valid = (index >= 0) & (index < nbins)
+
+        dict_colors[color] = {"index": index, "valid": valid}
+
+    # Update the valid color indices in dictionary
+    for cs in metadata["color_spaces"]:
+        color1 = cs[0]
+        color2 = cs[1]
+        valid = dict_colors[color1]["valid"] & dict_colors[color2]["valid"]
+        i1 = dict_colors[color1]["index"][valid]
+        i2 = dict_colors[color2]["index"][valid]
+
+        if reset_dictionary:
+            dictionary[cs] = {}
+            dictionary[cs]["mask"] = {}
+        dictionary[cs]["valid"] = valid
+        dictionary[cs]["color1_index"] = i1
+        dictionary[cs]["color2_index"] = i2
+
+    return dictionary

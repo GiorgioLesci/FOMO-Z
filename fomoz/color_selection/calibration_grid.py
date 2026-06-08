@@ -16,15 +16,17 @@ import numpy as np
 import yaml
 from scipy.stats import beta
 from tqdm import tqdm
+from astropy.io import fits
+import pandas as pd
 
 from .dataset import Dataset
 from .selection_definition import SelectionDefinition
 from .tools import (
     c_domain,
-    color_bin_edges,
     compute_metrics,
     prob_target,
     get_color_color_mask,
+    update_dict,
 )
 
 
@@ -197,7 +199,11 @@ class CalibrationGrid:
 
         self.dict = {}
         self._update_dict_metadata(self.dict, self.dataset)
-        self._update_dict(self.dict, self.dataset)
+        self.dict = update_dict(
+            self.dict,
+            self.dataset,
+            self.dict["metadata"],
+        )
 
         # Create the target masks
         self.target_mask = self.td._get_target_mask(
@@ -223,6 +229,9 @@ class CalibrationGrid:
         """
         dictionary["metadata"] = {}
         dictionary["metadata"]["bands"] = self.bands
+        dictionary["metadata"]["colors"] = self.colors
+        dictionary["metadata"]["color_spaces"] = self.color_spaces
+        dictionary["metadata"]["grid_precision"] = self.grid_precision
         dictionary["metadata"]["z_l"] = [float(z) for z in self.td.z_lim]
         dictionary["metadata"]["z_l_is_lower_limit"] = self.td.is_zlim_lower
         dictionary["metadata"][f"{self.thresholded_quantity}_min"] = [
@@ -246,48 +255,6 @@ class CalibrationGrid:
                 color2_min,
                 color2_max,
             ]
-
-    def _update_dict(self, dictionary, dataset):
-        r"""
-        Update the input dictionary, given the input data set.
-
-        Parameters
-        ----------
-        dictionary : dict
-            Dictionary.
-        dataset : pandas.DataFrame
-            Input dataset containing photometric bands.
-        """
-        # Color values and object index dictionary
-        dict_colors = {}
-        for color in self.colors:
-
-            value = dataset[color[0]].values - dataset[color[1]].values
-
-            # keep the color-color grids fixed to the initial ones,
-            # i.e. those in self.dict
-            color_min, color_max = self.dict["metadata"]["color_limits"][color]
-            value_bins = color_bin_edges(color_min, color_max, self.grid_precision)
-
-            index = np.digitize(value, value_bins) - 1
-            nbins = len(value_bins) - 1
-            valid = (index >= 0) & (index < nbins)
-
-            dict_colors[color] = {"index": index, "valid": valid}
-
-        # Update the valid color indices in dictionary
-        for cs in self.color_spaces:
-            color1 = cs[0]
-            color2 = cs[1]
-            valid = dict_colors[color1]["valid"] & dict_colors[color2]["valid"]
-            i1 = dict_colors[color1]["index"][valid]
-            i2 = dict_colors[color2]["index"][valid]
-
-            dictionary[cs] = {}
-            dictionary[cs]["valid"] = valid
-            dictionary[cs]["color1_index"] = i1
-            dictionary[cs]["color2_index"] = i2
-            dictionary[cs]["mask"] = {}
 
     def _process_for_one_z(self, args):
         r"""
@@ -455,7 +422,11 @@ class CalibrationGrid:
 
             # Pre-compute colors
             dict_temp = {}
-            self._update_dict(dict_temp, bt_sample)
+            dict_temp = update_dict(
+                dict_temp,
+                bt_sample,
+                self.dict["metadata"],
+            )
 
             # Set the color-color masks equal to the calibrated ones
             for cs in self.color_spaces:
@@ -550,6 +521,196 @@ class CalibrationGrid:
         print(f"F_tot = {self.F} +- {self.F_std}")
 
         print("Grid calibration complete.")
+
+    def write(
+        self,
+        output_dir,
+        file_name,
+        reference_sample_name="",
+        notes="",
+        write_metrics=True,
+        write_redshift_distributions=True,
+        n_bins_redshift=200,
+        min_redshift=0.0,
+        max_redshift=4.0,
+    ):
+        """
+        Save the optimal color-color grid calibration to a FITS file.
+
+        The file contains one extension group per color-color space:
+        - An ImageHDU with the 3D boolean mask (shape: n_zlim x n_color1bins x n_color2bins).
+        - A BinTableHDU with per-object arrays (valid, color1_index, color2_index)
+          and bin edges (color1_edges, color2_edges).
+
+        Global metadata (z_l, z_l_is_lower_limit, etc.) are stored in the
+        primary HDU header.
+
+        Parameters
+        ----------
+        output_dir : str
+            Path to the directory where the file will be saved.
+        file_name : str
+            Base name of the output file (without extension).
+            The output file is named ``FOMO-Z_{file_name}_grid.fits``.
+        reference_sample_name : str, optional
+            Name of the reference sample, stored in the FITS header.
+        notes : str, optional
+            Additional notes stored in the FITS header.
+        write_metrics : bool, optional
+            If True, write the `FOMO-Z_{file_name}_metrics.csv` file containing
+            purity, completeness, and failure rate
+            as a function of limiting redshift, and their errors.
+        write_redshift_distributions : bool, optional
+            If True, write the `FOMO-Z_{file_name}_redshift_distributions.csv` file,
+            containing the binned redshift distributions of color-selected objects.
+            This file contains the redshift bins and the histograms for each limiting
+            redshift point provided to `SelectionDefinition`.
+            Histograms are derived using the `get_redshift_distribution` method.
+            The first two columns of the file contain bin edges and bin centers,
+            respectively. Subsequent columns contain the redshift distributions
+            corresponding to each limiting redshift value provided to `SelectionDefinition`.
+            These histograms are normalized such that their integral is 1. All histograms
+            share the same bin edges. If weights were provided to `Dataset`, these histograms
+            are weighted accordingly.
+        n_bins_redshift : int, optional
+            Number of redshift histogram bins. Used only if `write_redshift_distributions`
+            is True.
+        min_redshift : float, optional
+            Minimum redshift. Used only if `write_redshift_distributions` is True.
+        max_redshift : float, optional
+            Maximum redshift. Used only if `write_redshift_distributions` is True.
+
+        Raises
+        ------
+        ValueError
+            If calibration has not been run.
+        """
+        if np.sum(self.C) == 0.0:
+            raise ValueError("No calibration is available! Run process() first.")
+
+        # --- Primary HDU: global metadata ---
+        primary_header = fits.Header()
+        primary_header["FOMOVER"] = ("FOMO-Z", "Package name")
+        primary_header["REFSAMP"] = (reference_sample_name, "Reference sample name")
+        primary_header["NOTES"] = ("Produced with the FOMO-Z code. " + notes)[:70]
+
+        meta = self.dict["metadata"]
+        primary_header["BANDS"] = " ".join(meta["bands"])
+
+        # z_l array: stored as a space-separated string in header, or as a small table.
+        # We use a dedicated BinTableHDU for z_l to avoid header length limits.
+        primary_header["ZLISLOW"] = (
+            int(meta["z_l_is_lower_limit"]),
+            "1 if z_l values are lower limits",
+        )
+        primary_header["NZL"] = (
+            len(meta["z_l"]),
+            "Number of redshift threshold values",
+        )
+
+        # Identify color-color space keys (all keys except "metadata")
+        color_spaces = [k for k in self.dict if k != "metadata"]
+        primary_header["NCS"] = (len(color_spaces), "Number of color-color spaces")
+
+        primary_hdu = fits.PrimaryHDU(header=primary_header)
+        hdul = fits.HDUList([primary_hdu])
+
+        # --- Extension 1: z_l values ---
+        z_l_col = fits.Column(
+            name="z_l",
+            format="D",  # double precision float
+            array=np.asarray(meta["z_l"], dtype=np.float64),
+        )
+        z_l_hdu = fits.BinTableHDU.from_columns([z_l_col])
+        z_l_hdu.name = "ZL_VALUES"
+        hdul.append(z_l_hdu)
+
+        # --- One ImageHDU + one BinTableHDU per color-color space ---
+        for cs in color_spaces:
+            cs_data = self.dict[cs]
+
+            # cs is a tuple like ((band1, band2), (band3, band4))
+            # Encode it as a header string: "band1-band2_band3-band4"
+            cs_str = f"{cs[0][0]}-{cs[0][1]}_{cs[1][0]}-{cs[1][1]}"
+
+            # 3D boolean mask: shape (n_zlim, n_color1bins, n_color2bins)
+            mask_array = np.stack(
+                [cs_data["mask"][i] for i in range(len(cs_data["mask"]))],
+                axis=0,
+            ).astype(
+                np.uint8
+            )  # shape: (n_zlim, n_color1bins, n_color2bins)
+
+            mask_hdu = fits.ImageHDU(data=mask_array)
+            mask_hdu.name = f"MASK_{cs_str}"[:68]  # FITS extension name limit
+            mask_hdu.header["CSNAME"] = (cs_str, "Color-color space identifier")
+            mask_hdu.header["C1BAND1"] = (cs[0][0], "Color 1: band 1")
+            mask_hdu.header["C1BAND2"] = (cs[0][1], "Color 1: band 2")
+            mask_hdu.header["C2BAND1"] = (cs[1][0], "Color 2: band 1")
+            mask_hdu.header["C2BAND2"] = (cs[1][1], "Color 2: band 2")
+            hdul.append(mask_hdu)
+
+            # Per-object arrays in a BinTableHDU
+            valid = np.asarray(cs_data["valid"], dtype=bool)
+            color1_index = np.asarray(cs_data["color1_index"], dtype=np.int32)
+            color2_index = np.asarray(cs_data["color2_index"], dtype=np.int32)
+
+            cols = fits.ColDefs(
+                [
+                    fits.Column(name="valid", format="L", array=valid),
+                    fits.Column(name="color1_index", format="J", array=color1_index),
+                    fits.Column(name="color2_index", format="J", array=color2_index),
+                ]
+            )
+
+            table_hdu = fits.BinTableHDU.from_columns(cols)
+            table_hdu.name = f"OBJ_{cs_str}"[:68]
+            hdul.append(table_hdu)
+
+        # Write
+        os.makedirs(output_dir, exist_ok=True)
+        file_path = os.path.join(output_dir, f"FOMO-Z_{file_name}.fits")
+        hdul.writeto(file_path, overwrite=True)
+
+        # Write metrics
+        if write_metrics:
+
+            metrics_data = {
+                "z_lim": self.td.z_lim,
+                "C": self.C,
+                "P": self.P,
+                "F": self.F,
+                "C_std": self.C_std,
+                "P_std": self.P_std,
+                "F_std": self.F_std,
+            }
+
+            metrics_df = pd.DataFrame(metrics_data)
+            file_path = os.path.join(output_dir, f"FOMO-Z_{file_name}_metrics.csv")
+            metrics_df.to_csv(file_path, index=False)
+
+        # Write the redshift distributions
+        if write_redshift_distributions:
+
+            bin_edges = np.linspace(min_redshift, max_redshift, n_bins_redshift + 1)
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+            dist_df = pd.DataFrame(
+                {
+                    "bin_edge_low": bin_edges[:-1],
+                    "bin_edge_high": bin_edges[1:],
+                    "bin_center": bin_centers,
+                }
+            )
+
+            for i in range(len(self.td.z_lim)):
+                hist = self.get_redshift_distribution(i, bin_edges, normalize=True)
+                dist_df[f"z_lim_{i}"] = hist
+
+            file_path = os.path.join(
+                output_dir, f"FOMO-Z_{file_name}_redshift_distributions.csv"
+            )
+            dist_df.to_csv(file_path, index=False)
 
     def get_keys(self):
         """
