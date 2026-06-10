@@ -22,10 +22,11 @@ import pandas as pd
 from .dataset import Dataset
 from .selection_definition import SelectionDefinition
 from .tools import (
-    c_domain,
     compute_metrics,
     prob_target,
     get_color_color_mask,
+    update_dict_color_limits,
+    update_dict_metadata,
     update_dict,
 )
 
@@ -198,12 +199,26 @@ class CalibrationGrid:
         self.F_std = np.full(len(self.td.z_lim), np.nan)
 
         self.dict = {}
-        self._update_dict_metadata(self.dict, self.dataset)
+
+        self.dict = update_dict_metadata(
+            self.dict,
+            self.bands,
+            self.colors,
+            self.color_spaces,
+            self.grid_precision,
+            self.td.z_lim,
+            self.td.is_zlim_lower,
+        )
+        self.dict = update_dict_color_limits(self.dict, self.dataset)
+
         self.dict = update_dict(
             self.dict,
             self.dataset,
             self.dict["metadata"],
         )
+        self.dict["metadata"][f"{self.thresholded_quantity}_min"] = [
+            float(T) for T in self.thresholded_quantity_min
+        ]
 
         # Create the target masks
         self.target_mask = self.td._get_target_mask(
@@ -215,29 +230,6 @@ class CalibrationGrid:
         self.target_mask_unweighted = self.td._get_target_mask(
             dataset_unweighted, self.td.z_lim, None, None
         )
-
-    def _update_dict_metadata(self, dictionary, dataset):
-        r"""
-        Update the input dictionary's metadata, given the input data set.
-
-        Parameters
-        ----------
-        dictionary : dict
-            Dictionary.
-        dataset : pandas.DataFrame
-            Input dataset containing photometric bands.
-        """
-        dictionary["metadata"] = {}
-        dictionary["metadata"]["bands"] = self.bands
-        dictionary["metadata"]["colors"] = self.colors
-        dictionary["metadata"]["color_spaces"] = self.color_spaces
-        dictionary["metadata"]["grid_precision"] = self.grid_precision
-        dictionary["metadata"]["z_l"] = [float(z) for z in self.td.z_lim]
-        dictionary["metadata"]["z_l_is_lower_limit"] = self.td.is_zlim_lower
-        dictionary["metadata"][f"{self.thresholded_quantity}_min"] = [
-            float(T) for T in self.thresholded_quantity_min
-        ]
-        dictionary["metadata"]["grid_precision"] = self.grid_precision
 
     def _process_for_one_z(self, args):
         r"""

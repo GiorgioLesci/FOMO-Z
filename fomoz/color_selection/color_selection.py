@@ -21,6 +21,8 @@ from scipy.interpolate import BSpline
 from .tools import (
     set_input_variable_precision,
     get_color_color_mask,
+    update_dict_color_limits,
+    update_dict_metadata,
     update_dict,
 )
 from .calibration_linear import CalibrationLinear
@@ -277,6 +279,7 @@ class ColorSelection:
 
         # In case of grid selections, update the dictionary
         if self.dict_grid:
+            self.dict_grid = update_dict_color_limits(self.dict_grid, dataset)
             self.dict_grid = update_dict(
                 self.dict_grid,
                 dataset,
@@ -403,15 +406,6 @@ class ColorSelection:
                 bands = primary_header["BANDS"].split()
                 grid_precision = primary_header["GRIDPREC"]
 
-                self.dict_grid = {
-                    "metadata": {
-                        "z_l": z_l,
-                        "z_l_is_lower_limit": z_l_is_lower_limit,
-                        "bands": bands,
-                        "grid_precision": grid_precision,
-                    }
-                }
-
                 color_spaces = []
 
                 for hdu in hdul:
@@ -444,8 +438,16 @@ class ColorSelection:
                 colors = list(
                     {cs[0] for cs in color_spaces} | {cs[1] for cs in color_spaces}
                 )
-                self.dict_grid["metadata"]["color_spaces"] = color_spaces
-                self.dict_grid["metadata"]["colors"] = colors
+
+                self.dict_grid = update_dict_metadata(
+                    self.dict_grid,
+                    bands,
+                    colors,
+                    color_spaces,
+                    grid_precision,
+                    z_l,
+                    z_l_is_lower_limit,
+                )
 
             print("CalibrationGrid parameters successfully loaded from file.")
 

@@ -9,7 +9,7 @@ dictionary reshaping.
 
 import numpy as np
 
-from .color_domain import color_bin_edges
+from .color_domain import color_bin_edges, c_domain
 
 
 def set_input_variable_precision(var, prec=6):
@@ -289,6 +289,71 @@ def inline_list_representer(dumper, data):
     return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
 
 
+def update_dict_color_limits(dictionary, dataset):
+    r"""
+    Update the color limits in the input dictionary's metadata.
+
+    Used by the `CalibrationGrid` class.
+
+    Parameters
+    ----------
+    dictionary : dict
+        Dictionary.
+
+    Returns
+    -------
+    dict
+        The updated dictionary
+    """
+    # Color limits used to reconstruct the bin edges from the metadata
+    dictionary["metadata"]["color_limits"] = {}
+    for cs in dictionary["metadata"]["color_spaces"]:
+        value1 = dataset[cs[0][0]].values - dataset[cs[0][1]].values
+        value2 = dataset[cs[1][0]].values - dataset[cs[1][1]].values
+        color1_min, color1_max = c_domain(value1, q_low=0.0001, q_high=0.9999)
+        color2_min, color2_max = c_domain(value2, q_low=0.0001, q_high=0.9999)
+
+        dictionary["metadata"]["color_limits"][cs[0]] = [
+            color1_min,
+            color1_max,
+        ]
+        dictionary["metadata"]["color_limits"][cs[1]] = [
+            color2_min,
+            color2_max,
+        ]
+
+    return dictionary
+
+
+def update_dict_metadata(
+    dictionary, bands, colors, color_spaces, grid_precision, z_lim, is_zlim_lower
+):
+    r"""
+    Update the input dictionary's metadata.
+
+    Used by the `CalibrationGrid` class.
+
+    Parameters
+    ----------
+    dictionary : dict
+        Dictionary.
+
+    Returns
+    -------
+    dict
+        The updated dictionary
+    """
+    dictionary["metadata"] = {}
+    dictionary["metadata"]["bands"] = bands
+    dictionary["metadata"]["colors"] = colors
+    dictionary["metadata"]["color_spaces"] = color_spaces
+    dictionary["metadata"]["grid_precision"] = grid_precision
+    dictionary["metadata"]["z_l"] = [float(z) for z in z_lim]
+    dictionary["metadata"]["z_l_is_lower_limit"] = is_zlim_lower
+
+    return dictionary
+
+
 def update_dict(dictionary, dataset, metadata, reset_dictionary=True):
     r"""
     Update the input dictionary, given the input data set.
@@ -311,22 +376,6 @@ def update_dict(dictionary, dataset, metadata, reset_dictionary=True):
     dict
         The updated dictionary
     """
-    # Color limits used to reconstruct the bin edges from the metadata
-    dictionary["metadata"]["color_limits"] = {}
-    for cs in metadata["color_spaces"]:
-        value1 = dataset[cs[0][0]].values - dataset[cs[0][1]].values
-        value2 = dataset[cs[1][0]].values - dataset[cs[1][1]].values
-        color1_min, color1_max = c_domain(value1, q_low=0.0001, q_high=0.9999)
-        color2_min, color2_max = c_domain(value2, q_low=0.0001, q_high=0.9999)
-
-        dictionary["metadata"]["color_limits"][cs[0]] = [
-            color1_min,
-            color1_max,
-        ]
-        dictionary["metadata"]["color_limits"][cs[1]] = [
-            color2_min,
-            color2_max,
-        ]
 
     # Color values and object index dictionary
     dict_colors = {}
