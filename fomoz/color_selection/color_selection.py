@@ -401,14 +401,18 @@ class ColorSelection:
                 z_l = list(hdul["ZL_VALUES"].data["z_l"])
                 z_l_is_lower_limit = bool(primary_header["ZLISLOW"])
                 bands = primary_header["BANDS"].split()
+                grid_precision = primary_header["GRIDPREC"]
 
                 self.dict_grid = {
                     "metadata": {
                         "z_l": z_l,
                         "z_l_is_lower_limit": z_l_is_lower_limit,
                         "bands": bands,
+                        "grid_precision": grid_precision,
                     }
                 }
+
+                color_spaces = []
 
                 for hdu in hdul:
                     if not hdu.name.startswith("MASK_"):
@@ -434,6 +438,14 @@ class ColorSelection:
                     self.dict_grid[cs_key] = {
                         "mask": mask_dict,
                     }
+
+                    color_spaces.append(cs_key)
+
+                colors = list(
+                    {cs[0] for cs in color_spaces} | {cs[1] for cs in color_spaces}
+                )
+                self.dict_grid["metadata"]["color_spaces"] = color_spaces
+                self.dict_grid["metadata"]["colors"] = colors
 
             print("CalibrationGrid parameters successfully loaded from file.")
 

@@ -239,23 +239,6 @@ class CalibrationGrid:
         ]
         dictionary["metadata"]["grid_precision"] = self.grid_precision
 
-        dictionary["metadata"]["color_limits"] = {}
-        for cs in self.color_spaces:
-            value1 = dataset[cs[0][0]].values - dataset[cs[0][1]].values
-            value2 = dataset[cs[1][0]].values - dataset[cs[1][1]].values
-            color1_min, color1_max = c_domain(value1, q_low=0.0001, q_high=0.9999)
-            color2_min, color2_max = c_domain(value2, q_low=0.0001, q_high=0.9999)
-
-            # These are used to reconstruct the bin edges from the metadata
-            dictionary["metadata"]["color_limits"][cs[0]] = [
-                color1_min,
-                color1_max,
-            ]
-            dictionary["metadata"]["color_limits"][cs[1]] = [
-                color2_min,
-                color2_max,
-            ]
-
     def _process_for_one_z(self, args):
         r"""
         Calibrate the color cut selection on grids for a single redshift threshold `z_l`.
@@ -596,17 +579,11 @@ class CalibrationGrid:
 
         meta = self.dict["metadata"]
         primary_header["BANDS"] = " ".join(meta["bands"])
-
-        # z_l array: stored as a space-separated string in header, or as a small table.
-        # We use a dedicated BinTableHDU for z_l to avoid header length limits.
         primary_header["ZLISLOW"] = (
             int(meta["z_l_is_lower_limit"]),
             "1 if z_l values are lower limits",
         )
-        primary_header["NZL"] = (
-            len(meta["z_l"]),
-            "Number of redshift threshold values",
-        )
+        primary_header["GRIDPREC"] = meta["grid_precision"]
 
         # Identify color-color space keys (all keys except "metadata")
         color_spaces = [k for k in self.dict if k != "metadata"]
@@ -649,23 +626,6 @@ class CalibrationGrid:
             mask_hdu.header["C2BAND1"] = (cs[1][0], "Color 2: band 1")
             mask_hdu.header["C2BAND2"] = (cs[1][1], "Color 2: band 2")
             hdul.append(mask_hdu)
-
-            # Per-object arrays in a BinTableHDU
-            valid = np.asarray(cs_data["valid"], dtype=bool)
-            color1_index = np.asarray(cs_data["color1_index"], dtype=np.int32)
-            color2_index = np.asarray(cs_data["color2_index"], dtype=np.int32)
-
-            cols = fits.ColDefs(
-                [
-                    fits.Column(name="valid", format="L", array=valid),
-                    fits.Column(name="color1_index", format="J", array=color1_index),
-                    fits.Column(name="color2_index", format="J", array=color2_index),
-                ]
-            )
-
-            table_hdu = fits.BinTableHDU.from_columns(cols)
-            table_hdu.name = f"OBJ_{cs_str}"[:68]
-            hdul.append(table_hdu)
 
         # Write
         os.makedirs(output_dir, exist_ok=True)

@@ -311,6 +311,23 @@ def update_dict(dictionary, dataset, metadata, reset_dictionary=True):
     dict
         The updated dictionary
     """
+    # Color limits used to reconstruct the bin edges from the metadata
+    dictionary["metadata"]["color_limits"] = {}
+    for cs in metadata["color_spaces"]:
+        value1 = dataset[cs[0][0]].values - dataset[cs[0][1]].values
+        value2 = dataset[cs[1][0]].values - dataset[cs[1][1]].values
+        color1_min, color1_max = c_domain(value1, q_low=0.0001, q_high=0.9999)
+        color2_min, color2_max = c_domain(value2, q_low=0.0001, q_high=0.9999)
+
+        dictionary["metadata"]["color_limits"][cs[0]] = [
+            color1_min,
+            color1_max,
+        ]
+        dictionary["metadata"]["color_limits"][cs[1]] = [
+            color2_min,
+            color2_max,
+        ]
+
     # Color values and object index dictionary
     dict_colors = {}
     for color in metadata["colors"]:
