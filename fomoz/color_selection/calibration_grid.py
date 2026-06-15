@@ -41,7 +41,7 @@ class CalibrationGrid:
         thresholded_quantity_min,
         maximized_quantity="completeness",
         grid_precision=0.15,
-        alpha=0.1,
+        alpha=1,
         step=0.0001,
         do_bootstrap=True,
         n_bootstraps=1000,
@@ -93,7 +93,7 @@ class CalibrationGrid:
             Precision of the color-color grids. A smaller value yields a finer,
             more accurate grid at the cost of increased computation, RAM usage, and
             storage requirements.
-        alpha : float, default=0.1
+        alpha : float, default=1
             Significance level used to discard statistically non-robust grid bins.
             For each bin, let k be the number of target objects (successes) out of
             n total objects (trials), and let p denote the true per-bin purity.
@@ -108,7 +108,7 @@ class CalibrationGrid:
 
             Therefore, alpha represents the maximum tolerated posterior probability
             that a bin's true purity is below the required threshold.
-            The default value alpha = 0.1 corresponds to allowing at most a 10%
+            For example, alpha = 0.1 corresponds to allowing at most a 10%
             posterior probability that the bin purity is below p_min.
             To disable this statistical filtering and retain all bins,
             set alpha = 1.

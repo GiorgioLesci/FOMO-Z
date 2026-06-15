@@ -152,6 +152,7 @@ def reference_calibration_grid_instance(
         reference_target_definition_instance,
         thresholded_quantity_min,
         step=0.0001,
+        alpha=0.1,
     )
 
     return calibration
@@ -168,6 +169,7 @@ def reference_calibration_grid_instance_weights(
         reference_target_definition_instance,
         thresholded_quantity_min,
         step=0.0001,
+        alpha=0.1,
     )
 
     return calibration
