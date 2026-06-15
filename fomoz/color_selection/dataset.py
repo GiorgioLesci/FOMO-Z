@@ -143,9 +143,8 @@ class Dataset:
                     f"Invalid band name '{band}'. Must start with letter/underscore and contain only letters, numbers, underscores."
                 )
 
-        # Keep only the needed columns
-        needed_columns = [z_gal_string] + bands
-        self.dataset = dataset[needed_columns].copy().reset_index(drop=True)
+        # Make a copy of the dataset
+        self.dataset = dataset.copy().reset_index(drop=True)
 
         # Check for missing data - photometric bands
         self.dataset[bands] = self.dataset[bands].replace(missing_data, np.nan)
