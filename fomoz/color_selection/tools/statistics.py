@@ -436,8 +436,11 @@ def prob_target(metadata, cs, dataset, target_mask, weights):
         color1, color2, bins=[color1_bins, color2_bins], weights=weights**2.0
     )
 
-    n_trials = np.where(
-        n_trials_denominator > 0, n_total * n_total / n_trials_denominator, 0.0
+    n_trials = np.divide(
+        n_total * n_total,
+        n_trials_denominator,
+        out=np.zeros_like(n_total),
+        where=n_trials_denominator > 0,
     )
 
     # Per-bin number of galaxies fulfilling the input conditions
