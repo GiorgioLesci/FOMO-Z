@@ -150,7 +150,8 @@ class Dataset:
         self.dataset[bands] = self.dataset[bands].replace(missing_data, np.nan)
 
         # Check for missing data - redshifts
-        self.dataset = self.dataset.rename(columns={z_gal_string: "redshift"})
+        if "redshift" not in self.dataset.columns:
+            self.dataset["redshift"] = self.dataset[z_gal_string].values
         self.dataset["redshift"] = self.dataset["redshift"].replace(
             missing_data, np.nan
         )
