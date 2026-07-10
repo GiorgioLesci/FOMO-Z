@@ -71,7 +71,7 @@ class PlotCalibration:
         self.bands = self.color_selection.bands
         self.colors = list(combinations(self.bands, 2))
         self.color_spaces = list(combinations(self.colors, 2))
-        self.dataset = self.dataset
+        self.dataset = dataset
         self.mags = {band: self.dataset.dataset[band].to_numpy() for band in self.bands}
 
         self.C = []
@@ -81,7 +81,7 @@ class PlotCalibration:
         self.P_std = []
         self.F_std = []
 
-    def load_metrics(calibration):
+    def load_metrics(self, calibration):
         r"""
         Set the selection metrics.
 
@@ -110,7 +110,7 @@ class PlotCalibration:
         self.P_std = calibration.P_std
         self.F_std = calibration.F_std
 
-    def load_metrics_from_file(metrics_file_path):
+    def load_metrics_from_file(self, metrics_file_path):
         r"""
         Set the selection metrics.
 
