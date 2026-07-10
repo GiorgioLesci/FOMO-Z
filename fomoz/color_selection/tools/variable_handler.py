@@ -376,7 +376,6 @@ def update_dict(dictionary, dataset, metadata, reset_dictionary=True):
     dict
         The updated dictionary
     """
-
     # Color values and object index dictionary
     dict_colors = {}
     for color in metadata["colors"]:

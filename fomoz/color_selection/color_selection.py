@@ -55,6 +55,7 @@ class ColorSelection:
         self.dict_linear = {}
         self.dict_grid = {}
         self.mask = []
+        self.bands = []
 
     def _reconstruct_interpolators(self):
         """
@@ -113,7 +114,7 @@ class ColorSelection:
                         extrapolate=False,
                     )
 
-    def _linear_selection(self, z_lim, mags):
+    def _linear_selection(self, z_lim, mags, color_condition="all"):
         """
         Select based a linear calibration derived with `CalibrationLinear`.
 
@@ -141,6 +142,9 @@ class ColorSelection:
         mags : dict
             Dictionary mapping magnitude names
             to numpy arrays of magnitudes for all objects.
+        color_condition : str, optional
+            It can be either "all" (all optimal color conditions) or one of
+            the optimal color conditions.
 
         Returns
         -------
@@ -148,14 +152,24 @@ class ColorSelection:
             Boolean mask array of shape (n_objects,), where True indicates
             that the object satisfies at least one of the color conditions.
         """
+        all_conditions = [k for k in self.dict_linear if k != "metadata"]
+        if color_condition == "all":
+            color_condition = all_conditions
+        else:
+            if color_condition not in all_conditions:
+                raise ValueError(
+                    f"Not allowed color_condition value {color_condition}."
+                )
+            color_condition = [color_condition]
+
         mask = np.full(len(mags[list(mags.keys())[0]]), False)
         local_dict = dict(mags)
         local_dict["c"] = None
         local_dict["s"] = None
         for expr, expr_data in self.dict_linear.items():
 
-            # skip meta data
-            if expr == "metadata":
+            # skip not requested color conditions
+            if expr not in color_condition:
                 continue
 
             # adjust z_l
@@ -225,8 +239,8 @@ class ColorSelection:
         z_lim : array-like or float
             Redshift threshold(s) at which the cuts are applied.
         dataset : pandas.DataFrame
-            Table containing the photometric dataset. Must have columns
-            corresponding to the magnitude names stored in
+            The photometric dataset. Must have columns
+            corresponding to the magnitude names stored in e.g.
             ``self.dict_linear['metadata']['bands']``.
         missing_data : int, float, or list, default=[99, -99]
             Value(s) used in the dataset to denote missing entries. These are replaced
@@ -268,6 +282,8 @@ class ColorSelection:
                 "in the source dataset for each missing band. Fill such columns "
                 "with magnitude missing values (see the documentation of this method)."
             )
+
+        self.bands = required_bands
 
         # Handle missing data
         dataset = dataset.copy()

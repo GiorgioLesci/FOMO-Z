@@ -14,8 +14,10 @@ import numexpr as ne
 import numpy as np
 from scipy.interpolate import BSpline
 
-from .calibration_linear import CalibrationLinear
 from .color_selection import ColorSelection
+from .calibration_linear import CalibrationLinear
+from .calibration_grid import CalibrationGrid
+from .dataset import Dataset
 from .tools import (
     check_ax_limits,
     check_plot_type,
@@ -23,17 +25,14 @@ from .tools import (
     normalize_plot_style,
     plot_distribution_contours,
     plot_distribution_scatter,
+    get_color_color_mask,
 )
 
 
 class PlotCalibration:
     """Plot the outputs of calibrated color selections."""
 
-    def __init__(
-        self,
-        calibrations: Union[List, Tuple, object],
-        labels: Optional[Union[List[str], str]] = None,
-    ):
+    def __init__(self, color_selection, dataset):
         r"""
         Initialize a PlotCalibration object for visualizing calibration results.
 
@@ -42,38 +41,94 @@ class PlotCalibration:
 
         Parameters
         ----------
-        calibrations : CalibrationLinear, CalibrationGrid, or list/tuple thereof
-            One or more calibration objects to plot.
-        labels : list or str, optional
-            If not None, it defines the legend labels for each calibration. Default is None.
-
-        Examples
-        --------
-        >>> # Single calibration object
-        >>> plotter = PlotCalibration(calib_linear)
-        >>>
-        >>> # Multiple calibration objects
-        >>> plotter = PlotCalibration([calib_linear, calib_grid])
+        color_selection : ColorSelection
+            `ColorSelection` instance.
+        dataset : ColorSelection
+            `Dataset` instance.
         """
-        if not isinstance(calibrations, (list, tuple)):
-            calibrations = [calibrations]
-        if len(calibrations) == 0:
+        if not isinstance(color_selection, ColorSelection):
+            raise ValueError("color_selection must be a ColorSelection object.")
+        if not isinstance(dataset, Dataset):
+            raise ValueError("dataset must be a Dataset object.")
+
+        if color_selection.dict_linear and color_selection.dict_grid:
             raise ValueError(
-                "calibrations must contain at least one calibration object"
+                "Linear and grid calibrations detected. The current implementations of summary plots do not support the combination of calibration techniques."
             )
 
-        self.calibrations = calibrations
-        self.n_calibrations = len(calibrations)
-
-        if isinstance(labels, (list, tuple)):
-            if len(labels) != self.n_calibrations:
-                raise ValueError(
-                    f"Number of labels ({len(labels)}) must match "
-                    f"number of calibrations ({self.n_calibrations})."
-                )
-            self.labels = labels
+        if color_selection.dict_linear:
+            self.dict = color_selection.dict_linear
+        elif color_selection.dict_grid:
+            self.dict = color_selection.dict_grid
         else:
-            self.labels = [labels] * self.n_calibrations
+            raise ValueError("No calibration detected.")
+
+        self.color_selection = color_selection
+
+        self.z_lim = self.dict["metadata"]["z_l"]
+        self.color_selection.process(self.z_lim[0], dataset.dataset)  # Test run
+
+        self.bands = self.color_selection.bands
+        self.colors = list(combinations(self.bands, 2))
+        self.color_spaces = list(combinations(self.colors, 2))
+        self.dataset = self.dataset
+        self.mags = {band: self.dataset.dataset[band].to_numpy() for band in self.bands}
+
+        self.C = []
+        self.P = []
+        self.F = []
+        self.C_std = []
+        self.P_std = []
+        self.F_std = []
+
+    def load_metrics(calibration):
+        r"""
+        Set the selection metrics.
+
+        This function sets the selection metrics from an instance of a calibration class.
+
+        Parameters
+        ----------
+        calibration : CalibrationLinear or CalibrationGrid
+            Path to the metrics file, written by the calibration classes using
+            the `write()` functions.
+        """
+        if (
+            isinstance(calibration, CalibrationLinear)
+            and not self.color_selection.dict_linear
+        ) or (
+            isinstance(calibration, CalibrationGrid)
+            and not self.color_selection.dict_grid
+        ):
+            raise ValueError(
+                "Mismatch between the color_selection calibration and the one given in input to this function."
+            )
+        self.C = calibration.C
+        self.P = calibration.P
+        self.F = calibration.F
+        self.C_std = calibration.C_std
+        self.P_std = calibration.P_std
+        self.F_std = calibration.F_std
+
+    def load_metrics_from_file(metrics_file_path):
+        r"""
+        Set the selection metrics.
+
+        This function sets the selection metrics by reading them from file.
+
+        Parameters
+        ----------
+        metrics_file_path : str
+            Path to the metrics file, written by the calibration classes using
+            the `write()` functions.
+        """
+        tab_metrics = pd.read_csv(metrics_file_path)
+        self.C = tab_metrics["C"]
+        self.P = tab_metrics["P"]
+        self.F = tab_metrics["F"]
+        self.C_std = tab_metrics_std["C_std"]
+        self.P_std = tab_metrics_std["P_std"]
+        self.F_std = tab_metrics_std["F_std"]
 
     def plot_metric(
         self,
@@ -114,89 +169,85 @@ class PlotCalibration:
             Used only if plot_style equals "band"
         interp_points : array-like, optional
             Limiting redshift points. If not None, derive the metrics at these points
-            using interpolations. Valid only for CalibrationLinear instances. Default is None.
+            using interpolations (in the case of linear calibration). Default is None.
         """
+        if not self.C:
+            raise ValueError(
+                "Before calling this function, set the calibration metrics using the 'load_metrics()' or 'load_metrics_from_file()' functions in this class."
+            )
+
         if metric not in ["C", "P", "F"]:
             raise ValueError(
                 "The metric parameter can only take the following values: 'C', 'P', 'F'."
             )
 
-        linestyle = normalize_plot_style(linestyle, "linestyle", self.n_calibrations)
-        color = normalize_plot_style(color, "color", self.n_calibrations)
+        linestyle = normalize_plot_style(linestyle, "linestyle", 1)
+        color = normalize_plot_style(color, "color", 1)
 
-        for i, calibration in enumerate(self.calibrations):
-            z_lim = calibration.td.z_lim
-            if metric == "C":
-                y = calibration.C
-                y_std = calibration.C_std
-            elif metric == "P":
-                y = calibration.P
-                y_std = calibration.P_std
-            else:
-                y = calibration.F
-                y_std = calibration.F_std
+        z_lim = self.z_lim
+        if metric == "C":
+            y = self.C
+            y_std = self.C_std
+        elif metric == "P":
+            y = self.P
+            y_std = self.P_std
+        else:
+            y = self.F
+            y_std = self.F_std
 
-            if plot_style == "band":
-                ax.plot(
+        if plot_style == "band":
+            ax.plot(
+                z_lim,
+                y * 100.0,
+                color=color[0],
+                # linestyle=linestyle[0],
+            )
+            if not np.any(np.isnan(y_std)):
+                ax.fill_between(
                     z_lim,
-                    y * 100.0,
-                    color=color[i],
-                    # linestyle=linestyle[i],
-                    label=self.labels[i] if show_legend else None,
+                    (y - y_std) * 100.0,
+                    (y + y_std) * 100.0,
+                    color=color[0],
+                    alpha=0.3,
                 )
-                if not np.any(np.isnan(y_std)):
-                    ax.fill_between(
-                        z_lim,
-                        (y - y_std) * 100.0,
-                        (y + y_std) * 100.0,
-                        color=color[i],
-                        alpha=0.3,
-                    )
-            elif plot_style == "errorbar":
-                ax.errorbar(
-                    z_lim,
-                    y * 100.0,
-                    y_std * 100.0,
-                    c=color[i],
-                    fmt=linestyle[i],
-                    markersize=5,
-                    capsize=5,
-                    label=self.labels[i] if show_legend else None,
+        elif plot_style == "errorbar":
+            ax.errorbar(
+                z_lim,
+                y * 100.0,
+                y_std * 100.0,
+                c=color[0],
+                fmt=linestyle[0],
+                markersize=5,
+                capsize=5,
+            )
+        else:
+            raise ValueError(f"Invalid plot_style value ({plot_style}).")
+
+        if interp_points is not None and self.color_selection.dict_linear:
+
+            self.color_selection.process(interp_points, self.dataset.dataset)
+            y = []
+            for j, z_l in enumerate(interp_points):
+                target_mask = self.color_selection._linear_selection(
+                    z_l, self.mags, "all"
                 )
-            else:
-                raise ValueError(f"Invalid plot_style value ({plot_style}).")
-
-            if interp_points is not None and isinstance(calibration, CalibrationLinear):
-                sel = ColorSelection()
-                sel.load_parameters(calibration)
-
-                dataset = calibration.dataset
-                sel.process(interp_points, dataset)
-
-                y = []
-                for j, z_l in enumerate(interp_points):
-                    target_mask = calibration.td.get_target_mask(dataset, [z_l])
-                    TP, FP, FN, TN = compute_metrics(
-                        np.array(sel.mask[j]),
-                        np.array(target_mask[0]),
-                        calibration.weights,
-                    )
-                    if metric == "C":
-                        y.append(TP / (TP + FN) * 100.0 if TP + FN > 0 else 0.0)
-                    elif metric == "P":
-                        y.append(TP / (TP + FP) * 100.0 if TP + FP > 0 else 0.0)
-                    else:
-                        y.append(FP / (FP + TN) * 100.0 if FP + TN > 0 else 0.0)
-
-                ax.plot(
-                    interp_points,
-                    y,
-                    label=(
-                        self.labels[i] + " - interpolation"
-                        if show_legend and self.labels[i] is not None
-                        else None
-                    ),
+                TP, FP, FN, TN = compute_metrics(
+                    np.array(self.color_selection.mask[j]),
+                    np.array(target_mask[0]),
+                    np.array(self.dataset.dataset["weights"].values),
                 )
+                if metric == "C":
+                    y.append(TP / (TP + FN) * 100.0 if TP + FN > 0 else 0.0)
+                elif metric == "P":
+                    y.append(TP / (TP + FP) * 100.0 if TP + FP > 0 else 0.0)
+                else:
+                    y.append(FP / (FP + TN) * 100.0 if FP + TN > 0 else 0.0)
+
+            ax.plot(
+                interp_points,
+                y,
+                label=("Interpolation" if show_legend else None),
+            )
 
     def plot_all_metrics(
         self,
@@ -315,12 +366,11 @@ class PlotCalibration:
         ax,
         color1,
         color2,
-        calibration_index,
         zl_index,
         show_ax_labels=True,
         xlim=(-1.5, 4.5),
         ylim=(-1.5, 4.5),
-        plot_selection_criteria=True,
+        plot_selection_criteria=False,
         plot_all_objects=None,
         plot_all_selected_objects="contour",
         plot_selected_objects="scatter",
@@ -339,6 +389,7 @@ class PlotCalibration:
         levels_2D=[0.68, 0.95],
         loclegend="lower right",
         legend_fontsize=13,
+        legend_ncol=1,
         labelsize=13,
         fontsize=15,
         zl_precision_in_legend="3",
@@ -361,10 +412,8 @@ class PlotCalibration:
             Axis object to plot on.
         color1, color2 : str
             Color names for x and y axes (e.g., 'g-r', 'g-i').
-        calibration_index : int
-            Index of the calibration object to use from self.calibrations.
         zl_index : int
-            Index of the redshift threshold in DataModel.z_lim.
+            Index of the redshift threshold in SelectionDefinition.z_lim.
         show_ax_labels : bool, optional
             If true, show the ax labels.
         xlim, ylim : tuple of float, optional
@@ -409,6 +458,8 @@ class PlotCalibration:
             Location of the legend.
         legend_fontsize : int, optional
             Font size for legend text.
+        legend_ncol : int, optional
+            Number of columns in the legend.
         labelsize : float, optional
             Size of the tick labels.
         fontsize : int, optional
@@ -431,6 +482,11 @@ class PlotCalibration:
 
         The legend includes the redshift threshold value with specified precision.
         """
+        if plot_selection_criteria and self.color_selection.dict_grid:
+            raise NotImplementedError(
+                "The visualization of grids is not implemented. Set plot_selection_criteria equal to False."
+            )
+
         check_plot_type(plot_all_objects, "plot_all_objects")
         check_plot_type(plot_all_selected_objects, "plot_all_selected_objects")
         check_plot_type(plot_selected_objects, "plot_selected_objects")
@@ -444,14 +500,12 @@ class PlotCalibration:
         if show_axes_grid:
             ax.grid()
 
-        calib = self.calibrations[calibration_index]
+        z_l = self.z_lim[zl_index]
 
-        z_l = calib.td.z_lim[zl_index]
+        c1 = self.dataset.dataset[color1[0]] - self.dataset.dataset[color1[2]]
+        c2 = self.dataset.dataset[color2[0]] - self.dataset.dataset[color2[2]]
 
-        c1 = calib.dataset[color1[0]] - calib.dataset[color1[2]]
-        c2 = calib.dataset[color2[0]] - calib.dataset[color2[2]]
-
-        all_colors = [color[0] + "-" + color[1] for color in calib.colors]
+        all_colors = [color[0] + "-" + color[1] for color in self.colors]
         other_colors = [c for c in all_colors if c not in [color1, color2]]
 
         x_min, x_max = ax.get_xlim()
@@ -463,95 +517,105 @@ class PlotCalibration:
 
             mask_selection = np.full(len(c1), False)
 
-            for key, entry in calib.dict.items():
+            for key, entry in self.dict.items():
 
                 if key == "metadata":  # Skip metadata
                     continue
 
-                contains_color1 = color1 in key
-                contains_color2 = color2 in key
-                contains_other = any(other_color in key for other_color in other_colors)
+                if self.color_selection.dict_grid:
+                    mask_selection |= get_color_color_mask(zl_index, key, self.dict)
 
-                # Only color1 OR color2, no other colors
-                if (
-                    contains_color1 ^ contains_color2
-                ) and not contains_other:  # XOR operator
+                else:
+                    contains_color1 = color1 in key
+                    contains_color2 = color2 in key
+                    contains_other = any(
+                        other_color in key for other_color in other_colors
+                    )
 
-                    if z_l in entry["knots"]:
+                    # Only color1 OR color2, no other colors
+                    if (
+                        contains_color1 ^ contains_color2
+                    ) and not contains_other:  # XOR operator
 
-                        idx = np.where(np.unique(entry["knots"]) == z_l)[0][0]
-                        c = entry["c_optimal"][idx]
+                        if z_l in entry["knots"]:
 
-                        # Mask
-                        mask_selection |= calib.get_mask(zl_index, key)
+                            idx = np.where(np.unique(entry["knots"]) == z_l)[0][0]
+                            c = entry["c_optimal"][idx]
 
-                        # Selection criteria
-                        if plot_selection_criteria:
-                            if color1 in key:
-                                ax.axvline(
-                                    x=c,
-                                    color=color_selection_criteria,
-                                    linestyle=style_selection_criteria,
-                                    label=(
-                                        label_selection_criteria
-                                        if not label1_is_plotted
-                                        else None
-                                    ),
-                                )
-                                label1_is_plotted = True
-                            else:
-                                ax.axhline(
-                                    y=c,
-                                    color=color_selection_criteria,
-                                    linestyle=style_selection_criteria,
-                                    label=(
-                                        label_selection_criteria
-                                        if not label1_is_plotted
-                                        else None
-                                    ),
-                                )
-                                label1_is_plotted = True
-
-                # Both color1 AND color2
-                if contains_color1 and contains_color2:
-
-                    if z_l in entry["knots"]:
-
-                        idx = np.where(np.unique(entry["knots"]) == z_l)[0][0]
-                        c = entry["c_optimal"][idx]
-                        s = entry["s_optimal"][idx]
-
-                        # Mask
-                        mask_selection |= calib.get_mask(zl_index, key)
-
-                        # Selection criteria
-                        if plot_selection_criteria:
-
-                            x_line = np.linspace(x_min, x_max, 200)
-                            if ">" in key:
-                                if "-s*" in key:  # color1 > -s*(color2) + c
-                                    y_line = (c - x_line) / s
-                                else:  # color1 > s*(color2) + c
-                                    y_line = (x_line - c) / s
-
-                            else:  # '<' in key
-                                if "-s*" in key:  # color1 < -s*(color2) + c
-                                    y_line = (c - x_line) / s
-                                else:  # color1 < s*(color2) + c
-                                    y_line = (x_line - c) / s
-
-                            ax.plot(
-                                x_line,
-                                y_line,
-                                color=color_selection_criteria,
-                                linestyle=style_selection_criteria,
-                                label=(
-                                    label_selection_criteria
-                                    if not label1_is_plotted
-                                    else None
-                                ),
+                            # Mask
+                            mask_selection |= self.color_selection._linear_selection(
+                                z_l, self.mags, key
                             )
-                            label1_is_plotted = True
+
+                            # Selection criteria
+                            if plot_selection_criteria:
+                                if color1 in key:
+                                    ax.axvline(
+                                        x=c,
+                                        color=color_selection_criteria,
+                                        linestyle=style_selection_criteria,
+                                        label=(
+                                            label_selection_criteria
+                                            if not label1_is_plotted
+                                            else None
+                                        ),
+                                    )
+                                    label1_is_plotted = True
+                                else:
+                                    ax.axhline(
+                                        y=c,
+                                        color=color_selection_criteria,
+                                        linestyle=style_selection_criteria,
+                                        label=(
+                                            label_selection_criteria
+                                            if not label1_is_plotted
+                                            else None
+                                        ),
+                                    )
+                                    label1_is_plotted = True
+
+                    # Both color1 AND color2
+                    if contains_color1 and contains_color2:
+
+                        if z_l in entry["knots"]:
+
+                            idx = np.where(np.unique(entry["knots"]) == z_l)[0][0]
+                            c = entry["c_optimal"][idx]
+                            s = entry["s_optimal"][idx]
+
+                            # Mask
+                            mask_selection |= self.color_selection._linear_selection(
+                                z_l, self.mags, key
+                            )
+
+                            # Selection criteria
+                            if plot_selection_criteria:
+
+                                x_line = np.linspace(x_min, x_max, 200)
+                                if ">" in key:
+                                    if "-s*" in key:  # color1 > -s*(color2) + c
+                                        y_line = (c - x_line) / s
+                                    else:  # color1 > s*(color2) + c
+                                        y_line = (x_line - c) / s
+
+                                else:  # '<' in key
+                                    if "-s*" in key:  # color1 < -s*(color2) + c
+                                        y_line = (c - x_line) / s
+                                    else:  # color1 < s*(color2) + c
+                                        y_line = (x_line - c) / s
+
+                                ax.plot(
+                                    x_line,
+                                    y_line,
+                                    color=color_selection_criteria,
+                                    linestyle=style_selection_criteria,
+                                    label=(
+                                        label_selection_criteria
+                                        if not label1_is_plotted
+                                        else None
+                                    ),
+                                )
+                                label1_is_plotted = True
 
             if plot_selected_objects is not None:
                 c1_sel = c1[mask_selection]
@@ -577,7 +641,14 @@ class PlotCalibration:
                     )
 
         if plot_all_selected_objects is not None:
-            mask_selection = calib.get_mask(zl_index, "all")
+            if self.color_selection.dict_grid:
+                mask_selection = get_color_color_mask(
+                    zl_index, [k for k in self.dict if k != "metadata"], self.dict
+                )
+            else:
+                mask_selection = self.color_selection._linear_selection(
+                    z_l, self.mags, "all"
+                )
             c1_sel = c1[mask_selection]
             c2_sel = c2[mask_selection]
 
@@ -622,6 +693,7 @@ class PlotCalibration:
                 title=r"$z_{\rm l} " + f"= {z_l:.{zl_precision_in_legend}f}$",
                 fontsize=legend_fontsize,
                 title_fontsize=legend_fontsize,
+                ncol=legend_ncol,
             )
 
         if output_file_path is not None:
@@ -631,7 +703,6 @@ class PlotCalibration:
 
     def plot_all_color_distributions(
         self,
-        calibration_index,
         zl_index,
         n_columns=3,
         figsize=(15, 20),
@@ -639,7 +710,7 @@ class PlotCalibration:
         hspace=0.35,
         xlim=(-1.5, 4.5),
         ylim=(-1.5, 4.5),
-        plot_selection_criteria=True,
+        plot_selection_criteria=False,
         plot_all_objects=None,
         plot_all_selected_objects="contour",
         plot_selected_objects="scatter",
@@ -658,12 +729,14 @@ class PlotCalibration:
         levels_2D=[0.68, 0.95],
         loclegend="lower right",
         legend_fontsize=10,
+        legend_ncol=1,
         labelsize=13,
         fontsize=15,
         zl_precision_in_legend="3",
         show_axes_grid=False,
         output_file_path=None,
         dpi=300,
+        show=True,
     ):
         """
         Plot color-color distribution with selection criteria and object selection.
@@ -674,12 +747,14 @@ class PlotCalibration:
         - Selected objects based on all criteria (from all selection criteria in all color-color spaces).
         - Objects selected specifically in the current color-color space.
 
+        In the current implementation, all possible color-color spaces based on
+        the photometric bands used in the calibration are considered. To focus on
+        specific color-color spaces, use `plot_color_distribution()`.
+
         Parameters
         ----------
-        calibration_index : int
-            Index of the calibration object to use from self.calibrations.
         zl_index : int
-            Index of the redshift threshold in DataModel.z_lim.
+            Index of the redshift threshold in SelectionDefinition.z_lim.
         n_columns : int, optional
             Number of subplot columns. Default is 3.
         figsize : tuple, optional
@@ -731,6 +806,8 @@ class PlotCalibration:
             Location of the legend.
         legend_fontsize : int, optional
             Font size for legend text.
+        legend_ncol : int, optional
+            Number of columns in the legend.
         labelsize : float, optional
             Size of the tick labels.
         fontsize : int, optional
@@ -744,12 +821,16 @@ class PlotCalibration:
             If None, the plot is not saved to file. Default is None.
         dpi : int, optional
             dpi parameter of `plt.savefig`.
+        show : bool, optional
+            If True, run plt.show(). In this case, this function does
+            not return any quantity. If False, it returns the array of
+            matplotlib axes (matplotlib.axes.Axes).
+
+        Returns
+        ----------
+            None if `show==True`, or an array of `matplotlib.axes.Axes` otherwise.
         """
-        calib = self.calibrations[calibration_index]
-
-        color_spaces = list(combinations(calib.colors, 2))
-
-        n_color_spaces = len(color_spaces)
+        n_color_spaces = len(self.color_spaces)
         n_rows = int(np.ceil(n_color_spaces / n_columns))
         fig, ax = plt.subplots(
             n_rows,
@@ -767,14 +848,13 @@ class PlotCalibration:
 
         for i in range(n_color_spaces):
 
-            color1 = color_spaces[i][0][0] + "-" + color_spaces[i][0][1]
-            color2 = color_spaces[i][1][0] + "-" + color_spaces[i][1][1]
+            color1 = self.color_spaces[i][0][0] + "-" + self.color_spaces[i][0][1]
+            color2 = self.color_spaces[i][1][0] + "-" + self.color_spaces[i][1][1]
 
             self.plot_color_distribution(
                 ax_flat[i],
                 color1,
                 color2,
-                calibration_index,
                 zl_index,
                 xlim=xlim[i],
                 ylim=ylim[i],
@@ -798,6 +878,7 @@ class PlotCalibration:
                 label_selected_objects=label_selected_objects if i == 0 else None,
                 levels_2D=levels_2D,
                 loclegend=loclegend,
+                legend_ncol=legend_ncol,
                 legend_fontsize=legend_fontsize,
                 labelsize=labelsize,
                 fontsize=fontsize,
@@ -810,11 +891,13 @@ class PlotCalibration:
             plt.savefig(
                 output_file_path, bbox_inches="tight", transparent=True, dpi=dpi
             )
-        plt.show()
+        if show:
+            plt.show()
+        else:
+            return ax
 
     def plot_linear_cut_parameters(
         self,
-        calibration_index,
         cut_key,
         interp_points=None,
         figsize=(14, 4.5),
@@ -843,8 +926,6 @@ class PlotCalibration:
 
         Parameters
         ----------
-        calibration_index : int
-            Index of the calibration object to use from self.calibrations.
         cut_key : str
             Key corresponding to the optimal color condition.
             The list of optimal color conditions can be obtained
@@ -880,12 +961,12 @@ class PlotCalibration:
         dpi : int, optional
             dpi parameter of `plt.savefig`.
         """
-        calib = self.calibrations[calibration_index]
-        assert isinstance(
-            calib, CalibrationLinear
-        ), f"Expected CalibrationLinear, got {type(calib).__name__}"
+        if not self.color_selection.dict_linear:
+            raise ValueError(
+                "This function works only with CalibrationLinear selections. Provide such a selection to the constructor of this class."
+            )
 
-        entry = calib.dict[cut_key]
+        entry = self.color_selection.dict_linear[cut_key]
         z_lim = np.unique(entry["knots"])
 
         if "s" in cut_key:
