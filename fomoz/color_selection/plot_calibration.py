@@ -396,6 +396,7 @@ class PlotCalibration:
         show_axes_grid=False,
         output_file_path=None,
         dpi=300,
+        show_legend=True,
     ):
         """
         Plot color-color distribution with selection criteria and object selection.
@@ -473,6 +474,8 @@ class PlotCalibration:
             If None, the plot is not saved to file. Default is None.
         dpi : int, optional
             dpi parameter of `plt.savefig`.
+        show_legend : bool, optional
+            If True, show the legend.
 
         Notes
         -----
@@ -687,7 +690,7 @@ class PlotCalibration:
             plot_distribution_scatter(ax, c1, c2, color_all_objects, label_all_objects)
 
         handles, _ = ax.get_legend_handles_labels()
-        if handles:  # Only create legend if there are handles
+        if handles and show_legend:  # Only create legend if there are handles
             ax.legend(
                 loc=loclegend,
                 title=r"$z_{\rm l} " + f"= {z_l:.{zl_precision_in_legend}f}$",
@@ -737,6 +740,7 @@ class PlotCalibration:
         output_file_path=None,
         dpi=300,
         show=True,
+        show_legend=True,
     ):
         """
         Plot color-color distribution with selection criteria and object selection.
@@ -825,6 +829,8 @@ class PlotCalibration:
             If True, run plt.show(). In this case, this function does
             not return any quantity. If False, it returns the array of
             matplotlib axes (matplotlib.axes.Axes).
+        show_legend : bool, optional
+            If True, show the legend.
 
         Returns
         ----------
@@ -885,6 +891,7 @@ class PlotCalibration:
                 zl_precision_in_legend=zl_precision_in_legend,
                 show_axes_grid=show_axes_grid,
                 output_file_path=None,
+                show_legend=show_legend,
             )
 
         if output_file_path is not None:
