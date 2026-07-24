@@ -43,7 +43,7 @@ class PlotCalibration:
         ----------
         color_selection : ColorSelection
             `ColorSelection` instance.
-        dataset : ColorSelection
+        dataset : Dataset
             `Dataset` instance.
         """
         if not isinstance(color_selection, ColorSelection):
@@ -80,6 +80,7 @@ class PlotCalibration:
         self.C_std = []
         self.P_std = []
         self.F_std = []
+        self.target_definition = None
 
     def load_metrics(self, calibration):
         r"""
@@ -109,6 +110,7 @@ class PlotCalibration:
         self.C_std = calibration.C_std
         self.P_std = calibration.P_std
         self.F_std = calibration.F_std
+        self.target_definition = calibration.td
 
     def load_metrics_from_file(self, metrics_file_path):
         r"""
@@ -146,6 +148,7 @@ class PlotCalibration:
 
         Given an input axis, plot either completeness, purity, or failure rate.
         If bootstrap errors were computed, the 68% confidence interval is shown.
+        It requires the run of `load_metrics()` or `load_metrics_from_file()`.
 
         Parameters
         ----------
@@ -225,15 +228,28 @@ class PlotCalibration:
 
         if interp_points is not None and self.color_selection.dict_linear:
 
+            if self.target_definition is None:
+                raise NotImplementedError(
+                    "The selection metrics at the interpolation points cannot be computed "+\
+                    "if load_metrics_from_file() was used to load the data. This is allowed only "+\
+                    "if load_metrics() is used."
+                )
+
             self.color_selection.process(interp_points, self.dataset.dataset)
             y = []
             for j, z_l in enumerate(interp_points):
-                target_mask = self.color_selection._linear_selection(
+                target_mask = self.target_definition._get_target_mask(
+                    self.dataset.dataset,
+                    [z_l],
+                    self.dataset.CDZs,
+                    self.dataset.PDZ_x,
+                )
+                mask = self.color_selection._linear_selection(
                     z_l, self.mags, "all"
                 )
                 TP, FP, FN, TN = compute_metrics(
-                    np.array(self.color_selection.mask[j]),
-                    np.array(target_mask[0]),
+                    mask,
+                    target_mask[0],
                     np.array(self.dataset.dataset["weights"].values),
                 )
                 if metric == "C":
@@ -278,6 +294,7 @@ class PlotCalibration:
         3. Failure rate as a function of redshift threshold.
 
         If bootstrap errors were computed, the 68% confidence intervals are shown.
+        It requires the run of `load_metrics()` or `load_metrics_from_file()`.
 
         Parameters
         ----------
