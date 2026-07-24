@@ -137,7 +137,6 @@ class PlotCalibration:
         metric,
         ax,
         plot_style="errorbar",
-        show_legend=False,
         linestyle="o",
         color="k",
         alpha=0.3,
@@ -160,8 +159,6 @@ class PlotCalibration:
         plot_style : str, optional
             Possibilities are: "errorbar" (dots with error bars),
             "band" (line and 68% confidence band).
-        show_legend : bool, optional
-            If True, show the legend label. Default is False.
         linestyle : list or str, optional
             Style of the marker (if plot_style=="errorbar") or of the line
             (if plot_style=="band"). Default is "o".
@@ -198,6 +195,8 @@ class PlotCalibration:
             y = self.F
             y_std = self.F_std
 
+        label = "Calibrated selection"
+
         if plot_style == "band":
             ax.plot(
                 z_lim,
@@ -212,6 +211,7 @@ class PlotCalibration:
                     (y + y_std) * 100.0,
                     color=color[0],
                     alpha=0.3,
+                    label=label,
                 )
         elif plot_style == "errorbar":
             ax.errorbar(
@@ -222,6 +222,7 @@ class PlotCalibration:
                 fmt=linestyle[0],
                 markersize=5,
                 capsize=5,
+                label=label,
             )
         else:
             raise ValueError(f"Invalid plot_style value ({plot_style}).")
@@ -262,7 +263,9 @@ class PlotCalibration:
             ax.plot(
                 interp_points,
                 y,
-                label=("Interpolation" if show_legend else None),
+                label="Interpolated color conditions",
+                linestyle='--',
+                color='darkorange',
             )
 
     def plot_all_metrics(
@@ -363,7 +366,6 @@ class PlotCalibration:
                 metric,
                 ax[i],
                 plot_style=plot_style,
-                show_legend=show_legend if i == 0 else False,
                 linestyle=linestyle,
                 color=color,
                 alpha=alpha,
@@ -927,7 +929,7 @@ class PlotCalibration:
         figsize=(14, 4.5),
         wspace=0.35,
         color_measure="k",
-        color_interp="r",
+        color_interp="darkorange",
         style_measure="o",
         style_interp="--",
         label_measure="Optimal values",
