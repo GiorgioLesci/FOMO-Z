@@ -502,7 +502,7 @@ class TestCalibrationProcess:
 
         # CalibrationGrid
         calibration = reference_calibration_grid_instance
-        calibration.process(cpu_number=1)
+        calibration.process()
 
         assert len(calibration.C) == len(calibration.td.z_lim)
         assert len(calibration.P) == len(calibration.td.z_lim)
@@ -555,7 +555,7 @@ class TestCalibrationProcess:
 
         # CalibrationGrid
         calibration = reference_calibration_grid_instance_weights
-        calibration.process(cpu_number=1)
+        calibration.process()
 
         assert len(calibration.C) == len(calibration.td.z_lim)
         assert len(calibration.P) == len(calibration.td.z_lim)
@@ -596,7 +596,7 @@ class TestColorSelection:
         calibration.process(cpu_number=1)
 
         calibration_grid = reference_calibration_grid_instance
-        calibration_grid.process(cpu_number=1)
+        calibration_grid.process()
 
         # "Test" sample
         test_sample = reference_dataset

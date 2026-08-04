@@ -441,25 +441,12 @@ class CalibrationGrid:
         self.P_std = np.sqrt((P_stats[1] / self.n_bootstraps) - P_mean**2)
         self.F_std = np.sqrt((F_stats[1] / self.n_bootstraps) - F_mean**2)
 
-    def process(
-        self,
-        cpu_number=None,
-        store_iterations=False,
-    ):
+    def process(self):
         r"""
         Perform the iterative search for optimal color selection grids.
 
         Here, either completeness or purity are maximized, depending on what was
         set in the `SelectionDefinition` instance given in input to the constructor of this class.
-
-        Parameters
-        ----------
-        cpu_number : int or None, optional
-            Number of CPU cores to use for parallel processing. If None,
-            defaults to using all available cores minus two.
-        store_iterations : bool, optional
-            If True, store the iteration steps in self.dict_steps.
-            Default is False. For advanced users.
 
         Returns
         -------
@@ -483,6 +470,8 @@ class CalibrationGrid:
         """
         print("\nRunning the grid color selection calibration...")
 
+        cpu_number = None  # to be implemented
+        store_iterations = False  # to be implemented
         for i_z in tqdm(range(len(self.td.z_lim)), desc="Looping over z_lim points"):
             self._process_for_one_z((i_z, store_iterations, cpu_number))
 
