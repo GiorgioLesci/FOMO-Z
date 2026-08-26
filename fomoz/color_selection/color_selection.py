@@ -370,10 +370,10 @@ class ColorSelection:
         if isinstance(calibration, CalibrationLinear):
             self.dict_linear = copy.deepcopy(dictionary)
             self._reconstruct_interpolators()
-            print("CalibrationLinear parameters succesfully loaded.")
+            print("CalibrationLinear parameters successfully loaded.")
         elif isinstance(calibration, CalibrationGrid):
             self.dict_grid = copy.deepcopy(dictionary)
-            print("CalibrationGrid parameters succesfully loaded.")
+            print("CalibrationGrid parameters successfully loaded.")
         else:
             raise ValueError("Wrong type of the calibration parameter.")
 

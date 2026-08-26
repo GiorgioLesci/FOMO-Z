@@ -45,3 +45,7 @@ env/
 venv/
 .ipynb_checkpoints/
 .Rhistory
+
+# Ignore everything in data/, except the input/ folder
+data/*
+!data/input/

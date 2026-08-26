@@ -479,11 +479,6 @@ class CalibrationGrid:
         if self.do_bootstrap:
             self._estimate_errors()
 
-        print(f"Converged!")
-        print(f"P_tot = {self.P} +- {self.P_std}")
-        print(f"C_tot = {self.C} +- {self.C_std}")
-        print(f"F_tot = {self.F} +- {self.F_std}")
-
         print("Grid calibration complete.")
 
     def write(

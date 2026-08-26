@@ -274,7 +274,7 @@ class PlotCalibration:
         wspace=0.35,
         loclegend="upper right",
         show_legend=False,
-        legend_fontsize=13,
+        legend_fontsize=11,
         plot_style="errorbar",
         labelsize=13,
         xlabel=r"$z_{\rm l}$",
@@ -407,7 +407,7 @@ class PlotCalibration:
         label_selected_objects="Galaxies selected\nin this space",
         levels_2D=[0.68, 0.95],
         loclegend="lower right",
-        legend_fontsize=13,
+        legend_fontsize=11,
         legend_ncol=1,
         labelsize=13,
         fontsize=15,
@@ -545,7 +545,7 @@ class PlotCalibration:
                     continue
 
                 if self.color_selection.dict_grid:
-                    mask_selection |= get_color_color_mask(zl_index, key, self.dict)
+                    mask_selection |= get_color_color_mask(zl_index, [key], self.dict)
 
                 else:
                     contains_color1 = color1 in key
@@ -750,7 +750,7 @@ class PlotCalibration:
         label_selected_objects="Galaxies selected\nin this space",
         levels_2D=[0.68, 0.95],
         loclegend="lower right",
-        legend_fontsize=10,
+        legend_fontsize=11,
         legend_ncol=1,
         labelsize=13,
         fontsize=15,
@@ -935,7 +935,7 @@ class PlotCalibration:
         label_measure="Optimal values",
         label_interp="Interpolation",
         loclegend="upper right",
-        legend_fontsize=13,
+        legend_fontsize=11,
         labelsize=13,
         fontsize=17,
         output_file_path=None,
