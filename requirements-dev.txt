@@ -5,6 +5,7 @@ matplotlib>=3.4.0
 tqdm>=4.62.0
 PyYAML>=5.4.0
 numexpr>=2.7.0
+astropy
 pytest>=6.0.0
 black==24.8.0
 pydocstyle>=6.0.0
