@@ -4,11 +4,27 @@ A Python package for optimized galaxy color selections and photometric redshift 
 
 ## Description
 
-`FOMO-Z` provides tools for creating and optimizing color selections of galaxies using photometric data. It implements methods for finding optimal color cuts that maximize completeness and purity for target redshift ranges.
+`FOMO-Z` provides tools for creating color-based selections from photometric data and for estimating photometric redshifts of individual galaxies. The `color_selection` subpackage implements two complementary methods, `CalibrationLinear` and `CalibrationGrid`, which optimize the completeness of target samples given a purity threshold, and support a range of galaxy classification and selection tasks.
+
+### CalibrationLinear
+
+A simple and effective calibration method is implemented in the `CalibrationLinear` class. It is based on linear color cuts and it is well suited for deriving background galaxy selections.
 
 ![DEMO GIF](https://github.com/user-attachments/assets/255bd07f-b66d-40ac-a539-f1429e2cd455)
 
-In the figure above, an example of the optimization process implemented in the `color_selection` subpackage is shown. The assumed limiting redshift is 0.3.
+The figure above shows an example of the optimization process implemented in `CalibrationLinear`. The assumed limiting redshift is 0.3.
+
+### CalibrationGrid
+
+Complex selections, involving, e.g., requirements on galaxy stellar mass or morphology, may require the use of the `CalibrationGrid` class. Compared to `CalibrationLinear`, this class implements a more general approach based on discretized color-color grids.
+
+## Performance
+
+The figure below shows the execution time (top) and maximum RAM usage (bottom) of the selection calibration routines implemented in `color_selection`, as a function of the number of photometric bands used for calibration. The COSMOS20 catalog was used as the reference sample.
+
+![DEMO IMG](https://github.com/user-attachments/assets/a5142986-f632-409a-bc73-a47b51510014)
+
+Blue and red dots show results for `CalibrationLinear` using 1 and 12 CPUs, respectively. `CalibrationGrid` processing, which is not parallelized, is represented by green crosses. Note that such calibrations are, in principle, performed only once, and then applied to any data via the `ColorSelection` class.
 
 ## Installation
 
