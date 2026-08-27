@@ -231,9 +231,9 @@ class PlotCalibration:
 
             if self.target_definition is None:
                 raise NotImplementedError(
-                    "The selection metrics at the interpolation points cannot be computed "+\
-                    "if load_metrics_from_file() was used to load the data. This is allowed only "+\
-                    "if load_metrics() is used."
+                    "The selection metrics at the interpolation points cannot be computed "
+                    + "if load_metrics_from_file() was used to load the data. This is allowed only "
+                    + "if load_metrics() is used."
                 )
 
             self.color_selection.process(interp_points, self.dataset.dataset)
@@ -245,9 +245,7 @@ class PlotCalibration:
                     self.dataset.CDZs,
                     self.dataset.PDZ_x,
                 )
-                mask = self.color_selection._linear_selection(
-                    z_l, self.mags, "all"
-                )
+                mask = self.color_selection._linear_selection(z_l, self.mags, "all")
                 TP, FP, FN, TN = compute_metrics(
                     mask,
                     target_mask[0],
@@ -264,8 +262,8 @@ class PlotCalibration:
                 interp_points,
                 y,
                 label="Interpolated color conditions",
-                linestyle='--',
-                color='darkorange',
+                linestyle="--",
+                color="darkorange",
             )
 
     def plot_all_metrics(
