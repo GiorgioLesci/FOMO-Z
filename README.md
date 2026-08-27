@@ -18,7 +18,7 @@ The figure above shows an example of the optimization process implemented in `Ca
 
 Complex selections, involving, e.g., requirements on galaxy stellar mass or morphology, may require the use of the `CalibrationGrid` class. Compared to `CalibrationLinear`, this class implements a more general approach based on discretized color-color grids.
 
-## Performance
+### Performance
 
 The figure below shows the execution time (top) and maximum RAM usage (bottom) of the selection calibration routines implemented in `color_selection`, as a function of the number of photometric bands used for calibration. The COSMOS20 catalog was used as the reference sample.
 
