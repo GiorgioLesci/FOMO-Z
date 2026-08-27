@@ -8,7 +8,7 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 
 setup(
     name="fomoz",
-    version="0.1.0",
+    version="1.0.0",
     author="Giorgio Francesco Lesci",
     author_email="lesci.giorgio@gmail.com",
     description="Optimized galaxy color selections and photometric redshift estimation",
