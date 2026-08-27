@@ -4,7 +4,7 @@ A Python package for optimized galaxy color selections and photometric redshift 
 
 ## Description
 
-`FOMO-Z` (Flexible Optimizer of Multi-dimensional Observables and photo-Zs) provides tools for creating color-based selections from photometric data and for estimating photometric redshifts of individual galaxies. The `color_selection` subpackage implements two complementary methods, `CalibrationLinear` and `CalibrationGrid`, which optimize the completeness of target samples given a purity threshold, and support a range of galaxy classification and selection tasks.
+`FOMO-Z` (Flexible Optimizer of Multi-dimensional Operators and photo-Zs) provides tools for creating color-based selections from photometric data and for estimating photometric redshifts of individual galaxies. The `color_selection` subpackage implements two complementary methods, `CalibrationLinear` and `CalibrationGrid`, which optimize the completeness of target samples given a purity threshold, and support a range of galaxy classification and selection tasks.
 
 ### CalibrationLinear
 
