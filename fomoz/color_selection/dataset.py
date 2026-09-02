@@ -41,13 +41,14 @@ class Dataset:
         Parameters
         ----------
         dataset : pandas.DataFrame
-            Input photometric dataset containing magnitude measurements and a
-            redshift column.
+            Input photometric dataset containing magnitude measurements and,
+            optionally, estimates of redshift and other physical properties.
         bands : list of str
             Names of the photometric bands to include in the analysis.
-        z_gal_string : str, default='redshift'
+        z_gal_string : str, default="redshift"
             Column name in `dataset` that contains the point-estimate redshift values.
-            Used in the metrics computation only if `PDZs` is None. It is always
+            If redshift information is not needed, set it to `None`.
+            It is used in the metrics computation only if `PDZs` is `None`. It is always
             used to derive the redshift distributions by the `get_redshift_distribution`
             methods of the calibration classes.
         PDZs : array-like of array-like, default=None
@@ -95,7 +96,7 @@ class Dataset:
         if any("c" in b or "s" in b for b in bands):
             raise ValueError("Band keys cannot contain the characters 'c' or 's'.")
 
-        if z_gal_string not in dataset.columns:
+        if z_gal_string is not None and z_gal_string not in dataset.columns:
             errMsg = f"z_gal_string='{z_gal_string}' "
             errMsg += "not found in dataset columns."
             raise KeyError(errMsg)
@@ -105,7 +106,9 @@ class Dataset:
             errMsg += f"with a band name in {bands}."
             raise ValueError(errMsg)
 
-        if "redshift" in dataset.columns and z_gal_string != "redshift":
+        if "redshift" in dataset.columns and (
+            z_gal_string != "redshift" and z_gal_string is not None
+        ):
             errMsg = "Dataset already contains a 'redshift' column. "
             errMsg += "Please rename it or set z_gal_string='redshift'."
             raise ValueError(errMsg)
@@ -150,9 +153,12 @@ class Dataset:
         self.dataset[bands] = self.dataset[bands].replace(missing_data, np.nan)
 
         # Check for missing data - redshifts
-        if "redshift" not in self.dataset.columns:
+        if "redshift" not in self.dataset.columns and z_gal_string is not None:
             self.dataset["redshift"] = self.dataset[z_gal_string].values
             self.dataset = self.dataset.drop(columns=[z_gal_string])
+
+        if z_gal_string is None:
+            self.dataset["redshift"] = np.nan
 
         self.dataset["redshift"] = self.dataset["redshift"].replace(
             missing_data, np.nan

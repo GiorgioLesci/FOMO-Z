@@ -21,7 +21,7 @@ class SelectionDefinition:
 
     def __init__(
         self,
-        z_lim,
+        z_lim=0.0,
         is_zlim_lower=True,
         z_lim_opposite=None,
         additional_rules=None,
@@ -33,12 +33,14 @@ class SelectionDefinition:
 
         Parameters
         ----------
-        z_lim : float or array-like
-            Float or array of redshift limits.
+        z_lim : float or array-like, default = 0.0
+            Float or array/list of redshift limits.
             It can represent either lower of higher limit values, depending on
             the value of `is_zlim_lower`. To calibrate a selection of objects
             in a definite redshift range, use the input parameter `z_lim_opposite`.
             This defines the second edge of the redshift bin.
+            If `z_gal_string=None` and no `PDZs` are provided to the `Dataset` object
+            passed to the `CalibrationLinear` and `CalibrationGrid` classes, then `z_lim` is not used.
         is_zlim_lower : bool, default = True
             If True, `z_lim` is a set of lower redshift limits. Otherwise, `z_lim`
             is a set of higher limits.
@@ -130,8 +132,8 @@ class SelectionDefinition:
         Parameters
         ----------
         dataset : pandas.DataFrame
-            Input dataset containing galaxy properties. Must include a 'redshift' column
-            and any additional properties referenced in `self.additional_rules`.
+            Input dataset containing galaxy properties. Must include
+            any additional properties referenced in `self.additional_rules`.
         z_lim : numpy.array of float
             Limiting redshift points.
         CDZs : array-like of array-like
@@ -155,6 +157,8 @@ class SelectionDefinition:
           satisfy the redshift condition AND all additional rules to be marked as True.
         - The returned mask can be used directly for calculating completeness, purity,
           and other selection metrics.
+        - If `z_gal_string=None` and no `PDZs` are provided to the `Dataset` object
+          passed to the `CalibrationLinear` and `CalibrationGrid` classes, then `z_lim` is not used.
         """
         input_weights = np.asarray(dataset["weights"].values)
         if CDZs is None and np.allclose(input_weights, 1.0):
@@ -178,11 +182,15 @@ class SelectionDefinition:
 
             # Limiting redshift
             if self.is_zlim_lower and CDZs is None:
+                if dataset["redshift"].isna().all():
+                    target_mask[i] = np.ones_like(target_mask[i])  # select everything
                 target_mask[i] = (dataset["redshift"] > zz) & (
                     dataset["redshift"] < self.z_up
                 )
 
             elif self.is_zlim_lower == False and CDZs is None:
+                if dataset["redshift"].isna().all():
+                    target_mask[i] = np.ones_like(target_mask[i])  # select everything
                 target_mask[i] = (dataset["redshift"] < zz) & (
                     dataset["redshift"] > self.z_low
                 )

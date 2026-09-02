@@ -717,6 +717,9 @@ class CalibrationGrid:
         histogram : numpy.array
             Array of histogram values.
         """
+        if self.dataset["redshift"].isna().all():
+            raise ValueError("Redshifts were not provided to the Dataset class.")
+
         mask = self.get_mask(zl_index, color_space="all")
         dataset = self.dataset["redshift"][mask]
         hist, _ = np.histogram(
