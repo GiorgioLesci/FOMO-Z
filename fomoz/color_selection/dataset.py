@@ -152,6 +152,8 @@ class Dataset:
         # Check for missing data - redshifts
         if "redshift" not in self.dataset.columns:
             self.dataset["redshift"] = self.dataset[z_gal_string].values
+            self.dataset = self.dataset.drop(columns=[z_gal_string])
+
         self.dataset["redshift"] = self.dataset["redshift"].replace(
             missing_data, np.nan
         )
