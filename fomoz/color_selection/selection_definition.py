@@ -146,10 +146,13 @@ class SelectionDefinition:
         Returns
         -------
         target_mask : numpy.ndarray
-            2D mask with shape (len(z_lim), len(dataset)) multiplied by prior weights
-            (if provided to the `Dataset` class).
-            target_mask[i, j] = True indicates that galaxy j satisfies all selection
-            criteria for redshift limit z_lim[i].
+            2D mask with shape (len(z_lim), len(dataset)). If no prior weights
+            or redshift PDFs are provided, the mask is boolean. Otherwise, it
+            contains float values accounting for redshift probabilities and/or
+            prior weights.
+            target_mask[i, j] indicates whether galaxy j satisfies all selection
+            criteria for redshift limit z_lim[i]. For float masks, the value also
+            accounts for the redshift probability and/or prior weight.
 
         Notes
         -----
@@ -184,16 +187,18 @@ class SelectionDefinition:
             if self.is_zlim_lower and CDZs is None:
                 if dataset["redshift"].isna().all():
                     target_mask[i] = np.ones_like(target_mask[i])  # select everything
-                target_mask[i] = (dataset["redshift"] > zz) & (
-                    dataset["redshift"] < self.z_up
-                )
+                else:
+                    target_mask[i] = (dataset["redshift"] > zz) & (
+                        dataset["redshift"] < self.z_up
+                    )
 
             elif self.is_zlim_lower == False and CDZs is None:
                 if dataset["redshift"].isna().all():
                     target_mask[i] = np.ones_like(target_mask[i])  # select everything
-                target_mask[i] = (dataset["redshift"] < zz) & (
-                    dataset["redshift"] > self.z_low
-                )
+                else:
+                    target_mask[i] = (dataset["redshift"] < zz) & (
+                        dataset["redshift"] > self.z_low
+                    )
 
             else:
 
