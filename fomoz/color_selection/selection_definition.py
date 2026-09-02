@@ -8,6 +8,7 @@ handling any condition on galaxy properties.
 """
 
 from itertools import combinations
+import types
 
 import numpy as np
 import pandas as pd
@@ -22,6 +23,7 @@ class SelectionDefinition:
         self,
         z_lim,
         is_zlim_lower=True,
+        z_lim_opposite=None,
         additional_rules=None,
     ):
         """
@@ -35,23 +37,29 @@ class SelectionDefinition:
             Float or array of redshift limits.
             It can represent either lower of higher limit values, depending on
             the value of `is_zlim_lower`. To calibrate a selection of objects
-            in a definite redshift range, use the input parameter `additional_rules`.
-            This allows for the definition of the second edge of the redshift bin.
+            in a definite redshift range, use the input parameter `z_lim_opposite`.
+            This defines the second edge of the redshift bin.
         is_zlim_lower : bool, default = True
             If True, `z_lim` is a set of lower redshift limits. Otherwise, `z_lim`
             is a set of higher limits.
-        additional_rules : list of lists, default = None
-            Additional selection rules beyond `z_lim`. Each rule is a list
-            with this format: [property, operator, threshold].
+        z_lim_opposite : float, default = None
+            Upper (lower) redshift limit if `is_zlim_lower=True` (`is_zlim_lower=False`).
+            This redshift limit is the same for all values of `z_lim`.
+            If `z_lim=0.5`, `is_zlim_lower=True`, and `z_lim_opposite=1.0`,
+            the targeted sample lies in the redshift range `[0.5, 1.0]`.
+            The same result is obtained with
+            `z_lim=1.0`, `is_zlim_lower=False`, and `z_lim_opposite=0.5`.
+        additional_rules : list of lambda functions, default = None
+            Additional selection rules beyond those on redshift.
+            Each rule is a lambda function having a pandas DataFrame as the variable.
             All rules (including the one on the i-th `z_lim`) are
             combined through the AND logical operator.
-            Example: ``[ ["logM", ">", 10.0], ["u", "<", 24.0] ]``.
-            Supported operators: ">", "<", ">=", "<=", "==", "!=".
-            Additional rules are the same for all values of `z_lim`.
+            Example: ``[lambda df: df["logM"] > 10.0, lambda df: df["u"] < 24.0]``.
+            The additional rules defined here are the same for all values of `z_lim`.
 
         Notes
         -----
-        - If `additional_rules` contains redshift requirements and redshift PDFs
+        - If `z_lim_opposite` is defined and redshift PDFs
           were provided to the `Dataset` class, the resulting mask
           accounts for this by integrating the redshift PDFs accordingly.
         """
@@ -64,45 +72,49 @@ class SelectionDefinition:
             raise TypeError("is_zlim_lower must be a boolean (True or False).")
         self.is_zlim_lower = is_zlim_lower
 
+        if z_lim_opposite is not None:
+            if not isinstance(z_lim_opposite, (float, np.floating)):
+                raise ValueError("If not None, z_lim_opposite must be a float.")
+            if is_zlim_lower:
+                self.z_up = z_lim_opposite
+            else:
+                self.z_low = z_lim_opposite
+        else:
+            if is_zlim_lower:
+                self.z_up = 1000.0
+            else:
+                self.z_low = 0.0
+
+        self.z_lim_opposite = z_lim_opposite
+
+        for i, zz in enumerate(self.z_lim):
+            if is_zlim_lower and self.z_up <= zz:
+                raise ValueError(
+                    f"z_lim_opposite is lower than or equal to the {i}-th z_lim value."
+                )
+            elif is_zlim_lower == False and self.z_low >= zz:
+                raise ValueError(
+                    f"z_lim_opposite is larger than or equal to the {i}-th z_lim value."
+                )
+
         # Check the format of the additional rules
         if additional_rules is not None:
 
             if not isinstance(additional_rules, list):
                 raise ValueError("additional_rules must be a list.")
 
-            for i in range(len(additional_rules)):
+            for i, f in enumerate(additional_rules):
 
-                if not isinstance(additional_rules[i], list):
-                    raise ValueError(f"additional_rules[{i}] is not a list.")
+                if not (isinstance(f, types.FunctionType) and f.__name__ == "<lambda>"):
+                    raise ValueError(f"additional_rules[{i}] is not a lambda function.")
 
-                if len(additional_rules[i]) != 3:
-                    errMsg = "Each list in additional_rules must contain "
-                    errMsg += " exactly 3 elements."
-                    raise ValueError(errMsg)
-
-                property_name, operator, _ = additional_rules[i]
-
-                if not isinstance(property_name, str):
-                    errMsg = f"Rule {i}: property_name must be a string, got {type(property_name)}"
-                    raise TypeError(errMsg)
-                if not isinstance(operator, str):
-                    errMsg = (
-                        f"Rule {i}: operator must be a string, got {type(operator)}"
+                if (
+                    "redshift" in f.__code__.co_consts
+                    or "redshift" in f.__code__.co_names
+                ):
+                    raise ValueError(
+                        "Additional rules cannot contain operations involving 'redshift'. Use z_lim_opposite."
                     )
-                    raise TypeError(errMsg)
-
-                valid_operators = [">", "<", ">=", "<=", "==", "!="]
-                if operator not in valid_operators:
-                    errMsg = f"Rule {i}: operator '{operator}' is not supported. "
-                    errMsg += f"Must be one of {valid_operators}"
-                    raise ValueError(errMsg)
-
-                if property_name == "redshift":
-                    errMsg = f"The additional rule on redshift has a not valid operator ({operator}). Check the parameter is_zlim_lower."
-                    if is_zlim_lower and operator not in ["<", "<="]:
-                        raise ValueError(errMsg)
-                    elif is_zlim_lower == False and operator not in [">", ">="]:
-                        raise ValueError(errMsg)
 
         self.additional_rules = additional_rules
 
@@ -156,28 +168,28 @@ class SelectionDefinition:
             idxs = np.clip(idxs, 0, len(PDZ_x) - 1)
 
             # If an additional redshift rule is present, precompute its CDF index
-            z_additional = None
-            if self.additional_rules is not None:
-                redshift_rules = [
-                    r for r in self.additional_rules if r[0] == "redshift"
-                ]
-                if redshift_rules:
-                    z_additional = redshift_rules[0][2]  # threshold
-                    idx_additional = np.searchsorted(PDZ_x, z_additional, side="left")
-                    idx_additional = np.clip(idx_additional, 0, len(PDZ_x) - 1)
+            if self.z_lim_opposite is not None:
+                idx_additional = np.searchsorted(
+                    PDZ_x, self.z_lim_opposite, side="left"
+                )
+                idx_additional = np.clip(idx_additional, 0, len(PDZ_x) - 1)
 
         for i, zz in enumerate(z_lim):
 
             # Limiting redshift
             if self.is_zlim_lower and CDZs is None:
-                target_mask[i] = dataset["redshift"] > zz
+                target_mask[i] = (dataset["redshift"] > zz) & (
+                    dataset["redshift"] < self.z_up
+                )
 
             elif self.is_zlim_lower == False and CDZs is None:
-                target_mask[i] = dataset["redshift"] < zz
+                target_mask[i] = (dataset["redshift"] < zz) & (
+                    dataset["redshift"] > self.z_low
+                )
 
             else:
 
-                if z_additional is not None:
+                if self.z_lim_opposite is not None:
                     if self.is_zlim_lower:
                         probs = CDZs[:, idx_additional] - CDZs[:, idxs[i]]
                     else:
@@ -199,32 +211,8 @@ class SelectionDefinition:
             if self.additional_rules is None:
                 continue
 
-            for property_name, operator, threshold in self.additional_rules:
-
-                # Skip redshift rule if CDZs are used (already absorbed in the integral above)
-                if property_name == "redshift" and CDZs is not None:
-                    continue
-
-                if property_name not in dataset.columns:
-                    errMsg = f"The property '{property_name}' "
-                    errMsg += f"in additional_rules is not in the dataset."
-                    raise KeyError(errMsg)
-
-                data = dataset[property_name]
-
-                if operator == ">":
-                    condition = data > threshold
-                elif operator == "<":
-                    condition = data < threshold
-                elif operator == ">=":
-                    condition = data >= threshold
-                elif operator == "<=":
-                    condition = data <= threshold
-                elif operator == "==":
-                    condition = data == threshold
-                elif operator == "!=":
-                    condition = data != threshold
-
+            for f in self.additional_rules:
+                condition = f(dataset)
                 if np.issubdtype(target_mask.dtype, np.bool_):
                     target_mask[i] &= condition
                 else:
