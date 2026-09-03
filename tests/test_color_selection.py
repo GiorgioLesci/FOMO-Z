@@ -76,7 +76,11 @@ def reference_colors(reference_dataset):
 def reference_target_definition_instance():
     """Create a SelectionDefinition instance."""
     z_lim = [0.5, 0.6]
-    target_definition = SelectionDefinition(z_lim)
+    target_definition = SelectionDefinition(
+        z_lim,
+        z_lim_opposite=2.5,
+        additional_rules=[lambda df: df["g"] > 23.0],
+    )
     return target_definition
 
 
@@ -484,9 +488,9 @@ class TestCalibrationProcess:
         assert len(calibration.C) == len(calibration.td.z_lim)
         assert len(calibration.P) == len(calibration.td.z_lim)
 
-        expected_C = [0.93014534, 0.9308524]
-        expected_P = [0.90407838, 0.90270666]
-        expected_F = [0.43672199, 0.31843575]
+        expected_C = [0.94084582, 0.94883587]
+        expected_P = [0.90035861, 0.90166621]
+        expected_F = [0.26037483, 0.2055968]
 
         assert np.allclose(
             calibration.C, expected_C
@@ -507,9 +511,9 @@ class TestCalibrationProcess:
         assert len(calibration.C) == len(calibration.td.z_lim)
         assert len(calibration.P) == len(calibration.td.z_lim)
 
-        expected_C = [0.9273324, 0.93034951]
-        expected_P = [0.9286385, 0.91652217]
-        expected_F = [0.3153527, 0.26895451]
+        expected_C = [0.91059957, 0.92152918]
+        expected_P = [0.9103559, 0.90513834]
+        expected_F = [0.22423025, 0.19189035]
 
         assert np.allclose(
             calibration.C, expected_C
@@ -537,9 +541,9 @@ class TestCalibrationProcess:
         assert len(calibration.C) == len(calibration.td.z_lim)
         assert len(calibration.P) == len(calibration.td.z_lim)
 
-        expected_C = [0.93014534, 0.9308524]
-        expected_P = [0.90407838, 0.90270666]
-        expected_F = [0.43672199, 0.31843575]
+        expected_C = [0.94084582, 0.94883587]
+        expected_P = [0.90035861, 0.90166621]
+        expected_F = [0.26037483, 0.2055968]
 
         assert np.allclose(
             calibration.C, expected_C
@@ -560,9 +564,9 @@ class TestCalibrationProcess:
         assert len(calibration.C) == len(calibration.td.z_lim)
         assert len(calibration.P) == len(calibration.td.z_lim)
 
-        expected_C = [0.9273324, 0.93034951]
-        expected_P = [0.9286385, 0.91652217]
-        expected_F = [0.3153527, 0.26895451]
+        expected_C = [0.91059957, 0.92152918]
+        expected_P = [0.9103559, 0.90513834]
+        expected_F = [0.22423025, 0.19189035]
 
         assert np.allclose(
             calibration.C, expected_C
@@ -609,7 +613,7 @@ class TestColorSelection:
         sel.process(zl_new, test_sample)
         mask = sel.mask
 
-        expected_N = [4389, 4360, 4336, 4311, 4278, 4243, 4219, 4185, 4153, 4121, 4101]
+        expected_N = [3904, 3872, 3847, 3822, 3798, 3776, 3762, 3748, 3723, 3700, 3661]
 
         assert len(expected_N) == len(mask)
 
@@ -632,7 +636,7 @@ class TestColorSelection:
         sel.process(zl_new, test_sample)
         mask = sel.mask
 
-        expected_N = [4260, 4260, 4037, 4037, 0]
+        expected_N = [3737, 3737, 3542, 3542, 0]
 
         assert len(expected_N) == len(mask)
 
