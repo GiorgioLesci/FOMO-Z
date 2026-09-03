@@ -18,7 +18,7 @@ import yaml
 from astropy.io import fits
 from scipy.interpolate import BSpline
 
-from .tools import (
+from ..auxiliary import (
     set_input_variable_precision,
     get_color_color_mask,
     update_dict_color_limits,

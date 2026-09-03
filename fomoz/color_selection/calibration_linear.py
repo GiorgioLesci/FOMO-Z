@@ -21,7 +21,7 @@ from tqdm import tqdm
 
 from .dataset import Dataset
 from .selection_definition import SelectionDefinition
-from .tools import (
+from ..auxiliary import (
     MeasureLinear,
     build_nested_dict,
     combine_optimal_cuts,

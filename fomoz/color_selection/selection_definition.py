@@ -13,7 +13,7 @@ import types
 import numpy as np
 import pandas as pd
 
-from .tools import set_input_variable_precision
+from ..auxiliary import set_input_variable_precision
 
 
 class SelectionDefinition:

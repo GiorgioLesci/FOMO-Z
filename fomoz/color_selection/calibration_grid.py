@@ -21,7 +21,7 @@ import pandas as pd
 
 from .dataset import Dataset
 from .selection_definition import SelectionDefinition
-from .tools import (
+from ..auxiliary import (
     compute_metrics,
     prob_target,
     get_color_color_mask,

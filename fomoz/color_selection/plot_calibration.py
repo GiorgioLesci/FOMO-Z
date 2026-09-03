@@ -18,7 +18,7 @@ from .color_selection import ColorSelection
 from .calibration_linear import CalibrationLinear
 from .calibration_grid import CalibrationGrid
 from .dataset import Dataset
-from .tools import (
+from ..auxiliary import (
     check_ax_limits,
     check_plot_type,
     compute_metrics,
