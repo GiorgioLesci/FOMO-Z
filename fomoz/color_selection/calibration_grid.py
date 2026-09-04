@@ -2,7 +2,7 @@
 Derive optimal color selections based on color-color grids.
 
 This module selects the optimal color-color grids,
-given any limit on redshift and on other galaxy properties.
+given any condition on redshift or any other galaxy properties.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """

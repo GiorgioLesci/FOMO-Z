@@ -152,6 +152,11 @@ class Dataset:
         # Check for missing data - photometric bands
         self.dataset[bands] = self.dataset[bands].replace(missing_data, np.nan)
 
+        error_columns = [col for col in self.dataset.columns if "_error" in col]
+        self.dataset[error_columns] = self.dataset[error_columns].replace(
+            self.missing_data, np.nan
+        )
+
         # Check for missing data - redshifts
         if "redshift" not in self.dataset.columns and z_gal_string is not None:
             self.dataset["redshift"] = self.dataset[z_gal_string].values

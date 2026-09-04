@@ -4,6 +4,7 @@ from .calibration_grid import *
 from .calibration_linear import *
 from .color_selection import *
 from .dataset import *
+from .individual_probability import *
 from .plot_calibration import *
 from .selection_definition import *
 from ..auxiliary import *
