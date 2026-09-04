@@ -154,7 +154,7 @@ class Dataset:
 
         error_columns = [col for col in self.dataset.columns if "_error" in col]
         self.dataset[error_columns] = self.dataset[error_columns].replace(
-            self.missing_data, np.nan
+            missing_data, np.nan
         )
 
         # Check for missing data - redshifts
