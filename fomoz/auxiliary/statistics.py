@@ -471,8 +471,7 @@ def get_color_color_mask(zl_index, color_space, dictionary):
     zl_index : int
         Index of the redshift threshold in TargetDefinition.z_lim.
     color_space : str or tuple
-        It can be either "all" (all color-color spaces) or one of
-        the available color-color spaces, in the form `((band1, band2), (band3, band4))`.
+        Set of color spaces.
     dictionary : dict
         The color-color space dictionary, containing grid masks.
 

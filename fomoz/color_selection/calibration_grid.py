@@ -10,7 +10,6 @@ given any condition on redshift or any other galaxy properties.
 import copy
 import multiprocessing as mp
 import os
-import time
 
 import numpy as np
 import yaml
@@ -42,9 +41,10 @@ class CalibrationGrid:
         maximized_quantity="completeness",
         grid_precision=0.15,
         alpha=1,
-        step=0.0001,
+        step=0.001,
         do_bootstrap=True,
         n_bootstraps=1000,
+        verbose=True,
     ):
         r"""
         Class calibrating optimal grid color selections.
@@ -112,13 +112,16 @@ class CalibrationGrid:
             posterior probability that the bin purity is below p_min.
             To disable this statistical filtering and retain all bins,
             set alpha = 1.
-        step : float, default=0.0001
-            Defines the threshold reduction on grid elements. Default is 0.0001.
+        step : float, default=0.001
+            Defines the threshold reduction on grid elements. Default is 0.001.
         do_bootstrap : bool, default=True
             If True, derive uncertainties on C, P, and F through bootstrap.
         n_bootstraps : int, default=1000
             Number of bootstrap resamples to perform. It defines
             the number of resampling in error estimation.
+        verbose : bool, default=True
+            If True, print messages during execution (e.g. referring to
+            the time employed for computation, status of the calibration)
 
         Attributes
         ----------
@@ -142,6 +145,7 @@ class CalibrationGrid:
         Purity maximization is not implemented yet. `maximized_quantity == "completeness"`
         is the only accepted value.
         """
+        self.verbose = verbose
         self.dataset = dataset.dataset
         self.bands = dataset.bands
         self.colors = dataset.colors
@@ -387,7 +391,11 @@ class CalibrationGrid:
         P_stats = np.zeros((2, len(self.td.z_lim)))
         F_stats = np.zeros((2, len(self.td.z_lim)))
 
-        for i in tqdm(range(self.n_bootstraps), desc="Deriving bootstrap errors"):
+        for i in tqdm(
+            range(self.n_bootstraps),
+            desc="Deriving bootstrap errors",
+            disable=not self.verbose,
+        ):
 
             # Bootstrap sample
             indices = np.random.choice(
@@ -468,18 +476,24 @@ class CalibrationGrid:
             - ``self.F_std`` : numpy.ndarray
                 Total failure rate error across all bins.
         """
-        print("\nRunning the grid color selection calibration...")
+        if self.verbose:
+            print("\nRunning the grid color selection calibration...")
 
         cpu_number = None  # to be implemented
         store_iterations = False  # to be implemented
-        for i_z in tqdm(range(len(self.td.z_lim)), desc="Looping over z_lim points"):
+        for i_z in tqdm(
+            range(len(self.td.z_lim)),
+            desc="Looping over z_lim points",
+            disable=not self.verbose,
+        ):
             self._process_for_one_z((i_z, store_iterations, cpu_number))
 
         # Compute bootstrap errors
         if self.do_bootstrap:
             self._estimate_errors()
 
-        print("Grid calibration complete.")
+        if self.verbose:
+            print("Grid calibration complete.")
 
     def write(
         self,

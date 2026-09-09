@@ -57,6 +57,7 @@ class CalibrationLinear:
         step=0.0001,
         do_bootstrap=True,
         n_bootstraps=1000,
+        verbose=True,
     ):
         r"""
         Class calibrating optimal linear color selections.
@@ -172,6 +173,9 @@ class CalibrationLinear:
         n_bootstraps : int, default=1000
             Number of bootstrap resamples to perform. It defines
             the number of resampling in error estimation.
+        verbose : bool, default=True
+            If True, print messages during execution (e.g. referring to
+            the time employed for computation, status of the calibration)
 
         Attributes
         ----------
@@ -198,6 +202,7 @@ class CalibrationLinear:
         Purity maximization is not implemented yet. `maximized_quantity == "completeness"`
         is the only accepted value.
         """
+        self.verbose = verbose
         self.dataset = dataset.dataset
         self.bands = dataset.bands
         self.colors = dataset.colors
@@ -563,7 +568,11 @@ class CalibrationLinear:
         P_stats = np.zeros((2, len(self.td.z_lim)))
         F_stats = np.zeros((2, len(self.td.z_lim)))
 
-        for i in tqdm(range(self.n_bootstraps), desc="Deriving bootstrap errors"):
+        for i in tqdm(
+            range(self.n_bootstraps),
+            desc="Deriving bootstrap errors",
+            disable=not self.verbose,
+        ):
 
             indices = np.random.choice(
                 len(self.dataset), size=len(self.dataset), replace=True
@@ -653,7 +662,8 @@ class CalibrationLinear:
             - ``self.F_std`` : numpy.ndarray
                 Total failure rate error across all bins.
         """
-        print("\nRunning the linear color cut calibration...")
+        if self.verbose:
+            print("\nRunning the linear color cut calibration...")
 
         # Pre-compute colors
         self.color_cache = {}
@@ -665,7 +675,11 @@ class CalibrationLinear:
         # Optimized selection
         results = [
             self._process_for_one_z((i_z, store_iterations, cpu_number))
-            for i_z in tqdm(range(len(self.td.z_lim)), desc="Looping over z_lim points")
+            for i_z in tqdm(
+                range(len(self.td.z_lim)),
+                desc="Looping over z_lim points",
+                disable=not self.verbose,
+            )
         ]
 
         for result in results:
@@ -701,7 +715,8 @@ class CalibrationLinear:
             is_zlim_lower=self.td.is_zlim_lower,
         )
         interpolate_parameters(self.dict, k=self.k)
-        print("Linear cut calibration complete.")
+        if self.verbose:
+            print("Linear cut calibration complete.")
 
     def write(
         self,
