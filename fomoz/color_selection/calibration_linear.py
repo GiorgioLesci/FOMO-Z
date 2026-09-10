@@ -19,8 +19,8 @@ import pandas as pd
 import yaml
 from tqdm import tqdm
 
-from .dataset import Dataset
-from .selection_definition import SelectionDefinition
+from ..data.dataset import Dataset
+from ..data.selection_definition import SelectionDefinition
 from ..auxiliary import (
     MeasureLinear,
     build_nested_dict,

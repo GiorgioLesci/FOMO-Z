@@ -17,7 +17,7 @@ from scipy.interpolate import BSpline
 from .color_selection import ColorSelection
 from .calibration_linear import CalibrationLinear
 from .calibration_grid import CalibrationGrid
-from .dataset import Dataset
+from ..data.dataset import Dataset
 from ..auxiliary import (
     check_ax_limits,
     check_plot_type,

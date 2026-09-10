@@ -16,8 +16,8 @@ import numpy as np
 from tqdm import tqdm
 
 from ..auxiliary.statistics import compute_metrics, get_color_color_mask
-from ..color_selection.dataset import Dataset
-from ..color_selection.selection_definition import SelectionDefinition
+from ..data.dataset import Dataset
+from ..data.selection_definition import SelectionDefinition
 from ..color_selection.calibration_grid import CalibrationGrid
 
 
@@ -252,9 +252,19 @@ class PointProbability:
 
         For the `i`-th object in the test dataset, this returns a boolean mask over
         the reference dataset, flagging the reference objects whose color, in every
-        color defined for this class, differs from the test object's color by no more
-        than the test object's photometric color error. A reference object is kept only
-        if it satisfies this condition simultaneously in all colors.
+        *usable* color for this test object, differs from the test object's color by
+        no more than the test object's photometric color error. A color is usable for
+        a given test object if that object has a finite (non-NaN) color value and
+        color error; colors where the test object's photometry is missing (NaN) are
+        skipped for that object and do not constrain the mask, rather than causing
+        the object to be excluded. Reference objects with NaN in an otherwise
+        usable color are still correctly excluded on that color.
+
+        Note that a test object using fewer colors than the full set is matched in a
+        lower-dimensional color space, which is typically less restrictive and can
+        yield systematically larger, noisier matched samples than for fully
+        characterized test objects. See `process`'s `"n_colors_used"` output to
+        identify these objects.
 
         Parameters
         ----------
@@ -266,12 +276,17 @@ class PointProbability:
         numpy.ndarray of bool
             Boolean mask of length `self.N_reference_objects`, True for reference
             objects whose colors are compatible, within the test object's errors,
-            with the `i`-th test object.
+            with the `i`-th test object's usable colors.
         """
         tol = self.test_dict["errors"][:, i : i + 1]  # (n_colors, 1)
-        diff = self._color_difference(i)
+        test_color = self.test_dict["colors"][:, i : i + 1]  # (n_colors, 1)
+        diff = self._color_difference(i)  # (n_colors, n_reference)
 
-        return np.all(diff <= tol, axis=0)  # (n_reference,)
+        usable = ~np.isnan(test_color) & ~np.isnan(tol)  # (n_colors, 1)
+        within_tol = diff <= tol  # (n_colors, n_reference)
+        satisfied = within_tol | ~usable  # unusable test colors auto-pass
+
+        return np.all(satisfied, axis=0)
 
     def select_features_grid(
         self,

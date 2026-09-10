@@ -13,9 +13,9 @@ import yaml
 
 from fomoz.color_selection.calibration_linear import CalibrationLinear
 from fomoz.color_selection.calibration_grid import CalibrationGrid
-from fomoz.color_selection.dataset import Dataset
 from fomoz.color_selection.color_selection import ColorSelection
-from fomoz.color_selection.selection_definition import SelectionDefinition
+from fomoz.data.dataset import Dataset
+from fomoz.data.selection_definition import SelectionDefinition
 from fomoz.auxiliary import (
     MeasureLinear,
     build_nested_dict,

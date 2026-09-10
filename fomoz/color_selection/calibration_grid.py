@@ -18,8 +18,8 @@ from tqdm import tqdm
 from astropy.io import fits
 import pandas as pd
 
-from .dataset import Dataset
-from .selection_definition import SelectionDefinition
+from ..data.dataset import Dataset
+from ..data.selection_definition import SelectionDefinition
 from ..auxiliary import (
     compute_metrics,
     prob_target,
