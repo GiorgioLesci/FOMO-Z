@@ -13,6 +13,8 @@ that are color-consistent with it within its photometric errors.
 import warnings
 import time
 import numpy as np
+from tqdm import tqdm
+
 from ..auxiliary.statistics import compute_metrics, get_color_color_mask
 from ..color_selection.dataset import Dataset
 from ..color_selection.selection_definition import SelectionDefinition
@@ -27,6 +29,7 @@ class PointProbability:
         reference_dataset: Dataset,
         test_dataset: Dataset,
         selection_definition: SelectionDefinition,
+        verbose=True,
     ):
         r"""
         Estimate point-estimate probabilities from color grids.
@@ -56,6 +59,29 @@ class PointProbability:
             A `SelectionDefinition` object defining the targeted sample. If, for example, the user
             wants to get the point-estimate probabilities of test objects to lie above redshift
             0.5, then `selection_definition = SelectionDefinition(z_lim=0.5)`.
+        verbose : bool, default=True
+            If True, print messages during execution (e.g. referring to
+            the time employed for computation, status of the calibration)
+
+        Notes
+        -----
+        The methods implemented in this class are designed for estimating
+        probabilities of the following kind:
+
+        - probability of the test objects to lie above a given redshift;
+        - probability of having a stellar mass below a given value;
+        - probability of being a quasar.
+
+        More generally, this class supports probabilities of exceeding/falling
+        below a threshold, or of belonging to a discrete class, as defined by
+        `selection_definition`. Due to the finite size of the reference sample,
+        questions like "what is the probability of my test object to have a
+        redshift exactly equal to a given value" are not well posed: with a finite
+        reference sample, the probability of finding a reference object at any
+        single, exact value is effectively zero, so such probabilities
+        cannot be estimated reliably with this method. Only
+        probabilities integrated over a finite region (e.g. above/below a
+        threshold, or membership in a class) are meaningful.
         """
         if not isinstance(reference_dataset, Dataset):
             raise TypeError(
@@ -96,10 +122,20 @@ class PointProbability:
         if len(selection_definition.z_lim) != 1:
             raise ValueError("Only one z_lim value is allowed in selection_definition.")
 
+        # Create the target mask
+        self.target_mask = selection_definition._get_target_mask(
+            reference_dataset.dataset,
+            selection_definition.z_lim,
+            reference_dataset.CDZs,
+            reference_dataset.PDZ_x,
+        )[0]
+
+        # Set other class variables
         self.reference_dataset = reference_dataset
         self.test_dataset = test_dataset
         self.selection_definition = selection_definition
         self.colors = None
+        self.verbose = verbose
 
     def _set_dictionaries(self):
         r"""
@@ -109,14 +145,14 @@ class PointProbability:
         with the color matrices (and, respectively, weights and photometric color errors)
         computed from `self.reference_dataset` and `self.test_dataset`, using the colors
         currently stored in `self.colors` (either selected via feature selection, or
-        set to all available colors as a fallback). It also stores
-        `self.N_reference_objects`, the number of objects in the reference sample.
+        set to all available colors as a fallback).
 
         This method must be called after `self.colors` has been set, and before any
         method relying on `self.reference_dict` or `self.test_dict` (e.g.
         `_color_difference`, `_mask`).
         """
         self.N_reference_objects = len(self.reference_dataset.dataset)
+        self.N_test_objects = len(self.test_dataset.dataset)
         self.reference_dict = self._build_color_dict(
             self.reference_dataset.dataset, False, True
         )
@@ -242,7 +278,6 @@ class PointProbability:
         purity_min=0.9,
         grid_precision=0.15,
         step=0.001,
-        verbose=True,
     ):
         r"""
         Select the most informative colors using a grid-based color selection.
@@ -295,9 +330,6 @@ class PointProbability:
             storage requirements.
         step : float, default=0.001
             Threshold reduction step applied when refining the grid selection.
-        verbose : bool, default=True
-            If True, print messages during execution (e.g. referring to
-            the time employed for computation, status of the calibration).
         """
         if not isinstance(purity_min, float):
             raise ValueError("purity_min must be a float.")
@@ -317,7 +349,7 @@ class PointProbability:
 
         purity_baseline, completeness_baseline = calibration.P[0], calibration.C[0]
 
-        if verbose:
+        if self.verbose:
             elapsed = time.perf_counter() - start
             print(
                 f"CalibrationGrid processing complete. Employed time: {elapsed:.2f} s."
@@ -354,7 +386,10 @@ class PointProbability:
         # and completeness within `tolerance` (relative) of the fixed baseline.
         start = time.perf_counter()
         iteration_number = 0
-        converged = False
+        last_accepted_purity, last_accepted_completeness = (
+            purity_baseline,
+            completeness_baseline,
+        )
 
         while len(best_colors) > 2:
 
@@ -401,13 +436,14 @@ class PointProbability:
                 discarded_colors.append(candidate_removed)
                 active_grids = candidate_trial_grids
                 iteration_number += 1
+                last_accepted_purity = candidate_purity
+                last_accepted_completeness = candidate_completeness
             else:
-                converged = True
                 break
 
-        if verbose and converged:
+        if self.verbose:
             print(
-                f"Purity and completeness after the selection of features : {purity_trial:.2f}, {completeness_trial:.2f}"
+                f"Purity and completeness after the selection of features : {last_accepted_purity:.2f}, {last_accepted_completeness:.2f}"
             )
 
             elapsed = time.perf_counter() - start
@@ -416,17 +452,16 @@ class PointProbability:
             )
 
         # Store the most informative colors
-        if not converged:
+        if iteration_number == 0:
             warnings.warn(
-                "The feature selection algorithm did not converge. Using all available features. "
-                + "Probably, the number of input features is too small to distinguish the most informative ones."
+                "No feature could be removed within tolerance. Using all available features."
             )
             self.colors = self.reference_dataset.colors
             self.discarded_colors = []
         else:
             self.colors = best_colors
             self.discarded_colors = discarded_colors
-            if verbose:
+            if self.verbose:
                 print(f"\nSelected features (self.colors):\n{best_colors}")
                 print(
                     f"\nDiscarded features (self.discarded_colors):\n{discarded_colors}"
@@ -437,21 +472,50 @@ class PointProbability:
         Compute point-estimate probabilities for all test objects.
 
         A selection of the informative features is recommended before the call
-        to this funciton. See, for example, the `select_features_grid` method.
+        to this function. See, for example, the `select_features_grid` method.
         If no feature selection has been performed (i.e. `self.colors` is not set),
         all colors available in `self.reference_dataset` are used, and a warning is
         raised.
 
         For each object in the test dataset, the reference objects that are
         color-consistent with it (see `_mask`) are identified, and the point-estimate
-        probability for that test object is computed from the weighted fraction of
-        these matched reference objects satisfying `self.selection_definition`.
+        probability for that test object is computed as the weighted mean of
+        `self.target_mask` over these matched reference objects. Note that
+        `self.target_mask` is not necessarily binary (0/1): it may contain
+        intermediate values (e.g. derived from photometric redshift PDFs), in which
+        case the resulting probability is a weighted average rather than a strict
+        binomial proportion. See the documentation of the `SelectionDefinition`
+        class for more details.
+
+        The uncertainty on this probability is estimated as the standard error of
+        the mean:
+
+        .. math::
+            \sigma_{P} = \frac{s}{\sqrt{n}}
+
+        where `s` is the sample standard deviation (with Bessel's correction, i.e.
+        dividing by `n - 1`) of the `self.target_mask` values among the matched
+        reference objects, and `n` is the number of matched reference objects. This
+        requires at least two matched reference objects (`n > 1`); for test objects
+        with `n <= 1` matched reference objects, `"prob"` and/or `"prob_error"` are
+        set to NaN (see Returns).
 
         Returns
         -------
-        numpy.ndarray
-            Array of shape `(n_test,)` containing the point-estimate probability for
-            each object in the test dataset.
+        dict
+            Dictionary with the following keys:
+
+            - `"prob"` : numpy.ndarray of shape `(n_test,)`
+              Point-estimate probability for each test object. NaN for test
+              objects with no matched reference objects.
+            - `"prob_error"` : numpy.ndarray of shape `(n_test,)`
+              Standard error of the mean on `"prob"`, as described above. NaN
+              for test objects with fewer than two matched reference objects.
+            - `"n_good"` : numpy.ndarray of shape `(n_test,)`
+              Sum of `self.target_mask` over the matched reference objects, for
+              each test object.
+            - `"n_all"` : numpy.ndarray of shape `(n_test,)`
+              Number of matched reference objects, for each test object.
         """
         if self.colors is None:
             warnings.warn(
@@ -461,3 +525,54 @@ class PointProbability:
 
         # Set the feature dictionaries
         self._set_dictionaries()
+
+        # Select reference objects that are color-consistent with the i-th test object.
+        # Then, assign a probability to each test object.
+        prob = np.full(self.N_test_objects, np.nan)
+        n_good = np.zeros(self.N_test_objects)
+        n_all = np.zeros(self.N_test_objects)
+        prob_error = np.full(self.N_test_objects, np.nan)
+
+        n_unmatched = 0
+        n_single_match = 0
+
+        for i in tqdm(
+            range(self.N_test_objects),
+            desc="Estimating point-estimate probabilities",
+            disable=not self.verbose,
+        ):
+            # mask contains booleans
+            # self.target_mask contains floats
+            mask = self._mask(i)
+            values = self.target_mask[mask]
+            n_all[i] = np.count_nonzero(mask)
+            n_good[i] = values.sum()
+
+            if n_all[i] == 0:
+                n_unmatched += 1
+                continue
+
+            prob[i] = n_good[i] / n_all[i]
+
+            if n_all[i] > 1:
+                prob_error[i] = values.std(ddof=1) / np.sqrt(n_all[i])
+            else:
+                n_single_match += 1
+
+        if n_unmatched > 0:
+            warnings.warn(
+                f"{n_unmatched} test object(s) had no matching reference objects; "
+                "their 'prob' and 'prob_error' were set to NaN."
+            )
+        if n_single_match > 0:
+            warnings.warn(
+                f"{n_single_match} test object(s) had only one matching reference "
+                "object; their 'prob_error' was set to NaN."
+            )
+
+        return {
+            "prob": prob,
+            "prob_error": prob_error,
+            "n_good": n_good,
+            "n_all": n_all,
+        }
