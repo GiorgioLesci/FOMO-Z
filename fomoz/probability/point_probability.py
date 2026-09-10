@@ -483,7 +483,7 @@ class PointProbability:
                     f"\nDiscarded features (self.discarded_colors):\n{discarded_colors}"
                 )
 
-    def process(self):
+    def process(self, min_colors_used=2, silence_warnings=False):
         r"""
         Compute point-estimate probabilities for all test objects.
 
@@ -493,15 +493,21 @@ class PointProbability:
         all colors available in `self.reference_dataset` are used, and a warning is
         raised.
 
-        For each object in the test dataset, the reference objects that are
-        color-consistent with it (see `_mask`) are identified, and the point-estimate
-        probability for that test object is computed as the weighted mean of
-        `self.target_mask` over these matched reference objects. Note that
-        `self.target_mask` is not necessarily binary (0/1): it may contain
-        intermediate values (e.g. derived from photometric redshift PDFs), in which
-        case the resulting probability is a weighted average rather than a strict
-        binomial proportion. See the documentation of the `SelectionDefinition`
-        class for more details.
+        For each object in the test dataset, the number of usable colors (i.e. those
+        with a finite color value and color error for that object; see `_mask`) is
+        computed first. If this number is below `min_colors_used`, the test object is
+        skipped and its probability set to NaN, since too few colors would make the
+        match unreliable or, in the extreme case of zero usable colors, would match
+        the entire reference sample (see `_mask`'s notes on this degenerate case).
+
+        Otherwise, the reference objects that are color-consistent with the test
+        object (see `_mask`) are identified, and the point-estimate probability for
+        that test object is computed as the weighted mean of `self.target_mask` over
+        these matched reference objects. Note that `self.target_mask` is not
+        necessarily binary (0/1): it may contain intermediate values (e.g. derived
+        from photometric redshift PDFs), in which case the resulting probability is a
+        weighted average rather than a strict binomial proportion. See the
+        documentation of the `SelectionDefinition` class for more details.
 
         The uncertainty on this probability is estimated as the standard error of
         the mean:
@@ -516,14 +522,26 @@ class PointProbability:
         with `n <= 1` matched reference objects, `"prob"` and/or `"prob_error"` are
         set to NaN (see Returns).
 
+        Parameters
+        ----------
+        min_colors_used : int, default=2
+            Minimum number of usable colors (i.e. non-NaN for the test object)
+            required to compute a probability for a test object. Test objects with
+            fewer usable colors than this are skipped, with `"prob"`, `"prob_error"`,
+            `"n_good"`, and `"n_all"` set to NaN/0 for them.
+        silence_warnings : bool, default=False
+            If True, warnings are not printed.
+
         Returns
         -------
-        dict
-            Dictionary with the following keys:
+        None
+            This function does not return a variable. Instead, it sets
+            the dictionary `self.probability_dictionary` with the following keys:
 
             - `"prob"` : numpy.ndarray of shape `(n_test,)`
               Point-estimate probability for each test object. NaN for test
-              objects with no matched reference objects.
+              objects with fewer than `min_colors_used` usable colors, or with no
+              matched reference objects.
             - `"prob_error"` : numpy.ndarray of shape `(n_test,)`
               Standard error of the mean on `"prob"`, as described above. NaN
               for test objects with fewer than two matched reference objects.
@@ -532,8 +550,10 @@ class PointProbability:
               each test object.
             - `"n_all"` : numpy.ndarray of shape `(n_test,)`
               Number of matched reference objects, for each test object.
+            - `"n_colors_used"` : numpy.ndarray of shape `(n_test,)`
+              Number of usable (non-NaN) colors for each test object.
         """
-        if self.colors is None:
+        if self.colors is None and not silence_warnings:
             warnings.warn(
                 "No feature selection was performed. Using all available features."
             )
@@ -548,15 +568,26 @@ class PointProbability:
         n_good = np.zeros(self.N_test_objects)
         n_all = np.zeros(self.N_test_objects)
         prob_error = np.full(self.N_test_objects, np.nan)
+        n_colors_used = np.zeros(self.N_test_objects, dtype=int)
 
         n_unmatched = 0
         n_single_match = 0
+        n_below_min_colors = 0
 
         for i in tqdm(
             range(self.N_test_objects),
             desc="Estimating point-estimate probabilities",
             disable=not self.verbose,
         ):
+            usable_i = ~np.isnan(self.test_dict["colors"][:, i]) & ~np.isnan(
+                self.test_dict["errors"][:, i]
+            )
+            n_colors_used[i] = int(usable_i.sum())
+
+            if n_colors_used[i] < min_colors_used:
+                n_below_min_colors += 1
+                continue
+
             # mask contains booleans
             # self.target_mask contains floats
             mask = self._mask(i)
@@ -575,12 +606,18 @@ class PointProbability:
             else:
                 n_single_match += 1
 
-        if n_unmatched > 0:
+        if n_below_min_colors > 0 and not silence_warnings:
+            warnings.warn(
+                f"{n_below_min_colors} test object(s) had fewer than "
+                f"min_colors_used={min_colors_used} usable colors; their 'prob' "
+                "was set to NaN."
+            )
+        if n_unmatched > 0 and not silence_warnings:
             warnings.warn(
                 f"{n_unmatched} test object(s) had no matching reference objects; "
                 "their 'prob' and 'prob_error' were set to NaN."
             )
-        if n_single_match > 0:
+        if n_single_match > 0 and not silence_warnings:
             warnings.warn(
                 f"{n_single_match} test object(s) had only one matching reference "
                 "object; their 'prob_error' was set to NaN."
@@ -591,4 +628,5 @@ class PointProbability:
             "prob_error": prob_error,
             "n_good": n_good,
             "n_all": n_all,
+            "n_colors_used": n_colors_used,
         }
