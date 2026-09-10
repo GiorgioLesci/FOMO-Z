@@ -134,8 +134,9 @@ class PointProbability:
         self.reference_dataset = reference_dataset
         self.test_dataset = test_dataset
         self.selection_definition = selection_definition
-        self.colors = None
         self.verbose = verbose
+        self.colors = None
+        self.probability_dictionary = {}
 
     def _set_dictionaries(self):
         r"""
@@ -570,7 +571,7 @@ class PointProbability:
                 "object; their 'prob_error' was set to NaN."
             )
 
-        return {
+        self.probability_dictionary = {
             "prob": prob,
             "prob_error": prob_error,
             "n_good": n_good,
