@@ -326,7 +326,9 @@ class PointProbability:
         diff = self._color_difference(i)  # (n_colors, n_reference)
 
         if self._combine_reference_errors:
-            tol = np.sqrt(test_error**2 + self.reference_dict["errors"] ** 2)  # (n_colors, n_reference)
+            tol = np.sqrt(
+                test_error**2 + self.reference_dict["errors"] ** 2
+            )  # (n_colors, n_reference)
         else:
             tol = test_error  # (n_colors, 1), broadcasts against n_reference
 
