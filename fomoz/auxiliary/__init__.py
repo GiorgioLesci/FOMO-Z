@@ -1,4 +1,4 @@
-"""Tools for color selections."""
+"""Tools for color selection classes and probability computation."""
 
 from .color_domain import *
 from .measure_linear import *

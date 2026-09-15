@@ -26,9 +26,9 @@ class PointProbability:
 
     def __init__(
         self,
-        reference_dataset: Dataset,
-        test_dataset: Dataset,
         selection_definition: SelectionDefinition,
+        reference_dataset: Dataset,
+        test_dataset: Dataset = None,
         verbose=True,
     ):
         r"""
@@ -37,28 +37,36 @@ class PointProbability:
         Given a reference dataset (defining the "true" color distribution, e.g. from
         a well-characterized sample) and a test dataset (the objects for
         which a probability is required), this class identifies, for each test object,
-        which reference objects are color-consistent with it within its photometric
-        color errors, and uses this information to estimate a point-estimate probability
-        for the test object.
+        which reference objects are color-consistent with it within the combined
+        photometric color errors, and uses this information to estimate a point-estimate
+        probability for the test object.
 
-        The errors on magnitude measurements present in `test_dataset` are added in
-        quadrature to obtain the corresponding color errors used for the color-matching.
+        If `test_dataset` is not provided (default), `reference_dataset` is used as the
+        test dataset as well. This "self-test" mode is meant for a proof-of-concept /
+        calibration run of the method: since the target property (e.g. redshift, mass,
+        class) is known for the reference sample, this allows checking whether the
+        method recovers the known properties of the reference objects themselves,
+        without needing a separate test dataset. See the Notes below for how
+        photometric errors are handled in this mode.
 
         Parameters
         ----------
+        selection_definition : SelectionDefinition
+            A `SelectionDefinition` object defining the targeted sample. If, for example,
+            the user wants to get the point-estimate probabilities of test objects to lie
+            above redshift 0.5, then `selection_definition = SelectionDefinition(z_lim=0.5)`.
         reference_dataset : Dataset
-            A `Dataset` object containing the reference dataset and band information.
-        test_dataset : Dataset
+            A `Dataset` object containing the reference dataset and band information. It
+            must include errors on magnitudes (see `test_dataset` below for the naming
+            convention), used to compute the color errors of the reference sample.
+        test_dataset : Dataset, optional
             A `Dataset` object containing the test dataset and band information. It must
             include errors on magnitudes, which must be provided within the pandas DataFrame
             passed to the `Dataset` object. The keys representing magnitude error names must
             follow the convention `band_name + "_error"`. For example, if `mag_g` and `mag_r`
             are the band keys, the error keys must be `mag_g_error` and `mag_r_error`.
-            These errors are added in quadrature to obtain the corresponding color errors.
-        selection_definition : SelectionDefinition
-            A `SelectionDefinition` object defining the targeted sample. If, for example, the user
-            wants to get the point-estimate probabilities of test objects to lie above redshift
-            0.5, then `selection_definition = SelectionDefinition(z_lim=0.5)`.
+            If not provided (default, `None`), `reference_dataset` is used as the test
+            dataset (see above).
         verbose : bool, default=True
             If True, print messages during execution (e.g. referring to
             the time employed for computation, status of the calibration)
@@ -82,28 +90,48 @@ class PointProbability:
         cannot be estimated reliably with this method. Only
         probabilities integrated over a finite region (e.g. above/below a
         threshold, or membership in a class) are meaningful.
+
+        Regarding the combination of photometric errors: if a separate
+        `test_dataset` is provided, the matching tolerance for each color is obtained
+        by summing in quadrature the color error of the test object and the color
+        error of each reference object, since the two are assumed to be independent measurements.
+        If `test_dataset` is not provided (`reference_dataset` used as test), only the
+        reference object's own color error is used as the tolerance: since test and
+        reference objects are then the very same measurements, summing the same error
+        with itself in quadrature would double-count it, artificially inflating the
+        matching tolerance.
         """
-        if not isinstance(reference_dataset, Dataset):
-            raise TypeError(
-                f"'reference_dataset' must be a Dataset instance, got {type(reference_dataset).__name__}."
-            )
-        if not isinstance(test_dataset, Dataset):
-            raise TypeError(
-                f"'test_dataset' must be a Dataset instance, got {type(test_dataset).__name__}."
-            )
         if not isinstance(selection_definition, SelectionDefinition):
             raise TypeError(
                 f"'selection_definition' must be a SelectionDefinition instance, got {type(selection_definition).__name__}."
             )
+        if not isinstance(reference_dataset, Dataset):
+            raise TypeError(
+                f"'reference_dataset' must be a Dataset instance, got {type(reference_dataset).__name__}."
+            )
+        if test_dataset is not None and not isinstance(test_dataset, Dataset):
+            raise TypeError(
+                f"'test_dataset' must be a Dataset instance or None, got {type(test_dataset).__name__}."
+            )
 
-        if test_dataset.CDZs is not None:
-            warnings.warn(
-                "PDZs were set in test_dataset, but they are not used by the PointProbability class."
-            )
-        if not np.allclose(np.asarray(test_dataset.dataset["weights"].values), 1.0):
-            warnings.warn(
-                "Weights were set in test_dataset, but they are not used by the PointProbability class."
-            )
+        # If no test_dataset is given, use reference_dataset as a proof-of-concept /
+        # calibration test set. In this case, errors are not combined (see Notes),
+        # to avoid double-counting the same photometric error.
+        test_dataset_was_given = test_dataset is not None
+        if not test_dataset_was_given:
+            test_dataset = reference_dataset
+        self._combine_reference_errors = test_dataset_was_given
+
+        if test_dataset_was_given:
+            if test_dataset.CDZs is not None:
+                warnings.warn(
+                    "PDZs were set in test_dataset, but they are not used by the PointProbability class."
+                )
+            if not np.allclose(np.asarray(test_dataset.dataset["weights"].values), 1.0):
+                warnings.warn(
+                    "Weights were set in test_dataset, but they are not used by the PointProbability class."
+                )
+
         if len(reference_dataset.colors) != len(test_dataset.colors):
             raise ValueError(
                 "The sets of colors in the reference and test datasets have different lengths."
@@ -111,7 +139,12 @@ class PointProbability:
         for i in range(len(reference_dataset.colors)):
             if reference_dataset.colors[i] != test_dataset.colors[i]:
                 raise ValueError(
-                    "Different sets of colors in the reference and test datasets. The two lists of colors must match element by element."
+                    "Different sets of colors in the reference and test datasets. The two lists of colors must match element by element. Provide the same band list to both Dataset objects."
+                )
+        for band in reference_dataset.bands:
+            if band + "_error" not in reference_dataset.dataset.columns:
+                raise ValueError(
+                    f"Uncertainties on {band} are not defined. Include them in the '{band}_errors' column within the DataFrame of reference_dataset."
                 )
         for band in test_dataset.bands:
             if band + "_error" not in test_dataset.dataset.columns:
@@ -146,7 +179,10 @@ class PointProbability:
         with the color matrices (and, respectively, weights and photometric color errors)
         computed from `self.reference_dataset` and `self.test_dataset`, using the colors
         currently stored in `self.colors` (either selected via feature selection, or
-        set to all available colors as a fallback).
+        set to all available colors as a fallback). Color errors are computed for both
+        the reference and the test sample; whether they are actually combined when
+        matching test and reference objects depends on `self._combine_reference_errors`
+        (see `_mask` and the class docstring).
 
         This method must be called after `self.colors` has been set, and before any
         method relying on `self.reference_dict` or `self.test_dict` (e.g.
@@ -155,7 +191,7 @@ class PointProbability:
         self.N_reference_objects = len(self.reference_dataset.dataset)
         self.N_test_objects = len(self.test_dataset.dataset)
         self.reference_dict = self._build_color_dict(
-            self.reference_dataset.dataset, False, True
+            self.reference_dataset.dataset, True, True
         )
         self.test_dict = self._build_color_dict(self.test_dataset.dataset, True, False)
 
@@ -167,7 +203,7 @@ class PointProbability:
         difference between the two magnitude columns it refers to, and stored as a row
         in a `(n_colors, n_objects)` matrix. If `include_errors` is True, a matrix of
         the same shape is also built, with the propagated color errors obtained by
-        summing the two magnitude errors in quadrature (missing magnitude errors
+        summing the two color errors in quadrature (missing magnitude errors
         propagate as NaN in the corresponding color error).
 
         Parameters
@@ -253,12 +289,19 @@ class PointProbability:
         For the `i`-th object in the test dataset, this returns a boolean mask over
         the reference dataset, flagging the reference objects whose color, in every
         *usable* color for this test object, differs from the test object's color by
-        no more than the test object's photometric color error. A color is usable for
+        no more than the matching tolerance for that color. A color is usable for
         a given test object if that object has a finite (non-NaN) color value and
         color error; colors where the test object's photometry is missing (NaN) are
         skipped for that object and do not constrain the mask, rather than causing
         the object to be excluded. Reference objects with NaN in an otherwise
         usable color are still correctly excluded on that color.
+
+        The matching tolerance depends on `self._combine_reference_errors` (set in the
+        constructor based on whether a genuinely separate `test_dataset` was provided):
+        if True, the tolerance for each (test object, reference object, color) triplet
+        is the quadrature sum of the test object's and the reference object's color
+        errors; if False (i.e. the reference dataset is also used as the test dataset),
+        only the (shared) color error is used, to avoid double-counting it.
 
         Note that a test object using fewer colors than the full set is matched in a
         lower-dimensional color space, which is typically less restrictive and can
@@ -275,14 +318,19 @@ class PointProbability:
         -------
         numpy.ndarray of bool
             Boolean mask of length `self.N_reference_objects`, True for reference
-            objects whose colors are compatible, within the test object's errors,
+            objects whose colors are compatible, within the matching tolerance,
             with the `i`-th test object's usable colors.
         """
-        tol = self.test_dict["errors"][:, i : i + 1]  # (n_colors, 1)
         test_color = self.test_dict["colors"][:, i : i + 1]  # (n_colors, 1)
+        test_error = self.test_dict["errors"][:, i : i + 1]  # (n_colors, 1)
         diff = self._color_difference(i)  # (n_colors, n_reference)
 
-        usable = ~np.isnan(test_color) & ~np.isnan(tol)  # (n_colors, 1)
+        if self._combine_reference_errors:
+            tol = np.sqrt(test_error**2 + self.reference_dict["errors"] ** 2)  # (n_colors, n_reference)
+        else:
+            tol = test_error  # (n_colors, 1), broadcasts against n_reference
+
+        usable = ~np.isnan(test_color) & ~np.isnan(test_error)  # (n_colors, 1)
         within_tol = diff <= tol  # (n_colors, n_reference)
         satisfied = within_tol | ~usable  # unusable test colors auto-pass
 
@@ -303,6 +351,7 @@ class PointProbability:
         a minimum global purity of `purity_min`.
         The `reference_dataset` and `selection_definition` parameters given as input
         to the constructor of this class are also given in input to `CalibrationGrid`.
+        The `test_dataset` parameter is not used here.
 
         After this initial calibration, colors are removed one at a time in an
         iterative backward elimination process. At each step, among the colors still
