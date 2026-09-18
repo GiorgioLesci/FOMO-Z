@@ -140,8 +140,8 @@ class PointProbability:
             DataFrame must contain ``<band>_error`` columns.
 
             Test-sample weights and redshift PDFs are not used to estimate
-            its probabilities. If None, use `reference_dataset` as the
-            test sample and apply the self-test matching convention
+            its probabilities. If None, the code uses `reference_dataset`
+            as the test sample and applies the self-test matching convention
             described below.
         verbose : bool, default=True
             Whether to display progress bars and timing information.
