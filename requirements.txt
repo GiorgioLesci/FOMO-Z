@@ -6,3 +6,4 @@ tqdm>=4.62.0
 PyYAML>=5.4.0
 numexpr>=2.7.0
 astropy
+numba>=0.56.4

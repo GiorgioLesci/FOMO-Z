@@ -12,13 +12,92 @@ that are color-consistent with it within its photometric errors.
 
 import warnings
 import time
+import multiprocessing as mp
 import numpy as np
+from numba import njit
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 
 from ..auxiliary.statistics import compute_metrics, get_color_color_mask
 from ..data.dataset import Dataset
 from ..data.selection_definition import SelectionDefinition
 from ..color_selection.calibration_grid import CalibrationGrid
+
+
+@njit(cache=True, fastmath=False, nogil=True)
+def _matching_indices_numba(
+    reference_colors,
+    reference_errors,
+    test_colors,
+    test_errors,
+    combine_errors,
+):
+    """
+    Return matching reference indices using a compiled sequential scan.
+
+    Parameters
+    ----------
+    reference_colors, reference_errors : numpy.ndarray
+        Reference matrices with shape (n_colors, n_reference).
+    test_colors, test_errors : numpy.ndarray
+        Color values and errors of one test object, with shape (n_colors,).
+    combine_errors : bool
+        Whether to combine test and reference errors in quadrature.
+        Otherwise, use only the test errors.
+
+    Returns
+    -------
+    numpy.ndarray
+        Matching reference indices in ascending order.
+
+    Notes
+    -----
+    Test colors with a NaN value or error impose no constraint.
+    A reference is rejected as soon as one usable color fails.
+    No reference weights or target memberships are used here.
+    """
+    n_reference = reference_colors.shape[1]
+
+    # Determine usable colors once for this test object
+    usable = np.flatnonzero(
+        ~np.isnan(test_colors) & ~np.isnan(test_errors)
+    )
+
+    # Allocate enough space for the maximum possible number of matches
+    indices = np.empty(n_reference, dtype=np.int64)
+    n_matches = 0
+
+    for j in range(n_reference):
+        accepted = True
+
+        for position in range(usable.size):
+            k = usable[position]
+
+            difference = abs(
+                reference_colors[k, j] - test_colors[k]
+            )
+
+            if combine_errors:
+                tolerance = np.sqrt(
+                    test_errors[k] ** 2
+                    + reference_errors[k, j] ** 2
+                )
+            else:
+                tolerance = test_errors[k]
+
+            # Keep this form:
+            # "difference > tolerance" would not reject NaNs
+            if not (difference <= tolerance):
+                accepted = False
+                break
+
+        if accepted:
+            indices[n_matches] = j
+            n_matches += 1
+
+    # Return only the populated portion of the buffer.
+    return indices[:n_matches]
 
 
 class PointProbability:
@@ -51,7 +130,7 @@ class PointProbability:
             Reference sample providing photometry, target information,
             and per-object weights. Its DataFrame must contain magnitude
             uncertainties in columns named ``<band>_error`` for every band,
-            and finite, non-negative weights in ``weights``.
+            and finite, strictly positive weights in ``weights``.
 
             Target memberships are obtained from the reference properties
             or, when available, from the integrated redshift PDFs.
@@ -134,9 +213,8 @@ class PointProbability:
                 f"'test_dataset' must be a Dataset instance or None, got {type(test_dataset).__name__}."
             )
 
-        # If no test_dataset is given, use reference_dataset as a proof-of-concept /
-        # calibration test set. In this case, errors are not combined (see Notes),
-        # to avoid double-counting the same photometric error.
+        # If no test dataset is supplied, reuse the reference sample
+        # and apply the test-error-only matching convention.
         test_dataset_was_given = test_dataset is not None
         if not test_dataset_was_given:
             test_dataset = reference_dataset
@@ -164,12 +242,12 @@ class PointProbability:
         for band in reference_dataset.bands:
             if band + "_error" not in reference_dataset.dataset.columns:
                 raise ValueError(
-                    f"Uncertainties on {band} are not defined. Include them in the '{band}_errors' column within the DataFrame of reference_dataset."
+                    f"Uncertainties on {band} are not defined. Include them in the '{band}_error' column within the DataFrame of reference_dataset."
                 )
         for band in test_dataset.bands:
             if band + "_error" not in test_dataset.dataset.columns:
                 raise ValueError(
-                    f"Uncertainties on {band} are not defined. Include them in the '{band}_errors' column within the DataFrame of test_dataset."
+                    f"Uncertainties on {band} are not defined. Include them in the '{band}_error' column within the DataFrame of test_dataset."
                 )
 
         if len(selection_definition.z_lim) != 1:
@@ -213,6 +291,15 @@ class PointProbability:
             self.reference_dataset.dataset, True, True
         )
         self.test_dict = self._build_color_dict(self.test_dataset.dataset, True, False)
+
+        # Store each reference object's colors contiguously in memory.
+        # Shapes remain (n_colors, n_reference).
+        self.reference_dict["colors"] = np.asfortranarray(
+            self.reference_dict["colors"]
+        )
+        self.reference_dict["errors"] = np.asfortranarray(
+            self.reference_dict["errors"]
+        )
 
     def _build_color_dict(self, dataset, include_errors, include_weights):
         r"""
@@ -274,95 +361,43 @@ class PointProbability:
         return result
 
     def _matching_indices(self, i):
-        r"""
-        Return indices of reference objects compatible with a test object's colors.
-
-        Reference objects must satisfy the matching condition in every usable
-        color of the test object. A test color is usable when both its value
-        and its error are non-NaN.
-
-        Candidates are filtered progressively: after checking one color, only
-        the surviving reference objects are examined in the next color.
-        This avoids computing differences for references already rejected.
+        """
+        Return indices of references compatible with test object i.
 
         Parameters
         ----------
         i : int
-            Positional index of the object in the test dataset.
+            Positional index of the test object.
 
         Returns
         -------
-        numpy.ndarray of int
-            One-dimensional array of matching reference indices, in ascending
-            order. These are positional indices into the reference arrays,
-            not labels from the reference DataFrame index.
-
-            Returns an empty array if no reference object satisfies all
-            constraints. If the test object has no usable colors, returns
-            all reference indices; `process` is responsible for enforcing
-            `min_colors_used` before calling this method.
+        numpy.ndarray
+            Matching reference indices in ascending order. Returns an
+            empty array if no reference matches, or all reference indices
+            if the test object has no usable colors.
 
         Notes
         -----
-        For each usable color k, reference object j is retained if
+        Delegates matching to the compiled `_matching_indices_numba`
+        function. Requires `_set_dictionaries` to have been called.
 
-        .. math::
-            |c_{k,j}^{\mathrm{ref}} - c_{k,i}^{\mathrm{test}}|
-            \leq \tau_{k,i,j}.
+        A test color is usable when its value and error are non-NaN.
+        Every usable color must satisfy the matching tolerance.
 
-        If `_combine_reference_errors` is True, the tolerance is
+        If `_combine_reference_errors` is True, test and reference
+        errors are combined in quadrature. Otherwise, only test errors
+        are used. Reference weights do not affect matching.
 
-        .. math::
-            \tau_{k,i,j} =
-            \sqrt{(\sigma_{k,i}^{\mathrm{test}})^2
-                  + (\sigma_{k,j}^{\mathrm{ref}})^2}.
-
-        Otherwise, only the test object's color error is used.
-
-        Missing test colors or errors impose no constraint. A missing
-        reference color fails the comparison for a usable test color.
-        Missing reference errors also fail when errors are combined;
-        otherwise, reference errors are not used.
-
-        Reference weights and target probabilities do not affect matching.
-        They are used separately by `process` to estimate probabilities.
-
-        Requires `_set_dictionaries` to have been called.
+        `process` enforces the minimum number of usable colors before
+        calling this method.
         """
-        # Extract this test object's color values and uncertainties
-        test_colors = self.test_dict["colors"][:, i]
-        test_errors = self.test_dict["errors"][:, i]
-
-        # Keep references to the full matrices without copying them
-        reference_colors = self.reference_dict["colors"]
-        reference_errors = self.reference_dict["errors"]
-
-        # Only colors with both a value and an uncertainty constrain matching
-        usable = np.flatnonzero(~np.isnan(test_colors) & ~np.isnan(test_errors))
-
-        # Initially, every reference object is a candidate
-        indices = np.arange(self.N_reference_objects)
-
-        for k in usable:
-            # Evaluate this color only for candidates that survived earlier cuts
-            diff = np.abs(reference_colors[k, indices] - test_colors[k])
-
-            # Apply the photometric tolerance
-            if self._combine_reference_errors:
-                tolerance = np.sqrt(
-                    test_errors[k] ** 2 + reference_errors[k, indices] ** 2
-                )
-            else:
-                tolerance = test_errors[k]
-
-            # Keep compatible candidates, preserving their original indices
-            indices = indices[diff <= tolerance]
-
-            # Further constraints cannot restore rejected candidates
-            if indices.size == 0:
-                break
-
-        return indices
+        return _matching_indices_numba(
+            self.reference_dict["colors"],
+            self.reference_dict["errors"],
+            self.test_dict["colors"][:, i],
+            self.test_dict["errors"][:, i],
+            self._combine_reference_errors,
+        )
 
     def select_features_grid(
         self,
@@ -560,7 +595,13 @@ class PointProbability:
                     f"\nDiscarded features (self.discarded_colors):\n{discarded_colors}"
                 )
 
-    def process(self, min_colors_used=2, silence_warnings=False):
+    def process(
+        self,
+        min_colors_used=2,
+        silence_warnings=False,
+        cpu_number=None,
+        block_size=256,
+    ):
         r"""
         Compute weighted target-membership probabilities for all test objects.
 
@@ -584,6 +625,16 @@ class PointProbability:
             missing feature selection, insufficient usable colors,
             unmatched objects, and single positive-weight matches.
             Progress-bar visibility is controlled by `self.verbose`.
+        cpu_number : int or None, optional
+            Number of worker threads used for parallel processing.
+            If None, use the number of logical CPUs reported by
+            multiprocessing.cpu_count() minus two, with a minimum of one.
+            Explicit values are capped at the same limit.
+            If 1, run sequentially without creating worker threads.
+        block_size : int, default=256
+            Number of test objects per task. Progress is updated as
+            blocks are collected. This does not allocate a matrix of
+            pairwise comparisons for the entire block.
 
         Returns
         -------
@@ -593,8 +644,7 @@ class PointProbability:
 
             ``prob``
                 Weighted target-membership probability. NaN for skipped
-                objects, objects without matches, or objects whose
-                matching references have zero total weight.
+                objects, objects without matches.
             ``prob_error``
                 Approximate sampling standard error of ``prob``, as
                 defined below. NaN if the probability is undefined
@@ -605,8 +655,7 @@ class PointProbability:
                 reference weights are not applied a second time.
                 Zero for skipped objects or objects without matches.
             ``n_all``
-                Unweighted number of matching reference objects,
-                including references with zero weight. Zero for
+                Unweighted number of matching reference objects. Zero for
                 skipped objects or objects without matches.
             ``n_colors_used``
                 Number of non-NaN test colors with non-NaN errors,
@@ -615,7 +664,8 @@ class PointProbability:
         Raises
         ------
         ValueError
-            If reference weights are non-finite or negative.
+            If `cpu_number` is neither None nor a positive integer,
+            or if `block_size` is not a positive integer.
 
         Notes
         -----
@@ -650,8 +700,6 @@ class PointProbability:
 
         Both the probability and its estimated error are invariant
         under a common positive rescaling of the reference weights.
-        Zero-weight references contribute to ``n_all`` but not to
-        either estimate.
 
         The error describes sampling variation of the weighted mean
         of q_j. It does not include uncertainty in the weight calibration,
@@ -672,6 +720,31 @@ class PointProbability:
         _matching_indices : Identify color-compatible reference objects.
         select_features_grid : Select the colors used for matching.
         """
+        if cpu_number is not None:
+            if (
+                isinstance(cpu_number, (bool, np.bool_))
+                or not isinstance(cpu_number, (int, np.integer))
+                or cpu_number < 1
+            ):
+                raise ValueError(
+                    "cpu_number must be a positive integer or None."
+                )
+
+        if (
+            isinstance(block_size, (bool, np.bool_))
+            or not isinstance(block_size, (int, np.integer))
+            or block_size < 1
+        ):
+            raise ValueError("block_size must be a positive integer.")
+
+        max_workers = max(mp.cpu_count() - 2, 1)
+
+        n_jobs = (
+            max_workers
+            if cpu_number is None
+            else min(int(cpu_number), max_workers)
+        )
+
         if self.colors is None:
             if not silence_warnings:
                 warnings.warn(
@@ -690,50 +763,105 @@ class PointProbability:
         prob_error = np.full(self.N_test_objects, np.nan)
         n_colors_used = np.zeros(self.N_test_objects, dtype=int)
 
+        # Compile/load the Numba specialization before starting workers.
+        if self.N_test_objects > 0:
+            self._matching_indices(0)
+
+        def process_block(start):
+            """Process a disjoint block and return its warning counts."""
+            stop = min(start + block_size, self.N_test_objects)
+
+            block_unmatched = 0
+            block_single_match = 0
+            block_below_min_colors = 0
+
+            for i in range(start, stop):
+                usable_i = (
+                    ~np.isnan(self.test_dict["colors"][:, i])
+                    & ~np.isnan(self.test_dict["errors"][:, i])
+                )
+                n_colors_used[i] = int(usable_i.sum())
+
+                if n_colors_used[i] < min_colors_used:
+                    block_below_min_colors += 1
+                    continue
+
+                # The compiled kernel releases the GIL during matching.
+                indices = self._matching_indices(i)
+
+                values = self.target_mask[indices]
+                weights = self.reference_dict["weights"][indices]
+
+                n = indices.size
+                n_all[i] = n
+                n_good[i] = values.sum()
+
+                if n == 0:
+                    block_unmatched += 1
+                    continue
+
+                # Dataset guarantees finite, strictly positive weights.
+                weight_sum = weights.sum()
+                prob[i] = n_good[i] / weight_sum
+
+                if n > 1:
+                    residuals = (
+                        values - prob[i] * weights
+                    ) / weight_sum
+
+                    variance = (
+                        n / (n - 1)
+                        * np.sum(residuals * residuals)
+                    )
+                    prob_error[i] = np.sqrt(variance)
+                else:
+                    block_single_match += 1
+
+            return (
+                stop - start,
+                block_unmatched,
+                block_single_match,
+                block_below_min_colors,
+            )
+
         n_unmatched = 0
         n_single_match = 0
         n_below_min_colors = 0
 
-        for i in tqdm(
-            range(self.N_test_objects),
-            desc="Estimating point-estimate probabilities",
-            disable=not self.verbose,
-        ):
-            usable_i = ~np.isnan(self.test_dict["colors"][:, i]) & ~np.isnan(
-                self.test_dict["errors"][:, i]
-            )
-            n_colors_used[i] = int(usable_i.sum())
+        block_starts = range(
+            0, self.N_test_objects, block_size
+        )
 
-            if n_colors_used[i] < min_colors_used:
-                n_below_min_colors += 1
-                continue
+        # With n_jobs=1, use ordinary map without creating worker threads
+        pool_context = (
+            ThreadPoolExecutor(max_workers=int(n_jobs))
+            if n_jobs > 1
+            else nullcontext()
+        )
 
-            indices = self._matching_indices(i)
-
-            values = self.target_mask[indices]  # already includes reference weights
-            weights = self.reference_dict["weights"][indices]
-
-            n_all[i] = indices.size
-            n_good[i] = values.sum()
-
-            if n_all[i] == 0:
-                n_unmatched += 1
-                continue
-
-            weight_sum = weights.sum()
-            prob[i] = n_good[i] / weight_sum
-
-            n_positive = np.count_nonzero(weights > 0)
-
-            if n_positive > 1:
-                # values already contains w_j * q_j.
-                # Thus, residuals contains w_j * (q_j - prob[i]).
-                residuals = (values - prob[i] * weights) / weight_sum
-
-                variance = n_positive / (n_positive - 1) * np.dot(residuals, residuals)
-                prob_error[i] = np.sqrt(variance)
+        with pool_context as executor:
+            if executor is None:
+                results = map(process_block, block_starts)
             else:
-                n_single_match += 1
+                results = executor.map(process_block, block_starts)
+
+            # Only the calling thread updates progress and warning counts
+            with tqdm(
+                total=self.N_test_objects,
+                desc="Estimating point-estimate probabilities",
+                disable=not self.verbose,
+            ) as progress:
+                for (
+                    n_processed,
+                    block_unmatched,
+                    block_single_match,
+                    block_below_min_colors,
+                ) in results:
+                    n_unmatched += block_unmatched
+                    n_single_match += block_single_match
+                    n_below_min_colors += block_below_min_colors
+
+                    progress.update(n_processed)
 
         if n_below_min_colors > 0 and not silence_warnings:
             warnings.warn(
