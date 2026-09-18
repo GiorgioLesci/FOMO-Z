@@ -32,74 +32,94 @@ class PointProbability:
         verbose=True,
     ):
         r"""
-        Estimate point-estimate probabilities from color grids.
+        Initialize a color-based estimator of target-membership probabilities.
 
-        Given a reference dataset (defining the "true" color distribution, e.g. from
-        a well-characterized sample) and a test dataset (the objects for
-        which a probability is required), this class identifies, for each test object,
-        which reference objects are color-consistent with it within the combined
-        photometric color errors, and uses this information to estimate a point-estimate
-        probability for the test object.
-
-        If `test_dataset` is not provided (default), `reference_dataset` is used as the
-        test dataset as well. This "self-test" mode is meant for a proof-of-concept /
-        calibration run of the method: since the target property (e.g. redshift, mass,
-        class) is known for the reference sample, this allows checking whether the
-        method recovers the known properties of the reference objects themselves,
-        without needing a separate test dataset. See the Notes below for how
-        photometric errors are handled in this mode.
+        For each test object, identify reference objects with compatible
+        colors and estimate the probability of satisfying
+        `selection_definition` from their weighted target memberships.
+        Call `process` to compute the estimates; initialization only
+        validates the input datasets and constructs the reference target mask.
 
         Parameters
         ----------
         selection_definition : SelectionDefinition
-            A `SelectionDefinition` object defining the targeted sample. If, for example,
-            the user wants to get the point-estimate probabilities of test objects to lie
-            above redshift 0.5, then `selection_definition = SelectionDefinition(z_lim=0.5)`.
+            Definition of the target population, such as objects above a
+            redshift threshold, within a redshift interval, or satisfying
+            additional property-based conditions. Exactly one `z_lim`
+            value is supported.
         reference_dataset : Dataset
-            A `Dataset` object containing the reference dataset and band information. It
-            must include errors on magnitudes (see `test_dataset` below for the naming
-            convention), used to compute the color errors of the reference sample.
+            Reference sample providing photometry, target information,
+            and per-object weights. Its DataFrame must contain magnitude
+            uncertainties in columns named ``<band>_error`` for every band,
+            and finite, non-negative weights in ``weights``.
+
+            Target memberships are obtained from the reference properties
+            or, when available, from the integrated redshift PDFs.
         test_dataset : Dataset, optional
-            A `Dataset` object containing the test dataset and band information. It must
-            include errors on magnitudes, which must be provided within the pandas DataFrame
-            passed to the `Dataset` object. The keys representing magnitude error names must
-            follow the convention `band_name + "_error"`. For example, if `mag_g` and `mag_r`
-            are the band keys, the error keys must be `mag_g_error` and `mag_r_error`.
-            If not provided (default, `None`), `reference_dataset` is used as the test
-            dataset (see above).
+            Sample for which probabilities are estimated. Its ordered
+            color list must match that of `reference_dataset`, and its
+            DataFrame must contain ``<band>_error`` columns.
+
+            Test-sample weights and redshift PDFs are not used to estimate
+            its probabilities. If None, use `reference_dataset` as the
+            test sample and apply the self-test matching convention
+            described below.
         verbose : bool, default=True
-            If True, print messages during execution (e.g. referring to
-            the time employed for computation, status of the calibration)
+            Whether to display progress bars and timing information.
+            This option does not suppress warnings.
 
         Notes
         -----
-        The methods implemented in this class are designed for estimating
-        probabilities of the following kind:
+        For reference object j, let q_j denote its target membership:
+        either a binary indicator or a probability derived from its
+        redshift PDF and any additional selection conditions. Let w_j
+        denote its reference weight. The stored `target_mask` already
+        includes that weight:
 
-        - probability of the test objects to lie above a given redshift;
-        - probability of having a stellar mass below a given value;
-        - probability of being a quasar.
+        .. math::
+            t_j = w_j q_j.
 
-        More generally, this class supports probabilities of exceeding/falling
-        below a threshold, or of belonging to a discrete class, as defined by
-        `selection_definition`. Due to the finite size of the reference sample,
-        questions like "what is the probability of my test object to have a
-        redshift exactly equal to a given value" are not well posed: with a finite
-        reference sample, the probability of finding a reference object at any
-        single, exact value is effectively zero, so such probabilities
-        cannot be estimated reliably with this method. Only
-        probabilities integrated over a finite region (e.g. above/below a
-        threshold, or membership in a class) are meaningful.
+        For a set of color-compatible references M_i, `process` estimates
 
-        Regarding the combination of photometric errors: if a separate
-        `test_dataset` is provided, the matching tolerance for each color is obtained
-        by summing in quadrature the color error of the test object and the color
-        error of each reference object, since the two are assumed to be independent measurements.
-        If `test_dataset` is not provided (`reference_dataset` used as test), only the
-        reference object's own color error is used as the tolerance: since test and
-        reference objects are then the very same measurements, summing the same error
-        with itself in quadrature would double-count it, artificially inflating the
-        matching tolerance.
+        .. math::
+            P_i = \frac{\sum_{j \in M_i} t_j}
+                        {\sum_{j \in M_i} w_j}.
+
+        Reference weights affect this estimate, but do not affect which
+        objects satisfy the color-matching conditions.
+
+        Color errors are computed by adding the two magnitude errors
+        in quadrature, assuming uncorrelated errors between those bands.
+        Matching applies separate constraints to each selected color;
+        it does not model covariance between colors sharing a band.
+
+        If `test_dataset` is explicitly supplied, matching tolerances
+        combine test and reference color errors in quadrature. This
+        assumes independent measurements. The same rule applies even
+        if the explicitly supplied dataset is `reference_dataset` itself.
+
+        If `test_dataset` is None, each matching tolerance is instead
+        the test object's color error alone. Reference color errors
+        are not added in this mode. This is a self-test convention,
+        not the uncertainty on the difference between two independent
+        reference objects.
+
+        Self-test matching does not exclude the test object from its
+        own reference matches. Consequently, this mode is not an
+        independent validation or a leave-one-out evaluation.
+
+        A test color is usable if neither its value nor its error is
+        NaN. Missing test colors impose no constraint. `process` can
+        require a minimum number of usable colors.
+
+        The estimator provides probabilities of the events defined by
+        `selection_definition`, not a probability density at an exact
+        value of a continuous property.
+
+        See Also
+        --------
+        select_features_grid : Select colors before probability estimation.
+        process : Compute probabilities and their approximate standard errors.
         """
         if not isinstance(selection_definition, SelectionDefinition):
             raise TypeError(
@@ -182,11 +202,10 @@ class PointProbability:
         set to all available colors as a fallback). Color errors are computed for both
         the reference and the test sample; whether they are actually combined when
         matching test and reference objects depends on `self._combine_reference_errors`
-        (see `_mask` and the class docstring).
+        (see `_matching_indices` and the class docstring).
 
         This method must be called after `self.colors` has been set, and before any
-        method relying on `self.reference_dict` or `self.test_dict` (e.g.
-        `_color_difference`, `_mask`).
+        method relying on `self.reference_dict` or `self.test_dict`.
         """
         self.N_reference_objects = len(self.reference_dataset.dataset)
         self.N_test_objects = len(self.test_dataset.dataset)
@@ -254,89 +273,96 @@ class PointProbability:
             result["weights"] = weights
         return result
 
-    def _color_difference(self, i):
+    def _matching_indices(self, i):
         r"""
-        Compute color differences between a test object and the reference sample.
+        Return indices of reference objects compatible with a test object's colors.
 
-        For the `i`-th test object, compute the absolute difference, in each color,
-        between the test object's color and the color of every object in the
-        reference sample.
+        Reference objects must satisfy the matching condition in every usable
+        color of the test object. A test color is usable when both its value
+        and its error are non-NaN.
+
+        Candidates are filtered progressively: after checking one color, only
+        the surviving reference objects are examined in the next color.
+        This avoids computing differences for references already rejected.
 
         Parameters
         ----------
         i : int
-            Index of the object in the test dataset for which the color differences
-            are computed.
+            Positional index of the object in the test dataset.
 
         Returns
         -------
-        numpy.ndarray
-            Array of shape `(n_colors, n_reference)` containing the absolute color
-            differences, where `diff[k, j]` is the absolute difference, in the
-            `k`-th color, between the `i`-th test object and the `j`-th reference
-            object.
+        numpy.ndarray of int
+            One-dimensional array of matching reference indices, in ascending
+            order. These are positional indices into the reference arrays,
+            not labels from the reference DataFrame index.
+
+            Returns an empty array if no reference object satisfies all
+            constraints. If the test object has no usable colors, returns
+            all reference indices; `process` is responsible for enforcing
+            `min_colors_used` before calling this method.
+
+        Notes
+        -----
+        For each usable color k, reference object j is retained if
+
+        .. math::
+            |c_{k,j}^{\mathrm{ref}} - c_{k,i}^{\mathrm{test}}|
+            \leq \tau_{k,i,j}.
+
+        If `_combine_reference_errors` is True, the tolerance is
+
+        .. math::
+            \tau_{k,i,j} =
+            \sqrt{(\sigma_{k,i}^{\mathrm{test}})^2
+                  + (\sigma_{k,j}^{\mathrm{ref}})^2}.
+
+        Otherwise, only the test object's color error is used.
+
+        Missing test colors or errors impose no constraint. A missing
+        reference color fails the comparison for a usable test color.
+        Missing reference errors also fail when errors are combined;
+        otherwise, reference errors are not used.
+
+        Reference weights and target probabilities do not affect matching.
+        They are used separately by `process` to estimate probabilities.
+
+        Requires `_set_dictionaries` to have been called.
         """
-        reference_colors = self.reference_dict["colors"]  # (n_colors, n_reference)
-        test_color = self.test_dict["colors"][:, i : i + 1]  # (n_colors, 1)
+        # Extract this test object's color values and uncertainties
+        test_colors = self.test_dict["colors"][:, i]
+        test_errors = self.test_dict["errors"][:, i]
 
-        diff = np.abs(reference_colors - test_color)  # (n_colors, n_reference)
-        return diff
+        # Keep references to the full matrices without copying them
+        reference_colors = self.reference_dict["colors"]
+        reference_errors = self.reference_dict["errors"]
 
-    def _mask(self, i):
-        r"""
-        Select reference-dataset objects that are color-consistent with a test object.
+        # Only colors with both a value and an uncertainty constrain matching
+        usable = np.flatnonzero(~np.isnan(test_colors) & ~np.isnan(test_errors))
 
-        For the `i`-th object in the test dataset, this returns a boolean mask over
-        the reference dataset, flagging the reference objects whose color, in every
-        *usable* color for this test object, differs from the test object's color by
-        no more than the matching tolerance for that color. A color is usable for
-        a given test object if that object has a finite (non-NaN) color value and
-        color error; colors where the test object's photometry is missing (NaN) are
-        skipped for that object and do not constrain the mask, rather than causing
-        the object to be excluded. Reference objects with NaN in an otherwise
-        usable color are still correctly excluded on that color.
+        # Initially, every reference object is a candidate
+        indices = np.arange(self.N_reference_objects)
 
-        The matching tolerance depends on `self._combine_reference_errors` (set in the
-        constructor based on whether a genuinely separate `test_dataset` was provided):
-        if True, the tolerance for each (test object, reference object, color) triplet
-        is the quadrature sum of the test object's and the reference object's color
-        errors; if False (i.e. the reference dataset is also used as the test dataset),
-        only the (shared) color error is used, to avoid double-counting it.
+        for k in usable:
+            # Evaluate this color only for candidates that survived earlier cuts
+            diff = np.abs(reference_colors[k, indices] - test_colors[k])
 
-        Note that a test object using fewer colors than the full set is matched in a
-        lower-dimensional color space, which is typically less restrictive and can
-        yield systematically larger, noisier matched samples than for fully
-        characterized test objects. See `process`'s `"n_colors_used"` output to
-        identify these objects.
+            # Apply the photometric tolerance
+            if self._combine_reference_errors:
+                tolerance = np.sqrt(
+                    test_errors[k] ** 2 + reference_errors[k, indices] ** 2
+                )
+            else:
+                tolerance = test_errors[k]
 
-        Parameters
-        ----------
-        i : int
-            Index of the object in the test dataset for which the mask is computed.
+            # Keep compatible candidates, preserving their original indices
+            indices = indices[diff <= tolerance]
 
-        Returns
-        -------
-        numpy.ndarray of bool
-            Boolean mask of length `self.N_reference_objects`, True for reference
-            objects whose colors are compatible, within the matching tolerance,
-            with the `i`-th test object's usable colors.
-        """
-        test_color = self.test_dict["colors"][:, i : i + 1]  # (n_colors, 1)
-        test_error = self.test_dict["errors"][:, i : i + 1]  # (n_colors, 1)
-        diff = self._color_difference(i)  # (n_colors, n_reference)
+            # Further constraints cannot restore rejected candidates
+            if indices.size == 0:
+                break
 
-        if self._combine_reference_errors:
-            tol = np.sqrt(
-                test_error**2 + self.reference_dict["errors"] ** 2
-            )  # (n_colors, n_reference)
-        else:
-            tol = test_error  # (n_colors, 1), broadcasts against n_reference
-
-        usable = ~np.isnan(test_color) & ~np.isnan(test_error)  # (n_colors, 1)
-        within_tol = diff <= tol  # (n_colors, n_reference)
-        satisfied = within_tol | ~usable  # unusable test colors auto-pass
-
-        return np.all(satisfied, axis=0)
+        return indices
 
     def select_features_grid(
         self,
@@ -536,78 +562,121 @@ class PointProbability:
 
     def process(self, min_colors_used=2, silence_warnings=False):
         r"""
-        Compute point-estimate probabilities for all test objects.
+        Compute weighted target-membership probabilities for all test objects.
 
-        A selection of the informative features is recommended before the call
-        to this function. See, for example, the `select_features_grid` method.
-        If no feature selection has been performed (i.e. `self.colors` is not set),
-        all colors available in `self.reference_dataset` are used, and a warning is
-        raised.
-
-        For each object in the test dataset, the number of usable colors (i.e. those
-        with a finite color value and color error for that object; see `_mask`) is
-        computed first. If this number is below `min_colors_used`, the test object is
-        skipped and its probability set to NaN, since too few colors would make the
-        match unreliable or, in the extreme case of zero usable colors, would match
-        the entire reference sample (see `_mask`'s notes on this degenerate case).
-
-        Otherwise, the reference objects that are color-consistent with the test
-        object (see `_mask`) are identified, and the point-estimate probability for
-        that test object is computed as the weighted mean of `self.target_mask` over
-        these matched reference objects. Note that `self.target_mask` is not
-        necessarily binary (0/1): it may contain intermediate values (e.g. derived
-        from photometric redshift PDFs), in which case the resulting probability is a
-        weighted average rather than a strict binomial proportion. See the
-        documentation of the `SelectionDefinition` class for more details.
-
-        The uncertainty on this probability is estimated as the standard error of
-        the mean:
-
-        .. math::
-            \sigma_{P} = \frac{s}{\sqrt{n}}
-
-        where `s` is the sample standard deviation (with Bessel's correction, i.e.
-        dividing by `n - 1`) of the `self.target_mask` values among the matched
-        reference objects, and `n` is the number of matched reference objects. This
-        requires at least two matched reference objects (`n > 1`); for test objects
-        with `n <= 1` matched reference objects, `"prob"` and/or `"prob_error"` are
-        set to NaN (see Returns).
+        Use the colors stored in `self.colors`, or all reference colors
+        if feature selection has not been performed. For each test
+        object, find the reference objects satisfying every usable
+        color constraint and combine their weighted target memberships.
 
         Parameters
         ----------
         min_colors_used : int, default=2
-            Minimum number of usable colors (i.e. non-NaN for the test object)
-            required to compute a probability for a test object. Test objects with
-            fewer usable colors than this are skipped, with `"prob"`, `"prob_error"`,
-            `"n_good"`, and `"n_all"` set to NaN/0 for them.
+            Minimum number of usable test colors required to estimate
+            a probability. A color is usable when neither its value
+            nor its error is NaN.
+
+            Objects below this threshold are skipped: their probability
+            and error remain NaN, and their match count and weighted
+            target sum remain zero.
         silence_warnings : bool, default=False
-            If True, warnings are not printed.
+            Suppress explicit warnings emitted by this method about
+            missing feature selection, insufficient usable colors,
+            unmatched objects, and single positive-weight matches.
+            Progress-bar visibility is controlled by `self.verbose`.
 
         Returns
         -------
         None
-            This function does not return a variable. Instead, it sets
-            the dictionary `self.probability_dictionary` with the following keys:
+            Results are stored in `self.probability_dictionary`.
+            Each entry is an array of shape ``(n_test,)``:
 
-            - `"prob"` : numpy.ndarray of shape `(n_test,)`
-              Point-estimate probability for each test object. NaN for test
-              objects with fewer than `min_colors_used` usable colors, or with no
-              matched reference objects.
-            - `"prob_error"` : numpy.ndarray of shape `(n_test,)`
-              Standard error of the mean on `"prob"`, as described above. NaN
-              for test objects with fewer than two matched reference objects.
-            - `"n_good"` : numpy.ndarray of shape `(n_test,)`
-              Sum of `self.target_mask` over the matched reference objects, for
-              each test object.
-            - `"n_all"` : numpy.ndarray of shape `(n_test,)`
-              Number of matched reference objects, for each test object.
-            - `"n_colors_used"` : numpy.ndarray of shape `(n_test,)`
-              Number of usable (non-NaN) colors for each test object.
+            ``prob``
+                Weighted target-membership probability. NaN for skipped
+                objects, objects without matches, or objects whose
+                matching references have zero total weight.
+            ``prob_error``
+                Approximate sampling standard error of ``prob``, as
+                defined below. NaN if the probability is undefined
+                or fewer than two matched references have positive weight.
+            ``n_good``
+                Sum of `self.target_mask` over matching references.
+                This is already a weighted target-membership sum:
+                reference weights are not applied a second time.
+                Zero for skipped objects or objects without matches.
+            ``n_all``
+                Unweighted number of matching reference objects,
+                including references with zero weight. Zero for
+                skipped objects or objects without matches.
+            ``n_colors_used``
+                Number of non-NaN test colors with non-NaN errors,
+                including for objects skipped by `min_colors_used`.
+
+        Raises
+        ------
+        ValueError
+            If reference weights are non-finite or negative.
+
+        Notes
+        -----
+        Let M_i be the set of references compatible with test object i.
+        For each reference j, let w_j be its weight and q_j its target
+        membership, which may be binary or derived from a redshift PDF.
+        The stored target-mask value is t_j = w_j q_j.
+
+        The probability estimate is
+
+        .. math::
+            W_i = \sum_{j \in M_i} w_j,
+            \qquad
+            P_i = \frac{\sum_{j \in M_i} t_j}{W_i}.
+
+        Thus, ``n_good / n_all`` is generally not the probability:
+        the denominator must be the sum of reference weights.
+
+        For m_i > 1 matched references with positive weight, estimate
+        the sampling variance of this ratio as
+
+        .. math::
+            \widehat{\sigma}_{P_i}^{\,2}
+            = \frac{m_i}{m_i - 1}
+              \frac{\sum_{j \in M_i}(t_j - P_i w_j)^2}{W_i^2}.
+
+        This is an approximate variance estimate for independent
+        reference objects with relative sampling or importance weights.
+        The finite-sample correction recovers the usual squared
+        standard error, s_i^2 / m_i, when all positive weights are equal,
+        where s_i is the sample standard deviation of q_j with ddof=1.
+
+        Both the probability and its estimated error are invariant
+        under a common positive rescaling of the reference weights.
+        Zero-weight references contribute to ``n_all`` but not to
+        either estimate.
+
+        The error describes sampling variation of the weighted mean
+        of q_j. It does not include uncertainty in the weight calibration,
+        correlations between references, or systematic errors in the
+        input photometry or redshift PDFs. It is not a predictive
+        uncertainty for an individual object's binary membership.
+
+        Identical q_j values among all positive-weight matches produce
+        a zero estimated error; this does not establish that the true
+        probability is known exactly.
+
+        When the reference sample is also the test sample, self-matches
+        are retained. The resulting probabilities are not independent
+        validation predictions.
+
+        See Also
+        --------
+        _matching_indices : Identify color-compatible reference objects.
+        select_features_grid : Select the colors used for matching.
         """
-        if self.colors is None and not silence_warnings:
-            warnings.warn(
-                "No feature selection was performed. Using all available features."
-            )
+        if self.colors is None:
+            if not silence_warnings:
+                warnings.warn(
+                    "No feature selection was performed. Using all available features."
+                )
             self.colors = self.reference_dataset.colors
 
         # Set the feature dictionaries
@@ -639,21 +708,30 @@ class PointProbability:
                 n_below_min_colors += 1
                 continue
 
-            # mask contains booleans
-            # self.target_mask contains floats
-            mask = self._mask(i)
-            values = self.target_mask[mask]
-            n_all[i] = np.count_nonzero(mask)
+            indices = self._matching_indices(i)
+
+            values = self.target_mask[indices]  # already includes reference weights
+            weights = self.reference_dict["weights"][indices]
+
+            n_all[i] = indices.size
             n_good[i] = values.sum()
 
             if n_all[i] == 0:
                 n_unmatched += 1
                 continue
 
-            prob[i] = n_good[i] / n_all[i]
+            weight_sum = weights.sum()
+            prob[i] = n_good[i] / weight_sum
 
-            if n_all[i] > 1:
-                prob_error[i] = values.std(ddof=1) / np.sqrt(n_all[i])
+            n_positive = np.count_nonzero(weights > 0)
+
+            if n_positive > 1:
+                # values already contains w_j * q_j.
+                # Thus, residuals contains w_j * (q_j - prob[i]).
+                residuals = (values - prob[i] * weights) / weight_sum
+
+                variance = n_positive / (n_positive - 1) * np.dot(residuals, residuals)
+                prob_error[i] = np.sqrt(variance)
             else:
                 n_single_match += 1
 
@@ -671,7 +749,7 @@ class PointProbability:
         if n_single_match > 0 and not silence_warnings:
             warnings.warn(
                 f"{n_single_match} test object(s) had only one matching reference "
-                "object; their 'prob_error' was set to NaN."
+                "object with positive weight; their 'prob_error' was set to NaN."
             )
 
         self.probability_dictionary = {
