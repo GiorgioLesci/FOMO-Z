@@ -60,9 +60,7 @@ def _matching_indices_numba(
     n_reference = reference_colors.shape[1]
 
     # Determine usable colors once for this test object
-    usable = np.flatnonzero(
-        ~np.isnan(test_colors) & ~np.isnan(test_errors)
-    )
+    usable = np.flatnonzero(~np.isnan(test_colors) & ~np.isnan(test_errors))
 
     # Allocate enough space for the maximum possible number of matches
     indices = np.empty(n_reference, dtype=np.int64)
@@ -74,15 +72,10 @@ def _matching_indices_numba(
         for position in range(usable.size):
             k = usable[position]
 
-            difference = abs(
-                reference_colors[k, j] - test_colors[k]
-            )
+            difference = abs(reference_colors[k, j] - test_colors[k])
 
             if combine_errors:
-                tolerance = np.sqrt(
-                    test_errors[k] ** 2
-                    + reference_errors[k, j] ** 2
-                )
+                tolerance = np.sqrt(test_errors[k] ** 2 + reference_errors[k, j] ** 2)
             else:
                 tolerance = test_errors[k]
 
@@ -294,12 +287,8 @@ class PointProbability:
 
         # Store each reference object's colors contiguously in memory.
         # Shapes remain (n_colors, n_reference).
-        self.reference_dict["colors"] = np.asfortranarray(
-            self.reference_dict["colors"]
-        )
-        self.reference_dict["errors"] = np.asfortranarray(
-            self.reference_dict["errors"]
-        )
+        self.reference_dict["colors"] = np.asfortranarray(self.reference_dict["colors"])
+        self.reference_dict["errors"] = np.asfortranarray(self.reference_dict["errors"])
 
     def _build_color_dict(self, dataset, include_errors, include_weights):
         r"""
@@ -726,9 +715,7 @@ class PointProbability:
                 or not isinstance(cpu_number, (int, np.integer))
                 or cpu_number < 1
             ):
-                raise ValueError(
-                    "cpu_number must be a positive integer or None."
-                )
+                raise ValueError("cpu_number must be a positive integer or None.")
 
         if (
             isinstance(block_size, (bool, np.bool_))
@@ -740,9 +727,7 @@ class PointProbability:
         max_workers = max(mp.cpu_count() - 2, 1)
 
         n_jobs = (
-            max_workers
-            if cpu_number is None
-            else min(int(cpu_number), max_workers)
+            max_workers if cpu_number is None else min(int(cpu_number), max_workers)
         )
 
         if self.colors is None:
@@ -776,9 +761,8 @@ class PointProbability:
             block_below_min_colors = 0
 
             for i in range(start, stop):
-                usable_i = (
-                    ~np.isnan(self.test_dict["colors"][:, i])
-                    & ~np.isnan(self.test_dict["errors"][:, i])
+                usable_i = ~np.isnan(self.test_dict["colors"][:, i]) & ~np.isnan(
+                    self.test_dict["errors"][:, i]
                 )
                 n_colors_used[i] = int(usable_i.sum())
 
@@ -805,14 +789,9 @@ class PointProbability:
                 prob[i] = n_good[i] / weight_sum
 
                 if n > 1:
-                    residuals = (
-                        values - prob[i] * weights
-                    ) / weight_sum
+                    residuals = (values - prob[i] * weights) / weight_sum
 
-                    variance = (
-                        n / (n - 1)
-                        * np.sum(residuals * residuals)
-                    )
+                    variance = n / (n - 1) * np.sum(residuals * residuals)
                     prob_error[i] = np.sqrt(variance)
                 else:
                     block_single_match += 1
@@ -828,15 +807,11 @@ class PointProbability:
         n_single_match = 0
         n_below_min_colors = 0
 
-        block_starts = range(
-            0, self.N_test_objects, block_size
-        )
+        block_starts = range(0, self.N_test_objects, block_size)
 
         # With n_jobs=1, use ordinary map without creating worker threads
         pool_context = (
-            ThreadPoolExecutor(max_workers=int(n_jobs))
-            if n_jobs > 1
-            else nullcontext()
+            ThreadPoolExecutor(max_workers=int(n_jobs)) if n_jobs > 1 else nullcontext()
         )
 
         with pool_context as executor:

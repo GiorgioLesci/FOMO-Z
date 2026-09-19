@@ -9,6 +9,7 @@ distributions of other physical quantities, such as stellar masses and star form
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
 
+import warnings
 import numpy as np
 from tqdm import tqdm
 
@@ -36,9 +37,12 @@ class ProbabilityFunction:
         bla...
         The output of the `process` method is a probability density function
         (whose integral equals 1) for each object in `test_dataset`.
-        A selection of the most informative features is mandatory before the `process`
+        A selection of the most informative features is recommended before the `process`
         call. In the current version of the code, the following function implements
         such a selection: `select_features_grid`.
+        Regarding prior weights and reference PDZs, their contribution can be included
+        in the estimates of the probability functions. See the documentation of
+        `PointProbability` for more details.
 
         Parameters
         ----------
@@ -77,19 +81,26 @@ class ProbabilityFunction:
             Whether to display progress bars and timing information.
             This option does not suppress warnings.
         """
+        self.features_were_selected = False
         self.verbose = verbose
 
         if random_variable not in reference_dataset.columns:
             raise ValueError(f"{random_variable} is not a key of reference_dataset.")
         if random_variable not in test_dataset.columns:
             raise ValueError(f"{random_variable} is not a key of test_dataset.")
-        
+
         # Build the dictionary
         self.variable_samples = np.arange(min_variable, max_variable, delta)
 
         self.dict_point = {}
         for s in self.variable_samples:
             # Define SelectionDefinition
+            if random_variable == "redshift":
+                sel = SelectionDefinition(z_lim_opposite=s)
+            else:
+                sel = SelectionDefinition(
+                    additional_rules=[lambda df: df[random_variable] < s]
+                )
 
             # Fill the dict
             self.dict_point[s] = PointProbability(
@@ -112,7 +123,7 @@ class ProbabilityFunction:
         See the documentation of the homonymous function in `PointProbability`
         for a detailed description. This function does not reimplement that
         method. Instead, it calls `select_features_grid` for each `PointProbability`
-        object created by the `ProbabilityFunction` class.
+        object created internally by the `ProbabilityFunction` class.
 
         Parameters
         ----------
@@ -135,5 +146,63 @@ class ProbabilityFunction:
         step : float, default=0.001
             Threshold reduction step applied when refining the grid selection.
         """
-        return None
+        for s in tqdm(
+            self.variable_samples,
+            desc="Selecting features for each random variable value",
+        ):
+            self.dict_point[s].select_features_grid(
+                tolerance=tolerance,
+                purity_min=purity_min,
+                grid_precision=grid_precision,
+                step=step,
+            )
+        self.features_were_selected = True
 
+    def process(
+        self,
+        min_colors_used=2,
+        cpu_number=None,
+        block_size=256,
+    ):
+        r"""
+        Compute weighted probability density functions for all test objects.
+
+        This function calls the `PointProbability.process` method for each
+        value of the random variable.
+
+        Parameters
+        ----------
+        min_colors_used : int, default=2
+            Minimum number of usable test colors required to estimate
+            a probability. See `PointProbability.process`.
+        cpu_number : int or None, optional
+            Number of worker threads used for parallel processing.
+            If None, use the number of logical CPUs reported by
+            multiprocessing.cpu_count() minus two, with a minimum of one.
+            Explicit values are capped at the same limit.
+            If 1, run sequentially without creating worker threads.
+        block_size : int, default=256
+            Number of test objects per task. Progress is updated as
+            blocks are collected. This does not allocate a matrix of
+            pairwise comparisons for the entire block.
+
+        Returns
+        -------
+        None
+            Results are stored in `self.probability_functions`.
+        """
+        if not self.features_were_selected:
+            warnings.warn(
+                "No feature selection was performed. Using all available features."
+            )
+
+        for s in tqdm(
+            self.variable_samples,
+            desc="Estimating probabilities at each random variable value",
+        ):
+            self.dict_point[s].process(
+                min_colors_used=min_colors_used,
+                cpu_number=cpu_number,
+                block_size=block_size,
+                silence_warnings=True,
+            )
