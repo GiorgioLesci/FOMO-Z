@@ -28,7 +28,7 @@ class ProbabilityFunction:
         test_dataset: Dataset = None,
         random_variable="redshift",
         delta=0.05,
-        min_variable=0.001,
+        min_variable=0.05,
         max_variable=2.5,
         verbose=True,
     ):
@@ -81,7 +81,7 @@ class ProbabilityFunction:
         delta : float, default=0.05
             The sampling precision over the random variable's domain.
             Default is 0.05.
-        min_variable : float, default=0.001
+        min_variable : float, default=0.05
             Minimum of the random variable range explored to construct the
             probability functions.
         max_variable : float, default=2.5
@@ -246,12 +246,49 @@ class ProbabilityFunction:
             desc="Selecting features for each random variable value",
             disable=not self.verbose,
         ):
-            self.dict_point[s].select_features_grid(
-                tolerance=tolerance,
-                purity_min=purity_min,
-                grid_precision=grid_precision,
-                step=step,
-            )
+            while True:
+                try:
+                    self.dict_point[s].select_features_grid(
+                        tolerance=tolerance,
+                        purity_min=purity_min,
+                        grid_precision=grid_precision,
+                        step=step,
+                    )
+                    break
+
+                except ValueError as error:
+                    # Retry only the specific calibration convergence failure.
+                    # Propagate unrelated ValueErrors unchanged.
+                    if not hasattr(error, "calibration_purity"):
+                        raise
+
+                    new_purity_min = error.calibration_purity + 0.01
+
+                    # Avoid an invalid threshold or a retry without progress.
+                    if (
+                        not np.isfinite(new_purity_min)
+                        or new_purity_min >= 1.0
+                        or new_purity_min <= purity_min
+                    ):
+                        raise ValueError(
+                            f"Cannot retry feature selection at "
+                            f"{self.random_variable if hasattr(self, 'random_variable') else 'variable'}"
+                            f"={s}: achieved purity="
+                            f"{error.calibration_purity:.6f}, "
+                            f"current purity_min={purity_min:.6f}, "
+                            f"proposed purity_min={new_purity_min:.6f}. "
+                            "The new threshold must increase and remain below 1."
+                        ) from error
+
+                    warnings.warn(
+                        f"Calibration failed at variable={s}. "
+                        f"Updating purity_min from {purity_min:.6f} "
+                        f"to {new_purity_min:.6f} and retrying. "
+                        "The updated threshold will also be used "
+                        "at subsequent sampling points."
+                    )
+
+                    purity_min = new_purity_min
 
         # Concatenate the best features to ensure monotonicity in the cumulative distributions
         self._concatenate_features()
@@ -263,7 +300,7 @@ class ProbabilityFunction:
         min_colors_used=2,
         cpu_number=None,
         block_size=256,
-        smooth_sigma=0.0,
+        smooth_sigma=0.05,
     ):
         r"""
         Compute weighted probability density functions for all test objects.
@@ -287,7 +324,7 @@ class ProbabilityFunction:
             Number of test objects per task. Progress is updated as
             blocks are collected. This does not allocate a matrix of
             pairwise comparisons for the entire block.
-        smooth_sigma : float, default=0.0
+        smooth_sigma : float, default=0.05
             Gaussian smoothing standard deviation in the same units as
             `random_variable`. Converted to grid samples by dividing
             by `delta`. If zero, no smoothing is applied.
