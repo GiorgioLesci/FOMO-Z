@@ -12,7 +12,8 @@ distributions of other physical quantities, such as stellar masses and star form
 import warnings
 import numpy as np
 from tqdm import tqdm
-from scipy.ndimage import gaussian_filter1d
+from scipy.interpolate import BSpline
+from scipy.optimize import minimize
 
 from ..data.dataset import Dataset
 from ..data.selection_definition import SelectionDefinition
@@ -149,54 +150,6 @@ class ProbabilityFunction:
                 verbose=False,
             )
 
-    def _concatenate_features(self):
-        r"""
-        Combine selected colors across all sampled thresholds.
-
-        Build the union of the colors selected by the internal
-        PointProbability instances, removing duplicates while preserving
-        their first-occurrence order. Assign the same color list to
-        every instance so that matching uses identical features at
-        all thresholds.
-
-        Requires feature selection to have been performed for every
-        instance, before any instance is released from `self.dict_point`.
-
-        Returns
-        -------
-        None
-            Store the combined colors in `self.colors` and the remaining
-            available colors in `self.discarded_colors`. Update the
-            corresponding attributes of each PointProbability instance.
-        """
-        # Collect unique colors in their first-occurrence order
-        self.colors = list(dict.fromkeys(
-            color
-            for s in self.variable_samples
-            for color in self.dict_point[s].colors
-        ))
-
-        # Identify available colors excluded from the union
-        all_colors = self.dict_point[
-            self.variable_samples[0]
-        ].reference_dataset.colors
-
-        self.discarded_colors = [
-            color for color in all_colors
-            if color not in self.colors
-        ]
-
-        # Apply the same features and discarded-color bookkeeping everywhere
-        for s in self.variable_samples:
-            self.dict_point[s].colors = self.colors.copy()
-            self.dict_point[s].discarded_colors = (
-                self.discarded_colors.copy()
-            )
-
-        if self.verbose:
-            print(f"\nSelected features:\n{self.colors}")
-            print(f"\nDiscarded features:\n{self.discarded_colors}")
-
     def select_features_grid(
         self,
         tolerance=0.1,
@@ -290,9 +243,6 @@ class ProbabilityFunction:
 
                     purity_min = new_purity_min
 
-        # Concatenate the best features to ensure monotonicity in the cumulative distributions
-        self._concatenate_features()
-
         self.features_were_selected = True
 
     def process(
@@ -300,100 +250,296 @@ class ProbabilityFunction:
         min_colors_used=2,
         cpu_number=None,
         block_size=256,
-        smooth_sigma=0.05,
+        n_internal_knots=5,
     ):
         r"""
-        Compute weighted probability density functions for all test objects.
+        Estimate probability densities from monotone cubic spline fits.
 
-        This function calls the `PointProbability.process` method for each
-        value of the random variable.
-        COMMENTO SU _concatenate_features?
+        Compute cumulative probabilities at the sampled thresholds using
+        the corresponding PointProbability instances. Each instance may
+        retain its own selected colors.
+
+        For each test object, fit a cubic B-spline to the cumulative
+        estimates by constrained least squares. Nondecreasing spline
+        coefficients bounded between zero and one ensure that the fitted
+        cumulative is nondecreasing and remains within [0, 1].
+
+        Obtain the density from the analytic derivative of the fitted
+        spline. No Gaussian smoothing or numerical differentiation is used.
 
         Parameters
         ----------
         min_colors_used : int, default=2
-            Minimum number of usable test colors required to estimate
-            a probability. See `PointProbability.process`.
+            Minimum number of usable test colors required by
+            PointProbability.process at each threshold.
         cpu_number : int or None, optional
-            Number of worker threads used for parallel processing.
-            If None, use the number of logical CPUs reported by
-            multiprocessing.cpu_count() minus two, with a minimum of one.
-            Explicit values are capped at the same limit.
-            If 1, run sequentially without creating worker threads.
+            Number of worker threads used by PointProbability.process.
+            If None, use the number of logical CPUs minus two, with a
+            minimum of one. Explicit values are capped at that limit.
+            Spline fits are performed sequentially.
         block_size : int, default=256
-            Number of test objects per task. Progress is updated as
-            blocks are collected. This does not allocate a matrix of
-            pairwise comparisons for the entire block.
-        smooth_sigma : float, default=0.05
-            Gaussian smoothing standard deviation in the same units as
-            `random_variable`. Converted to grid samples by dividing
-            by `delta`. If zero, no smoothing is applied.
-            In particular, the following code is used:
-            `gaussian_filter1d(cumulative, sigma=smooth_sigma / self.delta, mode="nearest")`
+            Number of test objects per task in PointProbability.process.
+            This parameter does not control spline fitting.
+        n_internal_knots : int, default=5
+            Number of equally spaced interior knots over the sampled
+            domain. The cubic spline has n_internal_knots + 4 coefficients.
+            More knots allow greater local flexibility. Zero gives a
+            single cubic polynomial.
+
+            Each object must have at least this many coefficients' worth
+            of finite cumulative estimates, including both domain endpoints.
 
         Returns
         -------
         None
-            Results are stored in `self.probability_functions`.
-        """
-        if not np.isfinite(smooth_sigma) or smooth_sigma < 0:
-            raise ValueError("smooth_sigma must be finite and non-negative.")
+            Set the following attributes:
 
+            probability_functions : numpy.ndarray
+                Shape (n_test, n_samples). Nonnegative density samples,
+                normalized to unit trapezoidal integral over
+                self.variable_samples. Invalid rows contain NaN.
+            fit_success : numpy.ndarray of bool
+                Shape (n_test,). True when fitting and density normalization
+                both succeed.
+            interval_probability : numpy.ndarray
+                Shape (n_test,). Probability mass over the sampled interval
+                from the fitted cumulative, before density normalization.
+                NaN for invalid fits.
+
+        Raises
+        ------
+        RuntimeError
+            If process has already been started on this instance.
+        ValueError
+            If the knot count or sampling grid is invalid, or there are
+            fewer sampling points than spline coefficients.
+
+        Notes
+        -----
+        The fitted cumulative has the form
+
+        .. math::
+            F(x) = \sum_m c_m B_m(x),
+            \qquad 0 \leq c_0 \leq \cdots \leq c_{M-1} \leq 1.
+
+        These coefficient constraints are sufficient to guarantee
+        monotonicity throughout the sampled interval, not only at the
+        sampling points.
+
+        The spline coefficients are estimated independently for each object
+        by minimizing the equally weighted least-squares objective
+
+        .. math::
+            \frac{1}{2}\sum_{k \in V}
+            \left[F(x_k) - \widehat{F}(x_k)\right]^2,
+
+        where V contains the sampling points with finite cumulative estimates
+        and \widehat{F}(x_k) denotes the probabilities returned by
+        PointProbability.
+
+        Optimization uses `scipy.optimize.minimize` with the SLSQP method,
+        an analytic objective gradient, coefficient bounds [0, 1], and
+        linear inequality constraints enforcing nondecreasing coefficients.
+        Knot positions and spline degree remain fixed during optimization.
+        Fits that fail to converge are rejected and produce NaN densities.
+
+        Finite cumulative estimates receive equal weights in the fit.
+        Missing interior estimates are omitted. No covariance model or
+        uncertainty propagation is applied.
+
+        Endpoint probabilities are fitted rather than fixed to zero and
+        one. The output density is normalized over the sampled interval,
+        so it represents the distribution conditional on that interval.
+        Trapezoidal normalization of the sampled derivative introduces
+        a grid-dependent numerical approximation.
+
+        Objects with insufficient valid estimates, missing endpoint
+        estimates, failed optimization, or fitted interval probability
+        below the numerical tolerance receive NaN densities.
+
+        Internal PointProbability instances are released during execution.
+        Create a new ProbabilityFunction instance to run this method again.
+        """
         if self.process_was_called:
             raise RuntimeError(
-                "Internal PointProbability instances have been released. "
+                "Processing has already been started on this instance. "
                 "Create a new ProbabilityFunction instance."
             )
-        self.process_was_called = True
+
+        if (
+            isinstance(n_internal_knots, (bool, np.bool_))
+            or not isinstance(n_internal_knots, (int, np.integer))
+            or n_internal_knots < 0
+        ):
+            raise ValueError(
+                "n_internal_knots must be a non-negative integer."
+            )
+
+        x = np.asarray(self.variable_samples, dtype=float)
+        n_coefficients = int(n_internal_knots) + 4
+
+        if (
+            x.ndim != 1
+            or x.size < n_coefficients
+            or not np.all(np.isfinite(x))
+            or np.any(np.diff(x) <= 0)
+        ):
+            raise ValueError(
+                "variable_samples must be finite, strictly increasing, "
+                "and contain at least n_internal_knots + 4 points."
+            )
+
+        # Construct clamped cubic B-spline bases on the sampled domain.
+        internal_knots = np.linspace(
+            x[0], x[-1], int(n_internal_knots) + 2
+        )[1:-1]
+
+        knots = np.concatenate((
+            np.repeat(x[0], 4),
+            internal_knots,
+            np.repeat(x[-1], 4),
+        ))
+
+        basis = BSpline(
+            knots,
+            np.eye(n_coefficients),
+            k=3,
+            extrapolate=False,
+        )
+
+        # Shared matrices: evaluate the cumulative and its analytic derivative.
+        design = basis(x)
+        derivative_design = basis.derivative()(x)
+
+        # Enforce c[m + 1] - c[m] >= 0.
+        difference_matrix = np.diff(
+            np.eye(n_coefficients), axis=0
+        )
+        constraints = {
+            "type": "ineq",
+            "fun": lambda coefficients: difference_matrix @ coefficients,
+            "jac": lambda coefficients: difference_matrix,
+        }
+        bounds = [(0.0, 1.0)] * n_coefficients
 
         if not self.features_were_selected:
             warnings.warn(
                 "No feature selection was performed. Using all available features."
             )
 
-        # Estimate the probability P(x<x_lim) for all x_lim values
+        self.process_was_called = True
+
+        # Rows are thresholds; columns are test objects.
         cumulative_matrix = np.full(
-            (len(self.variable_samples), self.N_test_objects),
-            np.nan,
+            (x.size, self.N_test_objects), np.nan
         )
-        for i, s in enumerate(
-            tqdm(
-                self.variable_samples,
-                desc="Estimating probabilities at each random variable value",
-                disable=not self.verbose,
-            )
-        ):
+
+        for k, s in enumerate(tqdm(
+            self.variable_samples,
+            desc="Estimating cumulative probabilities",
+            disable=not self.verbose,
+        )):
             self.dict_point[s].process(
                 min_colors_used=min_colors_used,
                 cpu_number=cpu_number,
                 block_size=block_size,
                 silence_warnings=True,
             )
-            cumulative_matrix[i] = self.dict_point[s].probability_dictionary["prob"]
+            cumulative_matrix[k] = (
+                self.dict_point[s].probability_dictionary["prob"]
+            )
             self.dict_point[s] = None
 
-        # Rows are thresholds; columns are test objects.
-        # Smooth each object's cumulative distribution along the thresholds.
-        if smooth_sigma > 0:
-            cumulative_matrix = gaussian_filter1d(
-                cumulative_matrix,
-                sigma=smooth_sigma / self.delta,
-                axis=0,
-                mode="nearest",
+        self.probability_functions = np.full(
+            (self.N_test_objects, x.size), np.nan
+        )
+        self.fit_success = np.zeros(self.N_test_objects, dtype=bool)
+        self.interval_probability = np.full(self.N_test_objects, np.nan)
+
+        for i in tqdm(
+            range(self.N_test_objects),
+            desc="Fitting monotone cumulative distributions",
+            disable=not self.verbose,
+        ):
+            y = cumulative_matrix[:, i]
+            finite = np.isfinite(y)
+
+            # Require enough observations and avoid extrapolating endpoints.
+            if (
+                np.count_nonzero(finite) < n_coefficients
+                or not finite[0]
+                or not finite[-1]
+            ):
+                continue
+
+            observed = y[finite]
+            if np.any(observed < -1e-8) or np.any(observed > 1.0 + 1e-8):
+                continue
+
+            observed = np.clip(observed, 0.0, 1.0)
+            matrix = design[finite]
+
+            # Feasible initial coefficients, including for nonmonotone data.
+            initial = np.linspace(
+                observed.min(), observed.max(), n_coefficients
             )
 
-        # Derivative of the cumulative
-        self.probability_functions = np.gradient(
-            cumulative_matrix.T, self.variable_samples, axis=1
-        )
+            def objective(coefficients):
+                residuals = matrix @ coefficients - observed
+                loss = 0.5 * np.sum(residuals * residuals)
+                gradient = matrix.T @ residuals
+                return loss, gradient
 
-        normalization = np.trapz(
-            self.probability_functions,
-            self.variable_samples,
-            axis=1,
-        )
+            result = minimize(
+                objective,
+                initial,
+                method="SLSQP",
+                jac=True,
+                bounds=bounds,
+                constraints=constraints,
+                options={"ftol": 1e-10, "maxiter": 200},
+            )
 
-        valid = np.isfinite(normalization) & (normalization > 0)
+            if not result.success or not np.all(np.isfinite(result.x)):
+                continue
 
-        self.probability_functions[valid] /= normalization[valid, None]
-        self.probability_functions[~valid] = np.nan
+            coefficients = result.x
+
+            # Reject constraint violations larger than numerical tolerance.
+            if (
+                np.any(coefficients < -1e-8)
+                or np.any(coefficients > 1.0 + 1e-8)
+                or np.any(np.diff(coefficients) < -1e-8)
+            ):
+                continue
+
+            # Remove only residual numerical violations in fitted coefficients.
+            coefficients = np.maximum.accumulate(
+                np.clip(coefficients, 0.0, 1.0)
+            )
+
+            # Clamped endpoint values equal the first and last coefficients.
+            interval_mass = coefficients[-1] - coefficients[0]
+            if interval_mass <= 1e-10:
+                continue
+
+            density = derivative_design @ coefficients
+
+            # The model derivative is nonnegative; clip numerical roundoff.
+            density = np.maximum(density, 0.0)
+            normalization = np.trapz(density, x)
+
+            if not np.isfinite(normalization) or normalization <= 0:
+                continue
+
+            self.probability_functions[i] = density / normalization
+            self.interval_probability[i] = interval_mass
+            self.fit_success[i] = True
+
+        n_invalid = np.count_nonzero(~self.fit_success)
+        if n_invalid:
+            warnings.warn(
+                f"{n_invalid} object(s) had insufficient valid cumulative "
+                "estimates, an unsuccessful fit, or negligible fitted "
+                "interval probability; their densities were set to NaN."
+            )
