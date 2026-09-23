@@ -28,7 +28,7 @@ class ProbabilityFunction:
         reference_dataset: Dataset,
         test_dataset: Dataset = None,
         random_variable="redshift",
-        delta=0.05,
+        delta=0.02,
         min_variable=0.05,
         max_variable=2.5,
         verbose=True,
@@ -79,9 +79,8 @@ class ProbabilityFunction:
             The default, "redshift", implies the derivation of photo-zs.
             `random_variable` must be a key of the DataFrames contained by
             `reference_dataset` and `test_dataset`.
-        delta : float, default=0.05
+        delta : float, default=0.02
             The sampling precision over the random variable's domain.
-            Default is 0.05.
         min_variable : float, default=0.05
             Minimum of the random variable range explored to construct the
             probability functions.
@@ -345,7 +344,7 @@ class ProbabilityFunction:
 
         # Publish only a complete matrix; partial estimates cannot be refitted.
         self.cumulative_matrix = cumulative_matrix
-        self.update_fit(n_internal_knots=n_internal_knots)
+        self.update_fit(n_internal_knots)
 
     def _validate_fit_grid(self, n_internal_knots):
         """Validate the knot count and grid without modifying stored results."""
@@ -374,7 +373,7 @@ class ProbabilityFunction:
 
         return x, n_coefficients
 
-    def update_fit(self, n_internal_knots=10):
+    def update_fit(self, n_internal_knots):
         r"""
         Refit saved cumulative estimates with monotone cubic B-splines.
 
@@ -385,7 +384,7 @@ class ProbabilityFunction:
 
         Parameters
         ----------
-        n_internal_knots : int, default=10
+        n_internal_knots : int
             Number of equally spaced knots strictly inside the fitting
             domain. The endpoints are not counted. The knots divide the
             domain into ``n_internal_knots + 1`` intervals, each described
@@ -406,8 +405,6 @@ class ProbabilityFunction:
             The cubic spline has ``n_internal_knots + 4`` coefficients.
             Each object requires at least this many finite cumulative
             estimates, including estimates at both domain endpoints.
-            The default is a starting value to validate on independent
-            data, not an automatically optimized choice.
 
         Returns
         -------
