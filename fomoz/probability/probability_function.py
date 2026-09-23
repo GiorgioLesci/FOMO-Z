@@ -36,9 +36,9 @@ class ProbabilityFunction:
         r"""
         Estimate per-object probability densities from cumulative probabilities.
 
-        Feature selection is performed at each sampled threshold. The union
-        of the selected colors is then applied at every threshold, keeping
-        color matching fixed when constructing each cumulative distribution.
+        Feature selection is performed independently at each sampled threshold.
+        Monotone cubic B-splines are fitted to the resulting cumulative
+        estimates to obtain nonnegative probability densities.
 
         The output of the `process` method is a probability density function
         (whose integral equals 1) for each object in `test_dataset`.
@@ -49,10 +49,10 @@ class ProbabilityFunction:
         in the estimates of the probability functions. See the documentation of
         `PointProbability` for more details.
 
-        COMMENTO SU _concatenate_features?
-        Optional Gaussian smoothing is applied along the variable axis before
-        numerical differentiation. Valid densities are normalized over the
-        sampled interval, whose upper endpoint is excluded by numpy.arange.
+        Raw cumulative estimates are retained in `cumulative_matrix`. Use
+        `update_fit` to change the number of spline knots without repeating
+        the point-probability calculations. Valid densities are normalized
+        over the sampled interval; numpy.arange excludes max_variable.
 
         Parameters
         ----------
@@ -93,6 +93,7 @@ class ProbabilityFunction:
         """
         self.features_were_selected = False
         self.process_was_called = False
+        self.cumulative_matrix = None
         self.verbose = verbose
         if test_dataset is None:
             self.N_test_objects = len(reference_dataset.dataset)
@@ -250,22 +251,15 @@ class ProbabilityFunction:
         min_colors_used=2,
         cpu_number=None,
         block_size=256,
-        n_internal_knots=5,
+        n_internal_knots=10,
     ):
         r"""
-        Estimate probability densities from monotone cubic spline fits.
+        Compute and retain cumulative estimates, then fit probability densities.
 
-        Compute cumulative probabilities at the sampled thresholds using
-        the corresponding PointProbability instances. Each instance may
-        retain its own selected colors.
-
-        For each test object, fit a cubic B-spline to the cumulative
-        estimates by constrained least squares. Nondecreasing spline
-        coefficients bounded between zero and one ensure that the fitted
-        cumulative is nondecreasing and remains within [0, 1].
-
-        Obtain the density from the analytic derivative of the fitted
-        spline. No Gaussian smoothing or numerical differentiation is used.
+        Call PointProbability.process at each sampled threshold, preserving
+        threshold-specific feature selections. Save the raw estimates in
+        `cumulative_matrix`, then call `update_fit` for monotone cubic spline
+        fitting and analytic differentiation.
 
         Parameters
         ----------
@@ -280,39 +274,166 @@ class ProbabilityFunction:
         block_size : int, default=256
             Number of test objects per task in PointProbability.process.
             This parameter does not control spline fitting.
-        n_internal_knots : int, default=5
-            Number of equally spaced interior knots over the sampled
-            domain. The cubic spline has n_internal_knots + 4 coefficients.
-            More knots allow greater local flexibility. Zero gives a
-            single cubic polynomial.
-
-            Each object must have at least this many coefficients' worth
-            of finite cumulative estimates, including both domain endpoints.
+        n_internal_knots : int, default=10
+            Number of equally spaced interior knots for the initial fit.
+            These divide the sampled domain into n_internal_knots + 1
+            intervals. See `update_fit` for details and fitting constraints.
 
         Returns
         -------
         None
-            Set the following attributes:
-
-            probability_functions : numpy.ndarray
-                Shape (n_test, n_samples). Nonnegative density samples,
-                normalized to unit trapezoidal integral over
-                self.variable_samples. Invalid rows contain NaN.
-            fit_success : numpy.ndarray of bool
-                Shape (n_test,). True when fitting and density normalization
-                both succeed.
-            interval_probability : numpy.ndarray
-                Shape (n_test,). Probability mass over the sampled interval
-                from the fitted cumulative, before density normalization.
-                NaN for invalid fits.
+            Store raw cumulative estimates in `cumulative_matrix`, with
+            shape (n_samples, n_test). Rows are thresholds and columns are
+            objects. Missing estimates remain NaN. Also set the density
+            outputs and diagnostics documented in `update_fit`.
 
         Raises
         ------
         RuntimeError
-            If process has already been started on this instance.
+            If processing has already started on this instance.
         ValueError
-            If the knot count or sampling grid is invalid, or there are
-            fewer sampling points than spline coefficients.
+            If the knot count or sampling grid is invalid.
+
+        Notes
+        -----
+        Internal PointProbability instances are released during estimation.
+        This method can only be started once. Subsequent calls to `update_fit`
+        reuse the saved cumulative estimates without repeating matching or
+        feature selection. The raw matrix requires approximately
+        8 * n_samples * n_test bytes and is retained for these later fits.
+        If cumulative estimation fails partway through, create a new instance.
+        Once all cumulative estimates are saved, fitting can be retried using
+        `update_fit`, even if the initial fitting stage raises an exception.
+        """
+        if self.process_was_called:
+            raise RuntimeError(
+                "Processing has already been started on this instance. "
+                "Use update_fit to refit saved cumulative estimates, or "
+                "create a new instance to recompute them."
+            )
+
+        # Validate before consuming or releasing any PointProbability instance.
+        x, _ = self._validate_fit_grid(n_internal_knots)
+
+        if not self.features_were_selected:
+            warnings.warn(
+                "No feature selection was performed. Using all available features."
+            )
+
+        self.process_was_called = True
+
+        # Rows are thresholds; columns are test objects.
+        cumulative_matrix = np.full(
+            (x.size, self.N_test_objects), np.nan
+        )
+
+        for k, s in enumerate(tqdm(
+            self.variable_samples,
+            desc="Estimating cumulative probabilities",
+            disable=not self.verbose,
+        )):
+            self.dict_point[s].process(
+                min_colors_used=min_colors_used,
+                cpu_number=cpu_number,
+                block_size=block_size,
+                silence_warnings=True,
+            )
+            cumulative_matrix[k] = (
+                self.dict_point[s].probability_dictionary["prob"]
+            )
+            self.dict_point[s] = None
+
+        # Publish only a complete matrix; partial estimates cannot be refitted.
+        self.cumulative_matrix = cumulative_matrix
+        self.update_fit(n_internal_knots=n_internal_knots)
+
+    def _validate_fit_grid(self, n_internal_knots):
+        """Validate the knot count and grid without modifying stored results."""
+        if (
+            isinstance(n_internal_knots, (bool, np.bool_))
+            or not isinstance(n_internal_knots, (int, np.integer))
+            or n_internal_knots < 0
+        ):
+            raise ValueError(
+                "n_internal_knots must be a non-negative integer."
+            )
+
+        x = np.asarray(self.variable_samples, dtype=float)
+        n_coefficients = int(n_internal_knots) + 4
+
+        if (
+            x.ndim != 1
+            or x.size < n_coefficients
+            or not np.all(np.isfinite(x))
+            or np.any(np.diff(x) <= 0)
+        ):
+            raise ValueError(
+                "variable_samples must be finite, strictly increasing, "
+                "and contain at least n_internal_knots + 4 points."
+            )
+
+        return x, n_coefficients
+
+    def update_fit(self, n_internal_knots=10):
+        r"""
+        Refit saved cumulative estimates with monotone cubic B-splines.
+
+        This method is called by `process` for the initial fit and can be
+        called repeatedly afterwards. It reuses the unchanged raw estimates
+        in `cumulative_matrix`; no PointProbability instance is required.
+        Each call starts a new fit, independently of previous fitted results.
+
+        Parameters
+        ----------
+        n_internal_knots : int, default=10
+            Number of equally spaced knots strictly inside the fitting
+            domain. The endpoints are not counted. The knots divide the
+            domain into ``n_internal_knots + 1`` intervals, each described
+            by a cubic polynomial. Adjacent pieces are joined with
+            continuous first and second derivatives and fitted jointly
+            under monotonicity constraints.
+
+            For example, over [0, 2.5], five internal knots create six
+            intervals of width approximately 0.417. This differs from
+            `delta`, which controls the spacing of the thresholds at
+            which point probabilities are estimated.
+
+            More knots allow greater flexibility and can resolve finer
+            structure, but may introduce artificial peaks in the derived
+            PDF. Fewer knots can broaden, merge, or shift real peaks.
+            Knot spacing is not a strict minimum peak width.
+
+            The cubic spline has ``n_internal_knots + 4`` coefficients.
+            Each object requires at least this many finite cumulative
+            estimates, including estimates at both domain endpoints.
+            The default is a starting value to validate on independent
+            data, not an automatically optimized choice.
+
+        Returns
+        -------
+        None
+            Replace the following attributes after the fitting loop completes:
+
+            probability_functions : numpy.ndarray
+                Shape (n_test, n_samples). Nonnegative density samples with
+                unit trapezoidal integral over variable_samples. Invalid
+                rows contain NaN, even if an earlier fit succeeded.
+            fit_success : numpy.ndarray of bool
+                Shape (n_test,). Whether fitting and normalization succeeded.
+            interval_probability : numpy.ndarray
+                Shape (n_test,). Fitted cumulative probability difference
+                between the domain endpoints, before density normalization.
+                NaN for invalid fits.
+            n_internal_knots : int
+                Knot count used for the newly stored results.
+
+        Raises
+        ------
+        RuntimeError
+            If complete cumulative estimates have not been saved by process.
+        ValueError
+            If the knot count, sampling grid, or cumulative matrix shape is
+            invalid. Previously stored fits are preserved in this case.
 
         Notes
         -----
@@ -357,36 +478,20 @@ class ProbabilityFunction:
         estimates, failed optimization, or fitted interval probability
         below the numerical tolerance receive NaN densities.
 
-        Internal PointProbability instances are released during execution.
-        Create a new ProbabilityFunction instance to run this method again.
+        Fits are performed sequentially. This method leaves the raw cumulative
+        matrix unchanged. Do not change variable_samples after processing.
         """
-        if self.process_was_called:
+        if self.cumulative_matrix is None:
             raise RuntimeError(
-                "Processing has already been started on this instance. "
-                "Create a new ProbabilityFunction instance."
+                "No complete cumulative estimates are available. "
+                "Run process successfully through cumulative estimation first."
             )
 
-        if (
-            isinstance(n_internal_knots, (bool, np.bool_))
-            or not isinstance(n_internal_knots, (int, np.integer))
-            or n_internal_knots < 0
-        ):
+        x, n_coefficients = self._validate_fit_grid(n_internal_knots)
+        cumulative_matrix = self.cumulative_matrix
+        if cumulative_matrix.shape != (x.size, self.N_test_objects):
             raise ValueError(
-                "n_internal_knots must be a non-negative integer."
-            )
-
-        x = np.asarray(self.variable_samples, dtype=float)
-        n_coefficients = int(n_internal_knots) + 4
-
-        if (
-            x.ndim != 1
-            or x.size < n_coefficients
-            or not np.all(np.isfinite(x))
-            or np.any(np.diff(x) <= 0)
-        ):
-            raise ValueError(
-                "variable_samples must be finite, strictly increasing, "
-                "and contain at least n_internal_knots + 4 points."
+                "cumulative_matrix must have shape (n_samples, n_test)."
             )
 
         # Construct clamped cubic B-spline bases on the sampled domain.
@@ -422,39 +527,11 @@ class ProbabilityFunction:
         }
         bounds = [(0.0, 1.0)] * n_coefficients
 
-        if not self.features_were_selected:
-            warnings.warn(
-                "No feature selection was performed. Using all available features."
-            )
-
-        self.process_was_called = True
-
-        # Rows are thresholds; columns are test objects.
-        cumulative_matrix = np.full(
-            (x.size, self.N_test_objects), np.nan
-        )
-
-        for k, s in enumerate(tqdm(
-            self.variable_samples,
-            desc="Estimating cumulative probabilities",
-            disable=not self.verbose,
-        )):
-            self.dict_point[s].process(
-                min_colors_used=min_colors_used,
-                cpu_number=cpu_number,
-                block_size=block_size,
-                silence_warnings=True,
-            )
-            cumulative_matrix[k] = (
-                self.dict_point[s].probability_dictionary["prob"]
-            )
-            self.dict_point[s] = None
-
-        self.probability_functions = np.full(
+        probability_functions = np.full(
             (self.N_test_objects, x.size), np.nan
         )
-        self.fit_success = np.zeros(self.N_test_objects, dtype=bool)
-        self.interval_probability = np.full(self.N_test_objects, np.nan)
+        fit_success = np.zeros(self.N_test_objects, dtype=bool)
+        interval_probability = np.full(self.N_test_objects, np.nan)
 
         for i in tqdm(
             range(self.N_test_objects),
@@ -532,11 +609,16 @@ class ProbabilityFunction:
             if not np.isfinite(normalization) or normalization <= 0:
                 continue
 
-            self.probability_functions[i] = density / normalization
-            self.interval_probability[i] = interval_mass
-            self.fit_success[i] = True
+            probability_functions[i] = density / normalization
+            interval_probability[i] = interval_mass
+            fit_success[i] = True
 
-        n_invalid = np.count_nonzero(~self.fit_success)
+        self.probability_functions = probability_functions
+        self.fit_success = fit_success
+        self.interval_probability = interval_probability
+        self.n_internal_knots = int(n_internal_knots)
+
+        n_invalid = np.count_nonzero(~fit_success)
         if n_invalid:
             warnings.warn(
                 f"{n_invalid} object(s) had insufficient valid cumulative "
