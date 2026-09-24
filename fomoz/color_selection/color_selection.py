@@ -209,7 +209,25 @@ class ColorSelection:
 
         return mask
 
-    def process(self, z_lim, dataset, missing_data=[99, -99]):
+    def process(
+        self,
+        z_lim,
+        dataset,
+        missing_data=[
+            99,
+            -99,
+            999,
+            -999,
+            99.9,
+            -99.9,
+            99.0,
+            -99.0,
+            999.9,
+            -999.9,
+            999.0,
+            -999.0,
+        ],
+    ):
         """
         Apply optimal color selections to a dataset.
 

@@ -24,7 +24,20 @@ class Dataset:
         PDZs=None,
         PDZ_x=None,
         weights=None,
-        missing_data=[99, -99],
+        missing_data=[
+            99,
+            -99,
+            999,
+            -999,
+            99.9,
+            -99.9,
+            99.0,
+            -99.0,
+            999.9,
+            -999.9,
+            999.0,
+            -999.0,
+        ],
         custom_colors=None,
     ):
         """
