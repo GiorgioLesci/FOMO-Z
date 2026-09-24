@@ -817,7 +817,7 @@ class PointProbability:
             "n_colors_used": n_colors_used,
         }
 
-    def get_results_dataframe(self):
+    def get_results_dataframe(self, inplace=False):
         """
         Return a copy of the test DataFrame with probability results.
 
@@ -829,10 +829,17 @@ class PointProbability:
         When no explicit test dataset was supplied, return the reference
         sample used as the test dataset.
 
+        Parameters
+        ----------
+        inplace : bool, default=False
+            The test DataFrame is modified only when inplace=True.
+            The returned object is the original DataFrame when inplace=True,
+            or a separate copy otherwise.
+
         Returns
         -------
         pandas.DataFrame
-            Copy of the test DataFrame with the following added columns:
+            Copy or extension of the test DataFrame with the following added columns:
 
             fomoz_prob
                 Weighted target-membership probability.
@@ -882,7 +889,7 @@ class PointProbability:
         for key, values in self.probability_dictionary.items():
             column = f"fomoz_{key}"
 
-            if column in test_frame.columns:
+            if column in test_frame.columns and not inplace:
                 raise ValueError(
                     f"The test DataFrame already contains '{column}'. "
                     "Rename or remove the existing column before exporting."
@@ -898,7 +905,7 @@ class PointProbability:
 
             result_columns[column] = values
 
-        output = test_frame.copy(deep=True)
+        output = test_frame if inplace else test_frame.copy(deep=True)
 
         for column, values in result_columns.items():
             output[column] = values

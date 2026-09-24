@@ -690,7 +690,7 @@ class ProbabilityFunction:
                 "interval probability; their densities were set to NaN."
             )
 
-    def get_results_dataframe(self):
+    def get_results_dataframe(self, inplace=False):
         r"""
         Return the test DataFrame with scalar summaries of the fitted PDFs.
 
@@ -701,10 +701,17 @@ class ProbabilityFunction:
 
         Full PDFs are not stored in the returned DataFrame.
 
+        Parameters
+        ----------
+        inplace : bool, default=False
+            The test DataFrame is modified only when inplace=True.
+            The returned object is the original DataFrame when inplace=True,
+            or a separate copy otherwise.
+
         Returns
         -------
         pandas.DataFrame
-            Copy of the test DataFrame with the following added columns:
+            Copy or extension of the test DataFrame with the following added columns:
 
             fomoz_mode
                 Sampled variable value at the maximum PDF density.
@@ -847,7 +854,7 @@ class ProbabilityFunction:
         collisions = [
             column for column in output_columns if column in test_frame.columns
         ]
-        if collisions:
+        if collisions and not inplace:
             raise ValueError(
                 "The test DataFrame already contains output columns: "
                 f"{collisions}. Rename or remove them before exporting."
@@ -923,7 +930,7 @@ class ProbabilityFunction:
 
                 summaries[name][i] = x[lower] + position * dx[lower]
 
-        output = test_frame.copy(deep=True)
+        output = test_frame if inplace else test_frame.copy(deep=True)
 
         for name, values in summaries.items():
             output[f"fomoz_{name}"] = values
