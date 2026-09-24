@@ -14,6 +14,10 @@ import numpy as np
 from tqdm import tqdm
 from scipy.interpolate import BSpline
 from scipy.optimize import minimize
+import multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
+from threading import Lock
 
 from ..auxiliary.probability_helper import _process_multiple_points
 from ..data.dataset import Dataset
@@ -160,37 +164,46 @@ class ProbabilityFunction:
         purity_min=0.9,
         grid_precision=0.15,
         step=0.01,
+        cpu_number=4,
     ):
         r"""
-        Select the most informative colors using a grid-based color selection.
+        Select features concurrently with local retries and shared purity.
 
-        This function selects the most informative features at each random variable
-        value defined in the class constructor.
-        See the documentation of the homonymous function in `PointProbability`
-        for a detailed description. This function does not reimplement that
-        method. Instead, it calls `select_features_grid` for each `PointProbability`
-        object created internally by the `ProbabilityFunction` class.
+        Each threshold starts from the shared purity requirement available
+        when its task begins. On calibration failure, retry locally with
+        `calibration_purity + 0.001` and raise the shared requirement if needed.
+
+        Running tasks retain their own local requirement. Successful
+        selections are never recomputed. Newly started tasks inherit the
+        latest shared requirement.
 
         Parameters
         ----------
         tolerance : float, default=0.1
-            Maximum allowed relative variation in global purity and completeness, at
-            each elimination step, for a color to be excluded from the selection.
-            This is a relative tolerance, not a variation in percentage points: e.g.
-            a value of 0.1 means the purity/completeness can change by at most 10%
-            of its current value, not by 10 percentage points. Note that, since this
-            is a relative tolerance, its effective strictness depends on how close
-            purity and completeness are to zero: near-zero values make the tolerance
-            very permissive in absolute terms.
+            Maximum relative change in purity and completeness during
+            backward feature elimination.
         purity_min : float, default=0.9
-            Required minimum value for the global purity of the initial grid-based
-            selection. Default (recommended) is 90%.
+            Initial minimum calibration purity.
         grid_precision : float, default=0.15
-            Precision of the color-color grids. A smaller value yields a finer,
-            more accurate grid at the cost of increased computation, RAM usage, and
-            storage requirements.
+            Resolution of the color-color grids.
         step : float, default=0.01
-            Threshold reduction step applied when refining the grid selection.
+            Threshold reduction step used during calibration.
+        cpu_number : int or None, default=4
+            Maximum number of concurrent threshold workers. Explicit values
+            are capped at max(cpu_count() - 2, 1). None uses that limit.
+            Use 1 for sequential processing.
+
+        Returns
+        -------
+        None
+            Store selected features in the internal PointProbability objects.
+            Set `features_were_selected` to True only after all tasks succeed.
+
+        Notes
+        -----
+        Shared purity updates are protected by a lock. The requirement
+        inherited by each task depends on task scheduling, so results
+        are not guaranteed to be independent of concurrency.
         """
         if self.process_was_called:
             raise RuntimeError(
@@ -198,54 +211,118 @@ class ProbabilityFunction:
                 "Create a new ProbabilityFunction instance."
             )
 
-        for s in tqdm(
-            self.variable_samples,
-            desc="Selecting features for each random variable value",
-            disable=not self.verbose,
-        ):
+        if cpu_number is not None:
+            if (
+                isinstance(cpu_number, (bool, np.bool_))
+                or not isinstance(cpu_number, (int, np.integer))
+                or cpu_number < 1
+            ):
+                raise ValueError("cpu_number must be a positive integer or None.")
+
+        if not isinstance(purity_min, float):
+            raise ValueError("purity_min must be a float.")
+
+        if not np.isfinite(purity_min) or not 0.0 < purity_min < 1.0:
+            raise ValueError("purity_min must be finite and between 0 and 1.")
+
+        samples = list(self.variable_samples)
+
+        max_workers = max(mp.cpu_count() - 2, 1)
+        n_jobs = (
+            max_workers if cpu_number is None else min(int(cpu_number), max_workers)
+        )
+        n_jobs = max(1, min(n_jobs, len(samples)))
+
+        self.features_were_selected = False
+
+        shared_purity_min = purity_min
+        purity_lock = Lock()
+
+        def select_one(s):
+            """Process one threshold, with independent local retries."""
+            nonlocal shared_purity_min
+
+            # Read when the task actually starts, not when submitted.
+            with purity_lock:
+                local_purity_min = shared_purity_min
+
             while True:
                 try:
                     self.dict_point[s].select_features_grid(
                         tolerance=tolerance,
-                        purity_min=purity_min,
+                        purity_min=local_purity_min,
                         grid_precision=grid_precision,
                         step=step,
                     )
-                    break
+                    return
 
                 except ValueError as error:
-                    # Retry only the specific calibration convergence failure.
-                    # Propagate unrelated ValueErrors unchanged.
+                    # Retry only the known calibration failure.
                     if not hasattr(error, "calibration_purity"):
                         raise
 
-                    new_purity_min = error.calibration_purity + 0.01
+                    achieved_purity = float(error.calibration_purity)
+                    new_purity_min = achieved_purity + 0.001
 
-                    # Avoid an invalid threshold or a retry without progress.
                     if (
                         not np.isfinite(new_purity_min)
                         or new_purity_min >= 1.0
-                        or new_purity_min <= purity_min
+                        or new_purity_min <= local_purity_min
                     ):
                         raise ValueError(
-                            f"Cannot retry feature selection at "
-                            f"{self.random_variable if hasattr(self, 'random_variable') else 'variable'}"
-                            f"={s}: achieved purity="
-                            f"{error.calibration_purity:.6f}, "
-                            f"current purity_min={purity_min:.6f}, "
+                            f"Cannot retry feature selection at variable={s}: "
+                            f"achieved purity={achieved_purity:.6f}, "
+                            f"current purity_min={local_purity_min:.6f}, "
                             f"proposed purity_min={new_purity_min:.6f}. "
                             "The new threshold must increase and remain below 1."
                         ) from error
 
+                    # Propagate the maximum to tasks not yet started.
+                    with purity_lock:
+                        shared_purity_min = max(
+                            shared_purity_min,
+                            new_purity_min,
+                        )
+
                     warnings.warn(
                         f"Calibration failed at variable={s}. "
-                        f"Updating purity_min from {purity_min:.6f} "
-                        f"to {new_purity_min:.6f} and retrying. "
-                        "The updated threshold will also be used "
-                        "at subsequent sampling points."
+                        f"Updating its local purity_min from "
+                        f"{local_purity_min:.6f} to {new_purity_min:.6f} "
+                        "and retrying. Newly started tasks inherit "
+                        "the highest requirement reached so far."
                     )
 
-                    purity_min = new_purity_min
+                    local_purity_min = new_purity_min
+
+        with tqdm(
+            total=len(samples),
+            desc="Selecting features for each random variable value",
+            disable=not self.verbose,
+        ) as progress:
+
+            if n_jobs == 1:
+                for s in samples:
+                    select_one(s)
+                    progress.update(1)
+
+            else:
+                with ThreadPoolExecutor(max_workers=n_jobs) as executor:
+                    futures = []
+
+                    try:
+                        for s in samples:
+                            futures.append(executor.submit(select_one, s))
+
+                        for future in as_completed(futures):
+                            future.result()
+                            progress.update(1)
+
+                    except BaseException:
+                        # Cancel queued tasks; running tasks finish
+                        # before the executor exits.
+                        for future in futures:
+                            future.cancel()
+                        raise
 
         self.features_were_selected = True
 
