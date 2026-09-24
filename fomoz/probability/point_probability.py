@@ -14,83 +14,15 @@ import warnings
 import time
 import multiprocessing as mp
 import numpy as np
-from numba import njit
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 
 from ..auxiliary.statistics import compute_metrics, get_color_color_mask
+from ..auxiliary.probability_helper import _matching_indices_numba
 from ..data.dataset import Dataset
 from ..data.selection_definition import SelectionDefinition
 from ..color_selection.calibration_grid import CalibrationGrid
-
-
-@njit(cache=True, fastmath=False, nogil=True)
-def _matching_indices_numba(
-    reference_colors,
-    reference_errors,
-    test_colors,
-    test_errors,
-    combine_errors,
-):
-    """
-    Return matching reference indices using a compiled sequential scan.
-
-    Parameters
-    ----------
-    reference_colors, reference_errors : numpy.ndarray
-        Reference matrices with shape (n_colors, n_reference).
-    test_colors, test_errors : numpy.ndarray
-        Color values and errors of one test object, with shape (n_colors,).
-    combine_errors : bool
-        Whether to combine test and reference errors in quadrature.
-        Otherwise, use only the test errors.
-
-    Returns
-    -------
-    numpy.ndarray
-        Matching reference indices in ascending order.
-
-    Notes
-    -----
-    Test colors with a NaN value or error impose no constraint.
-    A reference is rejected as soon as one usable color fails.
-    No reference weights or target memberships are used here.
-    """
-    n_reference = reference_colors.shape[1]
-
-    # Determine usable colors once for this test object
-    usable = np.flatnonzero(~np.isnan(test_colors) & ~np.isnan(test_errors))
-
-    # Allocate enough space for the maximum possible number of matches
-    indices = np.empty(n_reference, dtype=np.int64)
-    n_matches = 0
-
-    for j in range(n_reference):
-        accepted = True
-
-        for position in range(usable.size):
-            k = usable[position]
-
-            difference = abs(reference_colors[k, j] - test_colors[k])
-
-            if combine_errors:
-                tolerance = np.sqrt(test_errors[k] ** 2 + reference_errors[k, j] ** 2)
-            else:
-                tolerance = test_errors[k]
-
-            # Keep this form:
-            # "difference > tolerance" would not reject NaNs
-            if not (difference <= tolerance):
-                accepted = False
-                break
-
-        if accepted:
-            indices[n_matches] = j
-            n_matches += 1
-
-    # Return only the populated portion of the buffer.
-    return indices[:n_matches]
 
 
 class PointProbability:
@@ -393,66 +325,45 @@ class PointProbability:
         tolerance=0.1,
         purity_min=0.9,
         grid_precision=0.15,
-        step=0.001,
+        step=0.01,
     ):
         r"""
-        Select the most informative colors using a grid-based color selection.
+        Select informative colors through grid calibration and backward elimination.
 
-        This performs feature selection by calibrating a color selection with the
-        `CalibrationGrid` class (from the `color_selection` subpackage), requiring
-        a minimum global purity of `purity_min`.
-        The `reference_dataset` and `selection_definition` parameters given as input
-        to the constructor of this class are also given in input to `CalibrationGrid`.
-        The `test_dataset` parameter is not used here.
+        Calibrate all color-color grids, then iteratively remove the color
+        producing the smallest decrease in global completeness. Accept a
+        removal only if both purity and completeness remain within
+        `tolerance` of their fixed values from the initial calibration.
 
-        After this initial calibration, colors are removed one at a time in an
-        iterative backward elimination process. At each step, among the colors still
-        in the selection, the least informative one is identified as the color whose
-        removal causes the smallest drop in global completeness (the quantity this
-        procedure aims to preserve). Purity, instead, is the constrained quantity.
-        Removal of a color is accepted, and the color permanently excluded from the
-        selection, only if the resulting global purity and completeness both differ
-        by no more than `tolerance` from the values obtained with the full set of
-        colors (i.e. before any color was removed).
-        The procedure stops as soon as no remaining color can be removed while keeping
-        both variations within `tolerance`.
-
-        The selected colors are stored in `self.colors`, to be used by subsequent
-        calls to `process`.
-
-        Since evaluating all possible color subsets would be combinatorially
-        expensive, this greedy backward elimination is used instead; it is not
-        guaranteed to find the globally optimal subset of colors, but it is a
-        standard, tractable compromise. This is one of possibly several feature
-        selection strategies; other approaches may be added as separate methods in
-        the future.
+        Each grid's galaxy-selection mask is computed once. Integer coverage
+        counts track how many active grids select each galaxy. These counts
+        are used only to construct Boolean selection masks; all metrics
+        retain the original reference weights and weighted target memberships.
 
         Parameters
         ----------
         tolerance : float, default=0.1
-            Maximum allowed relative variation in global purity and completeness, at
-            each elimination step, for a color to be excluded from the selection.
-            This is a relative tolerance, not a variation in percentage points: e.g.
-            a value of 0.1 means the purity/completeness can change by at most 10%
-            of its current value, not by 10 percentage points. Note that, since this
-            is a relative tolerance, its effective strictness depends on how close
-            purity and completeness are to zero: near-zero values make the tolerance
-            very permissive in absolute terms.
+            Maximum relative change in purity and completeness with respect
+            to the fixed initial calibration baseline.
         purity_min : float, default=0.9
-            Required minimum value for the global purity of the initial grid-based
-            selection. Default (recommended) is 90%.
+            Minimum global purity requested for the initial calibration.
         grid_precision : float, default=0.15
-            Precision of the color-color grids. A smaller value yields a finer,
-            more accurate grid at the cost of increased computation, RAM usage, and
-            storage requirements.
-        step : float, default=0.001
-            Threshold reduction step applied when refining the grid selection.
+            Resolution of the color-color grids.
+        step : float, default=0.01
+            Threshold reduction step used during calibration.
+
+        Returns
+        -------
+        None
+            Store selected colors in `self.colors` and removed colors in
+            `self.discarded_colors`.
         """
         if not isinstance(purity_min, float):
             raise ValueError("purity_min must be a float.")
 
-        # Calibrate the color selection
+        # Initial calibration: unchanged.
         start = time.perf_counter()
+
         calibration = CalibrationGrid(
             self.reference_dataset,
             self.selection_definition,
@@ -464,80 +375,111 @@ class PointProbability:
         )
         calibration.process()
 
-        purity_baseline, completeness_baseline = calibration.P[0], calibration.C[0]
+        purity_baseline = calibration.P[0]
+        completeness_baseline = calibration.C[0]
 
         if self.verbose:
             elapsed = time.perf_counter() - start
             print(
-                f"CalibrationGrid processing complete. Employed time: {elapsed:.2f} s."
+                "CalibrationGrid processing complete. "
+                f"Employed time: {elapsed:.2f} s."
             )
             print(
-                f"\nCalibrationGrid's purity and completeness (respectively): {purity_baseline:.2f}, {completeness_baseline:.2f}"
+                "\nCalibrationGrid's purity and completeness "
+                f"(respectively): {purity_baseline:.2f}, "
+                f"{completeness_baseline:.2f}"
             )
 
-        # Get all color spaces and colors used in CalibrationGrid
-        color_spaces = (
-            calibration.get_keys()
-        )  # if u, g, r bands, then [(('u', 'g'), ('u', 'r')), (('u', 'g'), ('g', 'r')), (('u', 'r'), ('g', 'r'))]
+        start = time.perf_counter()
 
+        color_spaces = list(calibration.get_keys())
+
+        # Preserve the original order, including candidate tie-breaking.
         all_colors = list(
             dict.fromkeys(color for pair in color_spaces for color in pair)
         )
 
-        # Initialize best_colors and discarded_colors
         best_colors = list(all_colors)
         discarded_colors = []
 
-        # Precompute which grids (color-color pairs) involve each color
+        n_grids = len(color_spaces)
+        n_objects = len(calibration.weights)
+
+        # Cache each grid's Boolean selection mask once.
+        # Use the existing function to preserve its exact bin semantics.
+        grid_masks = np.empty(
+            (n_grids, n_objects),
+            dtype=bool,
+        )
+
+        for g, pair in enumerate(color_spaces):
+            grid_masks[g] = get_color_color_mask(0, [pair], calibration.dict)
+
+        # Indices of grids involving each color.
         grids_by_color = {
-            color: [pair for pair in color_spaces if color in pair]
+            color: [g for g, pair in enumerate(color_spaces) if color in pair]
             for color in all_colors
         }
 
-        # Grids currently valid, i.e. both their colors are still in best_colors.
-        # Starts as the full set of grids, since best_colors starts as all_colors.
-        active_grids = list(color_spaces)
+        active_grids = np.ones(n_grids, dtype=bool)
 
-        # Iteratively remove, one at a time, the color whose removal causes the
-        # smallest drop in completeness, as long as removing it keeps both purity
-        # and completeness within `tolerance` (relative) of the fixed baseline.
-        start = time.perf_counter()
+        # Number of active grids selecting each galaxy.
+        # These are NOT galaxy weights or target memberships.
+        coverage = grid_masks.sum(axis=0, dtype=np.int64)
+
+        # Keep the weighted statistical inputs unchanged.
+        target_mask = calibration.target_mask[0]
+        weights = calibration.weights
+
         iteration_number = 0
-        last_accepted_purity, last_accepted_completeness = (
-            purity_baseline,
-            completeness_baseline,
-        )
+        last_accepted_purity = purity_baseline
+        last_accepted_completeness = completeness_baseline
 
         while len(best_colors) > 2:
-
             candidate_removed = None
-            candidate_trial_grids = None
+            candidate_removed_grids = None
+            candidate_removed_coverage = None
             candidate_purity = None
             candidate_completeness = None
             candidate_completeness_drop = None
 
             for color in best_colors:
-                # Grids that survive if color is removed: active grids minus those
-                # that involve color (a grid needs both its colors present)
-                trial_grids = [
-                    g for g in active_grids if g not in grids_by_color[color]
-                ]
+                # Removing this color invalidates only its active grids.
+                removed_grids = [g for g in grids_by_color[color] if active_grids[g]]
 
-                mask_trial = get_color_color_mask(0, trial_grids, calibration.dict)
-                TP, FP, FN, TN = compute_metrics(
-                    mask_trial, calibration.target_mask[0], calibration.weights
+                # Count how many selecting grids each galaxy would lose.
+                # Sum one row at a time to avoid a large temporary slice.
+                removed_coverage = np.zeros(
+                    n_objects,
+                    dtype=coverage.dtype,
                 )
+
+                for g in removed_grids:
+                    removed_coverage += grid_masks[g]
+
+                # Selected iff at least one selecting grid survives.
+                mask_trial = coverage > removed_coverage
+
+                # Preserve weighted metrics exactly as in the original code.
+                TP, FP, FN, TN = compute_metrics(
+                    mask_trial,
+                    target_mask,
+                    weights,
+                )
+
                 purity_trial = TP / (TP + FP) if TP + FP > 0 else 0.0
                 completeness_trial = TP / (TP + FN) if TP + FN > 0 else 0.0
 
                 completeness_drop = completeness_baseline - completeness_trial
 
+                # Strict comparison preserves the original tie-breaking.
                 if (
                     candidate_completeness_drop is None
                     or completeness_drop < candidate_completeness_drop
                 ):
                     candidate_removed = color
-                    candidate_trial_grids = trial_grids
+                    candidate_removed_grids = removed_grids
+                    candidate_removed_coverage = removed_coverage
                     candidate_purity = purity_trial
                     candidate_completeness = completeness_trial
                     candidate_completeness_drop = completeness_drop
@@ -549,9 +491,15 @@ class PointProbability:
             )
 
             if purity_change <= tolerance and completeness_change <= tolerance:
-                best_colors = [c for c in best_colors if c != candidate_removed]
+                best_colors = [
+                    color for color in best_colors if color != candidate_removed
+                ]
                 discarded_colors.append(candidate_removed)
-                active_grids = candidate_trial_grids
+
+                # Update coverage only after accepting the removal.
+                coverage -= candidate_removed_coverage
+                active_grids[candidate_removed_grids] = False
+
                 iteration_number += 1
                 last_accepted_purity = candidate_purity
                 last_accepted_completeness = candidate_completeness
@@ -560,28 +508,34 @@ class PointProbability:
 
         if self.verbose:
             print(
-                f"Purity and completeness after the selection of features : {last_accepted_purity:.2f}, {last_accepted_completeness:.2f}"
+                "Purity and completeness after the selection of features : "
+                f"{last_accepted_purity:.2f}, "
+                f"{last_accepted_completeness:.2f}"
             )
 
             elapsed = time.perf_counter() - start
             print(
-                f"Feature selection complete after {iteration_number} iterations. Employed time: {elapsed:.2f} s."
+                "Feature selection complete after "
+                f"{iteration_number} iterations. "
+                f"Employed time: {elapsed:.2f} s."
             )
 
-        # Store the most informative colors
         if iteration_number == 0:
             warnings.warn(
-                "No feature could be removed within tolerance. Using all available features."
+                "No feature could be removed within tolerance. "
+                "Using all available features."
             )
             self.colors = self.reference_dataset.colors
             self.discarded_colors = []
         else:
             self.colors = best_colors
             self.discarded_colors = discarded_colors
+
             if self.verbose:
                 print(f"\nSelected features (self.colors):\n{best_colors}")
                 print(
-                    f"\nDiscarded features (self.discarded_colors):\n{discarded_colors}"
+                    "\nDiscarded features (self.discarded_colors):\n"
+                    f"{discarded_colors}"
                 )
 
     def process(

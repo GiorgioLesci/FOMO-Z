@@ -15,6 +15,7 @@ from tqdm import tqdm
 from scipy.interpolate import BSpline
 from scipy.optimize import minimize
 
+from ..auxiliary.probability_helper import _process_multiple_points
 from ..data.dataset import Dataset
 from ..data.selection_definition import SelectionDefinition
 from .point_probability import PointProbability
@@ -101,7 +102,10 @@ class ProbabilityFunction:
 
         if random_variable not in reference_dataset.dataset.columns:
             raise ValueError(f"{random_variable} is not a key of reference_dataset.")
-        if test_dataset is not None and random_variable not in test_dataset.dataset.columns:
+        if (
+            test_dataset is not None
+            and random_variable not in test_dataset.dataset.columns
+        ):
             raise ValueError(f"{random_variable} is not a key of test_dataset.")
 
         if random_variable == "redshift" and min_variable <= 0.0:
@@ -155,7 +159,7 @@ class ProbabilityFunction:
         tolerance=0.1,
         purity_min=0.9,
         grid_precision=0.15,
-        step=0.001,
+        step=0.01,
     ):
         r"""
         Select the most informative colors using a grid-based color selection.
@@ -185,7 +189,7 @@ class ProbabilityFunction:
             Precision of the color-color grids. A smaller value yields a finer,
             more accurate grid at the cost of increased computation, RAM usage, and
             storage requirements.
-        step : float, default=0.001
+        step : float, default=0.01
             Threshold reduction step applied when refining the grid selection.
         """
         if self.process_was_called:
@@ -255,7 +259,7 @@ class ProbabilityFunction:
         r"""
         Compute and retain cumulative estimates, then fit probability densities.
 
-        Call PointProbability.process at each sampled threshold, preserving
+        Call `_process_multiple_points` at each sampled threshold, preserving
         threshold-specific feature selections. Save the raw estimates in
         `cumulative_matrix`, then call `update_fit` for monotone cubic spline
         fitting and analytic differentiation.
@@ -263,16 +267,14 @@ class ProbabilityFunction:
         Parameters
         ----------
         min_colors_used : int, default=2
-            Minimum number of usable test colors required by
-            PointProbability.process at each threshold.
+            Minimum number of usable test colors (see `PointProbability.process`
+            for details).
         cpu_number : int or None, optional
-            Number of worker threads used by PointProbability.process.
-            If None, use the number of logical CPUs minus two, with a
-            minimum of one. Explicit values are capped at that limit.
-            Spline fits are performed sequentially.
+            Number of worker threads. If None, use the number of logical CPUs
+            minus two, with a minimum of one. Explicit values are capped at that
+            limit. Spline fits are performed sequentially.
         block_size : int, default=256
-            Number of test objects per task in PointProbability.process.
-            This parameter does not control spline fitting.
+            Number of test objects per task.
         n_internal_knots : int, default=10
             Number of equally spaced interior knots for the initial fit.
             These divide the sampled domain into n_internal_knots + 1
@@ -295,7 +297,7 @@ class ProbabilityFunction:
 
         Notes
         -----
-        Internal PointProbability instances are released during estimation.
+        Internal PointProbability instances are released after cumulative estimation.
         This method can only be started once. Subsequent calls to `update_fit`
         reuse the saved cumulative estimates without repeating matching or
         feature selection. The raw matrix requires approximately
@@ -312,7 +314,7 @@ class ProbabilityFunction:
             )
 
         # Validate before consuming or releasing any PointProbability instance.
-        x, _ = self._validate_fit_grid(n_internal_knots)
+        self._validate_fit_grid(n_internal_knots)
 
         if not self.features_were_selected:
             warnings.warn(
@@ -321,28 +323,18 @@ class ProbabilityFunction:
 
         self.process_was_called = True
 
-        # Rows are thresholds; columns are test objects.
-        cumulative_matrix = np.full(
-            (x.size, self.N_test_objects), np.nan
+        # Rows are thresholds; columns are test objects
+        cumulative_matrix = _process_multiple_points(
+            [self.dict_point[s] for s in self.variable_samples],
+            min_colors_used=min_colors_used,
+            cpu_number=cpu_number,
+            block_size=block_size,
+            verbose=self.verbose,
         )
 
-        for k, s in enumerate(tqdm(
-            self.variable_samples,
-            desc="Estimating cumulative probabilities",
-            disable=not self.verbose,
-        )):
-            self.dict_point[s].process(
-                min_colors_used=min_colors_used,
-                cpu_number=cpu_number,
-                block_size=block_size,
-                silence_warnings=True,
-            )
-            cumulative_matrix[k] = (
-                self.dict_point[s].probability_dictionary["prob"]
-            )
+        for s in self.variable_samples:  # release the PointProbability objects
             self.dict_point[s] = None
 
-        # Publish only a complete matrix; partial estimates cannot be refitted.
         self.cumulative_matrix = cumulative_matrix
         self.update_fit(n_internal_knots)
 
@@ -353,9 +345,7 @@ class ProbabilityFunction:
             or not isinstance(n_internal_knots, (int, np.integer))
             or n_internal_knots < 0
         ):
-            raise ValueError(
-                "n_internal_knots must be a non-negative integer."
-            )
+            raise ValueError("n_internal_knots must be a non-negative integer.")
 
         x = np.asarray(self.variable_samples, dtype=float)
         n_coefficients = int(n_internal_knots) + 4
@@ -487,20 +477,18 @@ class ProbabilityFunction:
         x, n_coefficients = self._validate_fit_grid(n_internal_knots)
         cumulative_matrix = self.cumulative_matrix
         if cumulative_matrix.shape != (x.size, self.N_test_objects):
-            raise ValueError(
-                "cumulative_matrix must have shape (n_samples, n_test)."
-            )
+            raise ValueError("cumulative_matrix must have shape (n_samples, n_test).")
 
         # Construct clamped cubic B-spline bases on the sampled domain.
-        internal_knots = np.linspace(
-            x[0], x[-1], int(n_internal_knots) + 2
-        )[1:-1]
+        internal_knots = np.linspace(x[0], x[-1], int(n_internal_knots) + 2)[1:-1]
 
-        knots = np.concatenate((
-            np.repeat(x[0], 4),
-            internal_knots,
-            np.repeat(x[-1], 4),
-        ))
+        knots = np.concatenate(
+            (
+                np.repeat(x[0], 4),
+                internal_knots,
+                np.repeat(x[-1], 4),
+            )
+        )
 
         basis = BSpline(
             knots,
@@ -514,9 +502,7 @@ class ProbabilityFunction:
         derivative_design = basis.derivative()(x)
 
         # Enforce c[m + 1] - c[m] >= 0.
-        difference_matrix = np.diff(
-            np.eye(n_coefficients), axis=0
-        )
+        difference_matrix = np.diff(np.eye(n_coefficients), axis=0)
         constraints = {
             "type": "ineq",
             "fun": lambda coefficients: difference_matrix @ coefficients,
@@ -524,9 +510,7 @@ class ProbabilityFunction:
         }
         bounds = [(0.0, 1.0)] * n_coefficients
 
-        probability_functions = np.full(
-            (self.N_test_objects, x.size), np.nan
-        )
+        probability_functions = np.full((self.N_test_objects, x.size), np.nan)
         fit_success = np.zeros(self.N_test_objects, dtype=bool)
         interval_probability = np.full(self.N_test_objects, np.nan)
 
@@ -554,9 +538,7 @@ class ProbabilityFunction:
             matrix = design[finite]
 
             # Feasible initial coefficients, including for nonmonotone data.
-            initial = np.linspace(
-                observed.min(), observed.max(), n_coefficients
-            )
+            initial = np.linspace(observed.min(), observed.max(), n_coefficients)
 
             def objective(coefficients):
                 residuals = matrix @ coefficients - observed
@@ -588,9 +570,7 @@ class ProbabilityFunction:
                 continue
 
             # Remove only residual numerical violations in fitted coefficients.
-            coefficients = np.maximum.accumulate(
-                np.clip(coefficients, 0.0, 1.0)
-            )
+            coefficients = np.maximum.accumulate(np.clip(coefficients, 0.0, 1.0))
 
             # Clamped endpoint values equal the first and last coefficients.
             interval_mass = coefficients[-1] - coefficients[0]

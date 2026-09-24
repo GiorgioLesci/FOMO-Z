@@ -8,11 +8,9 @@ given any condition on redshift or any other galaxy properties.
 """
 
 import copy
-import multiprocessing as mp
 import os
 
 import numpy as np
-import yaml
 from scipy.stats import beta
 from tqdm import tqdm
 from astropy.io import fits
