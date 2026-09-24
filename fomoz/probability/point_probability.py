@@ -816,3 +816,91 @@ class PointProbability:
             "n_all": n_all,
             "n_colors_used": n_colors_used,
         }
+
+    def get_results_dataframe(self):
+        """
+        Return a copy of the test DataFrame with probability results.
+
+        Preserve all original columns, the row order, and the index.
+        Append every entry of `probability_dictionary` as a column named
+        ``fomoz_<key>``. Results are assigned by row position, so duplicate
+        index labels are supported.
+
+        When no explicit test dataset was supplied, return the reference
+        sample used as the test dataset.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Copy of the test DataFrame with the following added columns:
+
+            fomoz_prob
+                Weighted target-membership probability.
+            fomoz_prob_error
+                Approximate sampling standard error of the probability.
+            fomoz_n_good
+                Sum of weighted target memberships over matching references.
+            fomoz_n_all
+                Unweighted number of matching reference objects.
+            fomoz_n_colors_used
+                Number of usable selected colors for each test object.
+
+            Any additional entries in `probability_dictionary` are included
+            using the same prefix. Missing estimates remain NaN.
+
+        Raises
+        ------
+        RuntimeError
+            If probability results are not available.
+        ValueError
+            If a result is not one-dimensional, its length differs from
+            the test sample size, or an output column already exists.
+
+        Notes
+        -----
+        This method does not modify the test dataset.
+
+        Do not modify or reorder the test DataFrame between `process`
+        and this call. Results are associated by position; changes that
+        preserve the number of rows cannot be detected by this method.
+
+        Examples
+        --------
+        >>> point_prob.process()
+        >>> results = point_prob.get_results_dataframe()
+        >>> results[["fomoz_prob", "fomoz_prob_error"]]
+        """
+        if not self.probability_dictionary:
+            raise RuntimeError(
+                "No probability results are available. "
+                "Run process() successfully before requesting the DataFrame."
+            )
+
+        test_frame = self.test_dataset.dataset
+        result_columns = {}
+
+        for key, values in self.probability_dictionary.items():
+            column = f"fomoz_{key}"
+
+            if column in test_frame.columns:
+                raise ValueError(
+                    f"The test DataFrame already contains '{column}'. "
+                    "Rename or remove the existing column before exporting."
+                )
+
+            values = np.asarray(values)
+
+            if values.ndim != 1 or len(values) != len(test_frame):
+                raise ValueError(
+                    f"Result '{key}' must be a one-dimensional array "
+                    f"with {len(test_frame)} entries; got shape {values.shape}."
+                )
+
+            result_columns[column] = values
+
+        output = test_frame.copy(deep=True)
+
+        for column, values in result_columns.items():
+            output[column] = values
+
+        return output

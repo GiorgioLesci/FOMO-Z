@@ -112,6 +112,10 @@ class ProbabilityFunction:
         ):
             raise ValueError(f"{random_variable} is not a key of test_dataset.")
 
+        self.test_dataset = (  # Retain the test sample
+            reference_dataset if test_dataset is None else test_dataset
+        )
+
         if random_variable == "redshift" and min_variable <= 0.0:
             raise ValueError(
                 f"Redshift PDFs can be evaluated for z>0. Got min_variable={min_variable}."
@@ -192,6 +196,8 @@ class ProbabilityFunction:
             Maximum number of concurrent threshold workers. Explicit values
             are capped at max(cpu_count() - 2, 1). None uses that limit.
             Use 1 for sequential processing.
+            More workers increase the memory required for simultaneous
+            calibrations and may not provide proportional speedups.
 
         Returns
         -------
@@ -237,6 +243,7 @@ class ProbabilityFunction:
 
         shared_purity_min = purity_min
         purity_lock = Lock()
+        retry_events = []
 
         def select_one(s):
             """Process one threshold, with independent local retries."""
@@ -283,14 +290,7 @@ class ProbabilityFunction:
                             shared_purity_min,
                             new_purity_min,
                         )
-
-                    warnings.warn(
-                        f"Calibration failed at variable={s}. "
-                        f"Updating its local purity_min from "
-                        f"{local_purity_min:.6f} to {new_purity_min:.6f} "
-                        "and retrying. Newly started tasks inherit "
-                        "the highest requirement reached so far."
-                    )
+                        retry_events.append(s)
 
                     local_purity_min = new_purity_min
 
@@ -325,6 +325,16 @@ class ProbabilityFunction:
                         raise
 
         self.features_were_selected = True
+
+        if retry_events:
+            warnings.warn(
+                f"Calibration required {len(retry_events)} retries across "
+                f"{len(set(retry_events))} sampled thresholds. "
+                f"The shared purity requirement increased from "
+                f"{purity_min:.6f} to {shared_purity_min:.6f}. "
+                "All feature selections completed successfully.",
+                stacklevel=2,
+            )
 
     def process(
         self,
@@ -679,3 +689,246 @@ class ProbabilityFunction:
                 "estimates, an unsuccessful fit, or negligible fitted "
                 "interval probability; their densities were set to NaN."
             )
+
+    def get_results_dataframe(self):
+        r"""
+        Return the test DataFrame with scalar summaries of the fitted PDFs.
+
+        Preserve the original columns, row order, and index, and append
+        scalar results with the ``fomoz_`` prefix. Summaries are computed
+        from the current `probability_functions`, including any changes
+        made by the latest successful `update_fit` call.
+
+        Full PDFs are not stored in the returned DataFrame.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Copy of the test DataFrame with the following added columns:
+
+            fomoz_mode
+                Sampled variable value at the maximum PDF density.
+                Its resolution is limited by `variable_samples`. If several
+                samples share the maximum, use the first, at the lowest
+                variable value.
+            fomoz_mean
+                Mean of the distribution.
+            fomoz_median
+                Median of the distribution.
+            fomoz_std
+                Standard deviation of the distribution. This describes
+                its width, not the numerical error on the inferred mean.
+            fomoz_p16, fomoz_p84
+                Quantiles defining the central 68% probability interval.
+                This is not necessarily a highest-density interval.
+            fomoz_fit_success
+                Whether fitting and PDF normalization succeeded.
+            fomoz_interval_probability
+                Fitted cumulative probability difference between the
+                sampled endpoints, before PDF normalization.
+
+            Distribution summaries are NaN for unsuccessful fits.
+
+        Raises
+        ------
+        RuntimeError
+            If fitted probability densities are not available.
+        ValueError
+            If the sampling grid, result shapes, or valid PDF rows are
+            inconsistent, or an output column already exists.
+
+        Notes
+        -----
+        Summaries describe the distribution conditional on the sampled
+        interval: the fitted PDFs are normalized within that interval.
+        They do not describe unmodelled tails outside the interval.
+
+        Means and variances use trapezoidal quadrature on the sampled
+        PDF. Quantiles are obtained by integrating the piecewise-linear
+        interpolant of the sampled density and inverting its cumulative.
+        All summaries therefore depend on the sampling resolution.
+
+        For multimodal distributions, scalar summaries can hide important
+        structure; inspect the full PDFs when needed.
+
+        Access the full distributions through:
+
+        - ``self.variable_samples``: common variable grid, shape (n_samples,).
+        - ``self.probability_functions``: PDF densities, shape
+          (n_test, n_samples). These are densities, not per-bin probabilities.
+
+        Row i of the PDF matrix corresponds to row i of the returned
+        DataFrame, accessed with ``iloc[i]``. Use positional indexing:
+        DataFrame index labels need not be unique or consecutive.
+
+        Do not modify or reorder the test DataFrame between `process`
+        and this call. Changes preserving its row count cannot be
+        detected by this method.
+
+        This method modifies neither the test dataset nor the fitted PDFs.
+
+        Examples
+        --------
+        >>> pdf.process()
+        >>> results = pdf.get_results_dataframe()
+
+        Retrieve one galaxy and its full PDF by position:
+
+        >>> i = 0
+        >>> galaxy = results.iloc[i]
+        >>> x = pdf.variable_samples
+        >>> density = pdf.probability_functions[i]
+
+        Retrieve PDFs for a filtered subset without losing row alignment:
+
+        >>> keep = results["fomoz_fit_success"].to_numpy()
+        >>> selected_galaxies = results.iloc[np.flatnonzero(keep)]
+        >>> selected_pdfs = pdf.probability_functions[keep]
+
+        Recompute summaries after changing the spline fit:
+
+        >>> pdf.update_fit(n_internal_knots=15)
+        >>> results = pdf.get_results_dataframe()
+        """
+        required = (
+            "probability_functions",
+            "fit_success",
+            "interval_probability",
+        )
+        if any(getattr(self, name, None) is None for name in required):
+            raise RuntimeError(
+                "Fitted probability densities are not available. "
+                "Complete process() or update_fit() before exporting results."
+            )
+
+        test_frame = self.test_dataset.dataset
+        n_objects = len(test_frame)
+
+        x = np.asarray(self.variable_samples, dtype=float)
+        densities = np.asarray(self.probability_functions)
+        fit_success = np.asarray(self.fit_success, dtype=bool)
+        interval_probability = np.asarray(self.interval_probability)
+
+        if (
+            x.ndim != 1
+            or x.size < 2
+            or not np.all(np.isfinite(x))
+            or np.any(np.diff(x) <= 0)
+        ):
+            raise ValueError(
+                "variable_samples must be finite, strictly increasing, "
+                "and contain at least two points."
+            )
+
+        if densities.shape != (n_objects, x.size):
+            raise ValueError(
+                "probability_functions must have shape "
+                f"({n_objects}, {x.size}); got {densities.shape}."
+            )
+
+        if fit_success.shape != (n_objects,) or interval_probability.shape != (
+            n_objects,
+        ):
+            raise ValueError("Fit diagnostics must have one entry per test object.")
+
+        summary_names = (
+            "mode",
+            "mean",
+            "median",
+            "std",
+            "p16",
+            "p84",
+        )
+        output_columns = [f"fomoz_{name}" for name in summary_names] + [
+            "fomoz_fit_success",
+            "fomoz_interval_probability",
+        ]
+
+        collisions = [
+            column for column in output_columns if column in test_frame.columns
+        ]
+        if collisions:
+            raise ValueError(
+                "The test DataFrame already contains output columns: "
+                f"{collisions}. Rename or remove them before exporting."
+            )
+
+        summaries = {name: np.full(n_objects, np.nan) for name in summary_names}
+        dx = np.diff(x)
+
+        for i in np.flatnonzero(fit_success):
+            density = np.asarray(densities[i], dtype=float)
+
+            if not np.all(np.isfinite(density)) or np.any(density < 0):
+                raise ValueError(
+                    f"PDF row {i} is marked successful but contains "
+                    "nonfinite or negative densities."
+                )
+
+            segment_mass = 0.5 * (density[:-1] + density[1:]) * dx
+            normalization = segment_mass.sum()
+
+            if not np.isfinite(normalization) or normalization <= 0:
+                raise ValueError(f"PDF row {i} has an invalid normalization.")
+
+            # Normalize locally without changing the stored PDF.
+            p = density / normalization
+
+            mean = np.trapz(x * p, x)
+            variance = np.trapz((x - mean) ** 2 * p, x)
+
+            summaries["mode"][i] = x[np.argmax(p)]
+            summaries["mean"][i] = mean
+            summaries["std"][i] = np.sqrt(max(variance, 0.0))
+
+            cdf = np.concatenate(
+                (
+                    [0.0],
+                    np.cumsum(segment_mass / normalization),
+                )
+            )
+
+            # Remove residual floating-point endpoint errors.
+            cdf = np.clip(cdf, 0.0, 1.0)
+            cdf[-1] = 1.0
+
+            for name, quantile in (
+                ("p16", 0.16),
+                ("median", 0.50),
+                ("p84", 0.84),
+            ):
+                upper = int(np.searchsorted(cdf, quantile, side="left"))
+                upper = min(max(upper, 1), x.size - 1)
+                lower = upper - 1
+
+                # Fraction of this segment's probability to accumulate.
+                fraction = (quantile - cdf[lower]) / (cdf[upper] - cdf[lower])
+                fraction = float(np.clip(fraction, 0.0, 1.0))
+
+                # Invert the integral of a linear density on the segment.
+                # Scale endpoint densities for numerical stability.
+                scale = max(p[lower], p[upper])
+                a = p[lower] / scale
+                b = p[upper] / scale
+                target_area = 0.5 * fraction * (a + b)
+
+                discriminant = max(
+                    a * a + 2.0 * (b - a) * target_area,
+                    0.0,
+                )
+                denominator = a + np.sqrt(discriminant)
+
+                position = 2.0 * target_area / denominator if denominator > 0 else 0.0
+                position = float(np.clip(position, 0.0, 1.0))
+
+                summaries[name][i] = x[lower] + position * dx[lower]
+
+        output = test_frame.copy(deep=True)
+
+        for name, values in summaries.items():
+            output[f"fomoz_{name}"] = values
+
+        output["fomoz_fit_success"] = fit_success.copy()
+        output["fomoz_interval_probability"] = interval_probability.copy()
+
+        return output
