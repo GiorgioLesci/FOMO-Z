@@ -320,7 +320,7 @@ class CalibrationGrid:
             prob_min_bin -= self.step
 
         if prob_min_bin <= 0:
-            errMsg = f"For z_l={self.td.z_lim[i_z]}, the convergence is attained for a value larger than the user-defined thresholded_quantity_min."
+            errMsg = f"The convergence is attained for a value larger than the user-defined thresholded_quantity_min."
             errMsg += f" The current global P, C, and F are {self.P[i_z]}, {self.C[i_z]}, and {self.F[i_z]}, respectively."
             error = ValueError(errMsg)
             error.calibration_purity = float(self.P[i_z])
