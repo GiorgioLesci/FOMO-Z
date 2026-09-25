@@ -256,7 +256,7 @@ class ColorSelection:
             The photometric dataset. Must have columns
             corresponding to the magnitude names stored in e.g.
             ``self.dict_linear['metadata']['bands']``.
-        missing_data : int, float, or list, default=[99, -99]
+        missing_data : int, float, or list, optional
             Value(s) used in the dataset to denote missing entries. These are replaced
             with NaN for consistency (if missing data in your data set are NaN,
             you don't need to specify it).

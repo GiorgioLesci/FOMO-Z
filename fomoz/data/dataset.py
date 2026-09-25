@@ -57,9 +57,9 @@ class Dataset:
         z_gal_string : str, default="redshift"
             Column name in `dataset` that contains the point-estimate redshift values.
             If redshift information is not needed, set it to `None`.
-            It is used in the metrics computation only if `PDZs` is `None`. It is always
-            used to derive the redshift distributions by the `get_redshift_distribution`
-            methods of the calibration classes.
+            If `PDZs` is `None`, it is used in the definition of the targeted sample and
+            in metrics computation. It is always used to derive the redshift distributions
+            by the `get_redshift_distribution` methods of the calibration classes.
         PDZs : array-like of array-like, default=None
             Redshift probability functions (normalization is not required) used
             in the metrics computation. If not provided, point-estimates are used
@@ -68,7 +68,7 @@ class Dataset:
             Redshift values where `PDZs[i]` is computed.
         weights : array-like, default=None
             Prior per-object weights used to compute the selection metrics.
-        missing_data : int, float, or list, default=[99, -99]
+        missing_data : int, float, or list, optional
             Value(s) used in the dataset to denote missing entries. These are replaced
             with NaN for consistency (if missing data in your data set are NaN,
             you don't need to specify it).
@@ -106,8 +106,8 @@ class Dataset:
             raise ValueError("Band keys cannot contain the characters 'c' or 's'.")
 
         if z_gal_string is not None and z_gal_string not in dataset.columns:
-            errMsg = f"z_gal_string='{z_gal_string}' "
-            errMsg += "not found in dataset columns."
+            errMsg = f"z_gal_string='{z_gal_string}' not found in dataset columns. "
+            errMsg += "If redshift is not needed, set z_gal_string=None."
             raise KeyError(errMsg)
 
         if z_gal_string in bands:
