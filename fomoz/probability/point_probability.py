@@ -1,11 +1,11 @@
 """
 Derive probability point estimates.
 
-This module derives point-estimate probabilities based on color grids,
-given any condition on redshift or any other galaxy properties. The reference
-dataset defines a grid of objects with known colors, and for each test object,
-a probability is estimated from the fraction of reference objects
-that are color-consistent with it within its photometric errors.
+This module derives point-estimate probabilities based on colors,
+given any condition on any galaxy property. 
+For each test object, a probability is estimated from the fraction
+of reference objects that are color-consistent with it within the
+photometric errors.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
@@ -36,21 +36,19 @@ class PointProbability:
         verbose=True,
     ):
         r"""
-        Initialize a color-based estimator of target-membership probabilities.
+        Initialize a color-based estimator of point-estimate probabilities.
 
         For each test object, identify reference objects with compatible
         colors and estimate the probability of satisfying
         `selection_definition` from their weighted target memberships.
-        Call `process` to compute the estimates; initialization only
-        validates the input datasets and constructs the reference target mask.
+        Call `process` to compute the probability estimates.
 
         Parameters
         ----------
         selection_definition : SelectionDefinition
             Definition of the target population, such as objects above a
             redshift threshold, within a redshift interval, or satisfying
-            additional property-based conditions. Exactly one `z_lim`
-            value is supported.
+            additional conditions on other physical properties.
         reference_dataset : Dataset
             Reference sample providing photometry, target information,
             and per-object weights. Its DataFrame must contain magnitude
@@ -65,7 +63,7 @@ class PointProbability:
             DataFrame must contain ``<band>_error`` columns.
 
             Test-sample weights and redshift PDFs are not used to estimate
-            its probabilities. If None, the code uses `reference_dataset`
+            probabilities. If `None`, the code uses `reference_dataset`
             as the test sample and applies the self-test matching convention
             described below.
         verbose : bool, default=True
@@ -77,8 +75,8 @@ class PointProbability:
         For reference object j, let q_j denote its target membership:
         either a binary indicator or a probability derived from its
         redshift PDF and any additional selection conditions. Let w_j
-        denote its reference weight. The stored `target_mask` already
-        includes that weight:
+        denote its reference weight. The stored `target_mask`, defined
+        through `SelectionDefinition`, already includes that weight:
 
         .. math::
             t_j = w_j q_j.
@@ -152,7 +150,7 @@ class PointProbability:
                 )
             if not np.allclose(np.asarray(test_dataset.dataset["weights"].values), 1.0):
                 warnings.warn(
-                    "Weights were set in test_dataset, but they are not used by the PointProbability class."
+                    "Prior weights were set in test_dataset, but they are not used by the PointProbability class."
                 )
 
         if len(reference_dataset.colors) != len(test_dataset.colors):
@@ -328,11 +326,11 @@ class PointProbability:
         step=0.01,
     ):
         r"""
-        Select informative colors through grid calibration and backward elimination.
+        Select informative colors through `CalibrationGrid` methods and backward elimination.
 
-        Calibrate all color-color grids, then iteratively remove the color
-        producing the smallest decrease in global completeness. Accept a
-        removal only if both purity and completeness remain within
+        Calibrate a selection in all color-color grids with `CalibrationGrid`, then
+        iteratively remove the colorproducing the smallest decrease in global completeness.
+        Accept a removal only if both purity and completeness remain within
         `tolerance` of their fixed values from the initial calibration.
 
         Each grid's galaxy-selection mask is computed once. Integer coverage
@@ -347,6 +345,7 @@ class PointProbability:
             to the fixed initial calibration baseline.
         purity_min : float, default=0.9
             Minimum global purity requested for the initial calibration.
+            If it is too low, `CalibrationGrid` may raise an error.
         grid_precision : float, default=0.15
             Resolution of the color-color grids.
         step : float, default=0.01

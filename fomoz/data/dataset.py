@@ -182,8 +182,19 @@ class Dataset:
         if weights is None:
             self.dataset["weights"] = np.ones(len(self.dataset))
         else:
-            if np.any(np.asarray(weights) < 0) or np.any(np.isinf(np.asarray(weights))):
-                raise ValueError("weights contains negative or infinite values.")
+            weights = np.asarray(weights, dtype=float)
+
+            if weights.shape != (len(self.dataset),):
+                raise ValueError(
+                    "weights must be a one-dimensional array "
+                    "with one entry per object."
+                )
+
+            if np.any(~np.isfinite(weights)) or np.any(weights < 0):
+                raise ValueError(
+                    "weights must contain non-negative and finite values."
+                )
+
             self.dataset["weights"] = weights
 
         # Set bands, colors, and color spaces
