@@ -72,51 +72,164 @@ class PointProbability:
 
         Notes
         -----
-        For reference object j, let q_j denote its target membership:
-        either a binary indicator or a probability derived from its
-        redshift PDF and any additional selection conditions. Let w_j
-        denote its reference weight. The stored `target_mask`, defined
-        through `SelectionDefinition`, already includes that weight:
+        Let Phi denote the reference sample and X the full set of colors
+        (i.e. features). Feature selection retains a subset X_sel; if it is
+        not performed, all available features are used. Currently available
+        feature selection methods are: `select_features_grid`.
+
+        For test object i, chi_i is the subset of X_sel containing the
+        selected colors whose measurements and uncertainties are both non-NaN.
+        The set of reference objects that are color-compatible with the test
+        object i is defined as
 
         .. math::
-            t_j = w_j q_j.
 
-        For a set of color-compatible references M_i, `process` estimates
+            \Sigma_i =
+            \left\{
+                j \in \Phi :
+                |c_{i,k} - c_{j,k}| \leq \epsilon_{ij,k}
+                \quad \forall k \in \chi_i
+            \right\},
+
+        where c_{i,k} and c_{j,k} are the values of color k for the test
+        and reference objects, respectively. Missing test colors impose
+        no matching constraint.
+
+        When `test_dataset` is explicitly supplied, the matching
+        tolerance combines test and reference color uncertainties:
 
         .. math::
-            P_i = \frac{\sum_{j \in M_i} t_j}
-                        {\sum_{j \in M_i} w_j}.
 
-        Reference weights affect this estimate, but do not affect which
-        objects satisfy the color-matching conditions.
+            \epsilon_{ij,k} =
+            \sqrt{\sigma_{i,k}^{2} + \sigma_{j,k}^{2}}.
 
-        Color errors are computed by adding the two magnitude errors
-        in quadrature, assuming uncorrelated errors between those bands.
-        Matching applies separate constraints to each selected color;
-        it does not model covariance between colors sharing a band.
+        For a color c_k = m_a - m_b, its uncertainty is computed as
 
-        If `test_dataset` is explicitly supplied, matching tolerances
-        combine test and reference color errors in quadrature. This
-        assumes independent measurements. The same rule applies even
-        if the explicitly supplied dataset is `reference_dataset` itself.
+        .. math::
 
-        If `test_dataset` is None, each matching tolerance is instead
-        the test object's color error alone. Reference color errors
-        are not added in this mode. This is a self-test convention,
-        not the uncertainty on the difference between two independent
-        reference objects.
+            \sigma_k =
+            \sqrt{\sigma_{m_a}^{2} + \sigma_{m_b}^{2}}.
 
-        Self-test matching does not exclude the test object from its
-        own reference matches. Consequently, this mode is not an
-        independent validation or a leave-one-out evaluation.
+        These expressions assume uncorrelated photometric errors
+        between the two bands and between the test and reference
+        measurements. Matching constraints are applied separately
+        to each selected color; covariance between colors sharing
+        a band is not modeled.
 
-        A test color is usable if neither its value nor its error is
-        NaN. Missing test colors impose no constraint. `process` can
-        require a minimum number of usable colors.
+        If `test_dataset` is None, the reference sample is also used
+        as the test sample, and the tolerance is instead
 
-        The estimator provides probabilities of the events defined by
-        `selection_definition`, not a probability density at an exact
-        value of a continuous property.
+        .. math::
+
+            \epsilon_{ij,k} = \sigma_{i,k}.
+
+        Reference uncertainties are not added in quadrature in this
+        mode, and self-matches are retained. This is a self-test
+        convention, not an independent validation or a leave-one-out
+        evaluation. Explicitly passing `reference_dataset` as
+        `test_dataset` still uses the combined-error convention.
+
+        Once Sigma_i has been identified, `process` estimates the
+        probability that test object i satisfies the selection rules R,
+        defined by `selection_definition`:
+
+        .. math::
+
+            p_i(\mathcal{R}) =
+            \frac{
+                \sum_{j \in \Sigma_i}
+                w_{\mathrm{sel}}^{j}(\mathcal{R})
+            }{
+                \sum_{j \in \Sigma_i}
+                w_{\mathrm{prior}}^{j}
+            }.
+
+        Here, w_prior is the reference object's prior weight, stored
+        in the reference DataFrame's ``weights`` column. The selection
+        weight w_sel is constructed by `SelectionDefinition` and stored
+        in `target_mask`. It already combines the prior weight with
+        target membership and must not be multiplied by the prior
+        weight again.
+
+        For a redshift selection, target membership is binary when
+        evaluated using a point estimate. When reference redshift PDFs
+        are supplied, membership is instead obtained from their
+        cumulative probabilities over the requested redshift range.
+        See `SelectionDefinition`.
+
+        Thus, p_i is the prior-weighted mean target membership among
+        the color-compatible reference objects. Prior weights and
+        redshift PDFs supplied for test objects are not used in this
+        estimate; only their reference-sample counterparts contribute.
+        For a fixed selected feature set, reference weights do not
+        enter the color-matching criterion.
+
+        Objects with fewer than `min_colors_used` usable selected colors
+        (see `process`), or without matching references, receive NaN
+        probability estimates.
+
+        Photometric uncertainties explicitly set the matching tolerance,
+        whereas intrinsic scatter in the color-property relation enters
+        through the reference sample itself. Objects with closely matching
+        colors may therefore differ in target membership. The estimate
+        reflects both measurement uncertainties and intrinsic diversity,
+        without separating their contributions.
+
+        The method therefore assigns each test object a probability
+        of belonging to the target population defined by
+        `selection_definition`, such as its probability of being
+        star-forming or lying within a specified redshift interval.
+
+        For a continuous property, avoid defining the target through
+        an exact equality, such as z = 0.5. This event has zero probability
+        under a continuous distribution, and exact matches in a reference
+        catalog depend on numerical precision or rounding. Instead, define
+        a finite interval, such as 0.45 < z < 0.55, or a threshold, such as
+        z > 0.5. To estimate the redshift probability density, use
+        `ProbabilityFunction`.
+
+        The statistical uncertainty on the estimated probability is
+        returned as ``prob_error``. For n_i = |Sigma_i| > 1 matched
+        reference objects, it is computed as
+
+        .. math::
+
+            \widehat{\sigma}_{p_i}^{\,2}
+            =
+            \frac{n_i}{n_i - 1}
+            \frac{
+                \sum_{j \in \Sigma_i}
+                \left[
+                    w_{\mathrm{sel}}^{j}(\mathcal{R})
+                    - p_i(\mathcal{R}) w_{\mathrm{prior}}^{j}
+                \right]^2
+            }{
+                \left(
+                    \sum_{j \in \Sigma_i} w_{\mathrm{prior}}^{j}
+                \right)^2
+            }.
+
+        This is an approximate sampling variance of the weighted mean
+        target membership, treating the matched reference objects as
+        independent and their prior weights as fixed relative weights.
+        ``prob_error`` is the square root of this variance.
+
+        For equal positive prior weights, the expression reduces to
+        the sample variance of target memberships divided by n_i.
+
+        This uncertainty describes finite-reference-sample variation
+        for the adopted matching set and selection rules. It does not
+        propagate uncertainty in the matching set, feature selection,
+        prior weights, or reference target memberships. In particular,
+        using photometric errors for matching and reference PDZs for
+        target membership does not constitute a full propagation of
+        their uncertainties into ``prob_error``.
+
+        The returned error is not the predictive dispersion of an
+        individual object's binary membership. Identical target
+        memberships among the matched references produce a zero
+        estimated error, which does not imply that the underlying
+        membership probability is known exactly.
 
         See Also
         --------
@@ -545,7 +658,7 @@ class PointProbability:
         block_size=256,
     ):
         r"""
-        Compute weighted target-membership probabilities for all test objects.
+        Compute weighted probabilities for all test objects.
 
         Use the colors stored in `self.colors`, or all reference colors
         if feature selection has not been performed. For each test
@@ -585,77 +698,30 @@ class PointProbability:
             Each entry is an array of shape ``(n_test,)``:
 
             ``prob``
-                Weighted target-membership probability. NaN for skipped
+                Weighted membership probability. NaN for skipped
                 objects, objects without matches.
             ``prob_error``
                 Approximate sampling standard error of ``prob``, as
-                defined below. NaN if the probability is undefined
-                or fewer than two matched references have positive weight.
+                defined in the constructor's documentation. NaN if the
+                probability is undefined or fewer than two matched
+                references have positive weight.
             ``n_good``
                 Sum of `self.target_mask` over matching references.
-                This is already a weighted target-membership sum:
-                reference weights are not applied a second time.
-                Zero for skipped objects or objects without matches.
+                This is a weighted sum. It is the numerator of `prob`.
             ``n_all``
-                Unweighted number of matching reference objects. Zero for
-                skipped objects or objects without matches.
+                Unweighted number of matching reference objects.
             ``n_colors_used``
                 Number of non-NaN test colors with non-NaN errors,
                 including for objects skipped by `min_colors_used`.
 
-        Raises
-        ------
-        ValueError
-            If `cpu_number` is neither None nor a positive integer,
-            or if `block_size` is not a positive integer.
-
         Notes
         -----
-        Let M_i be the set of references compatible with test object i.
-        For each reference j, let w_j be its weight and q_j its target
-        membership, which may be binary or derived from a redshift PDF.
-        The stored target-mask value is t_j = w_j q_j.
+        Before the call to this function, feature selection is recommended.
+        Especially when more than 3 photometric bands are used. See, for example,
+        `select_features_grid`.
 
-        The probability estimate is
-
-        .. math::
-            W_i = \sum_{j \in M_i} w_j,
-            \qquad
-            P_i = \frac{\sum_{j \in M_i} t_j}{W_i}.
-
-        Thus, ``n_good / n_all`` is generally not the probability:
+        ``n_good / n_all`` is generally not the probability:
         the denominator must be the sum of reference weights.
-
-        For m_i > 1 matched references with positive weight, estimate
-        the sampling variance of this ratio as
-
-        .. math::
-            \widehat{\sigma}_{P_i}^{\,2}
-            = \frac{m_i}{m_i - 1}
-              \frac{\sum_{j \in M_i}(t_j - P_i w_j)^2}{W_i^2}.
-
-        This is an approximate variance estimate for independent
-        reference objects with relative sampling or importance weights.
-        The finite-sample correction recovers the usual squared
-        standard error, s_i^2 / m_i, when all positive weights are equal,
-        where s_i is the sample standard deviation of q_j with ddof=1.
-
-        Both the probability and its estimated error are invariant
-        under a common positive rescaling of the reference weights.
-
-        The error describes sampling variation of the weighted mean
-        of q_j. It does not include uncertainty in the weight calibration,
-        correlations between references, or systematic errors in the
-        input photometry or redshift PDFs. It is not a predictive
-        uncertainty for an individual object's binary membership.
-
-        Identical q_j values among all positive-weight matches produce
-        a zero estimated error; this does not establish that the true
-        probability is known exactly.
-
-        When the reference sample is also the test sample, self-matches
-        are retained. The resulting probabilities are not independent
-        validation predictions.
 
         See Also
         --------
@@ -820,8 +886,9 @@ class PointProbability:
         """
         Return a copy of the test DataFrame with probability results.
 
-        Preserve all original columns, the row order, and the index.
-        Append every entry of `probability_dictionary` as a column named
+        Preserve all original columns, the row order, and the index of
+        the DataFrame contained in `test_dataset`, passed to the constructor.
+        Append every entry of `self.probability_dictionary` as a column named
         ``fomoz_<key>``. Results are assigned by row position, so duplicate
         index labels are supported.
 
@@ -841,31 +908,26 @@ class PointProbability:
             Copy or extension of the test DataFrame with the following added columns:
 
             fomoz_prob
-                Weighted target-membership probability.
+                Weighted membership probability.
             fomoz_prob_error
                 Approximate sampling standard error of the probability.
             fomoz_n_good
-                Sum of weighted target memberships over matching references.
+                Sum of weighted memberships over matching references,
+                i.e. the numerator in the fomoz_prob expression.
             fomoz_n_all
                 Unweighted number of matching reference objects.
             fomoz_n_colors_used
                 Number of usable selected colors for each test object.
 
-            Any additional entries in `probability_dictionary` are included
-            using the same prefix. Missing estimates remain NaN.
+            Missing estimates are NaN.
 
         Raises
         ------
         RuntimeError
             If probability results are not available.
-        ValueError
-            If a result is not one-dimensional, its length differs from
-            the test sample size, or an output column already exists.
 
         Notes
         -----
-        This method does not modify the test dataset.
-
         Do not modify or reorder the test DataFrame between `process`
         and this call. Results are associated by position; changes that
         preserve the number of rows cannot be detected by this method.
