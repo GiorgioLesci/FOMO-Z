@@ -15,8 +15,8 @@ import numpy as np
 from scipy.interpolate import BSpline
 
 from .color_selection import ColorSelection
-from .calibration_linear import CalibrationLinear
-from .calibration_grid import CalibrationGrid
+from .linear_classification import LinearClassification
+from .grid_classification import GridClassification
 from ..data.dataset import Dataset
 from ..auxiliary import (
     check_ax_limits,
@@ -90,15 +90,15 @@ class PlotCalibration:
 
         Parameters
         ----------
-        calibration : CalibrationLinear or CalibrationGrid
+        calibration : LinearClassification or GridClassification
             Path to the metrics file, written by the calibration classes using
             the `write()` functions.
         """
         if (
-            isinstance(calibration, CalibrationLinear)
+            isinstance(calibration, LinearClassification)
             and not self.color_selection.dict_linear
         ) or (
-            isinstance(calibration, CalibrationGrid)
+            isinstance(calibration, GridClassification)
             and not self.color_selection.dict_grid
         ):
             raise ValueError(
@@ -331,7 +331,7 @@ class PlotCalibration:
             alpha parameter of the 68% confidence interval. Default is 0.3.
         interp_points : array-like, optional
             Limiting redshift points. If not None, derive the metrics at these points
-            using interpolations. Valid only for CalibrationLinear instances. Default is None.
+            using interpolations. Valid only for LinearClassification instances. Default is None.
         output_file_path : str, optional
             Concatenation of the output file path and name.
             If None, the plot is not saved to file. Default is None.
@@ -953,7 +953,7 @@ class PlotCalibration:
         cut_key : str
             Key corresponding to the optimal color condition.
             The list of optimal color conditions can be obtained
-            using `CalibrationLinear.get_keys()`.
+            using `LinearClassification.get_keys()`.
         interp_points : array-like, optional
             Limiting redshift points. If not None, derive the parameters
             at these points using interpolations. Default is None.
@@ -987,7 +987,7 @@ class PlotCalibration:
         """
         if not self.color_selection.dict_linear:
             raise ValueError(
-                "This function works only with CalibrationLinear selections. Provide such a selection to the constructor of this class."
+                "This function works only with LinearClassification selections. Provide such a selection to the constructor of this class."
             )
 
         entry = self.color_selection.dict_linear[cut_key]

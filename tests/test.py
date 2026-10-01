@@ -1,5 +1,5 @@
 """
-Unit tests for the color_selection subpackage.
+Unit tests.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
@@ -11,9 +11,9 @@ import pandas as pd
 import pytest
 import yaml
 
-from fomoz.color_selection.calibration_linear import CalibrationLinear
-from fomoz.color_selection.calibration_grid import CalibrationGrid
-from fomoz.color_selection.color_selection import ColorSelection
+from fomoz.binary_classification.linear_classification import LinearClassification
+from fomoz.binary_classification.grid_classification import GridClassification
+from fomoz.binary_classification.color_selection import ColorSelection
 from fomoz.data.dataset import Dataset
 from fomoz.data.selection_definition import SelectionDefinition
 from fomoz.auxiliary import (
@@ -111,9 +111,9 @@ def reference_measure_instance(
 def reference_calibration_linear_instance(
     reference_dataset_instance, reference_target_definition_instance
 ):
-    """Create an CalibrationLinear instance with reference.csv data for testing."""
+    """Create an LinearClassification instance with reference.csv data for testing."""
     thresholded_quantity_min = 0.9
-    calibration = CalibrationLinear(
+    calibration = LinearClassification(
         reference_dataset_instance,
         reference_target_definition_instance,
         thresholded_quantity_min,
@@ -130,9 +130,9 @@ def reference_calibration_linear_instance(
 def reference_calibration_linear_instance_weights(
     reference_dataset_instance_weights, reference_target_definition_instance
 ):
-    """Create an CalibrationLinear instance with reference.csv data for testing."""
+    """Create an LinearClassification instance with reference.csv data for testing."""
     thresholded_quantity_min = 0.9
-    calibration = CalibrationLinear(
+    calibration = LinearClassification(
         reference_dataset_instance_weights,
         reference_target_definition_instance,
         thresholded_quantity_min,
@@ -149,9 +149,9 @@ def reference_calibration_linear_instance_weights(
 def reference_calibration_grid_instance(
     reference_dataset_instance, reference_target_definition_instance
 ):
-    """Create an CalibrationGrid instance with reference.csv data for testing."""
+    """Create an GridClassification instance with reference.csv data for testing."""
     thresholded_quantity_min = 0.9
-    calibration = CalibrationGrid(
+    calibration = GridClassification(
         reference_dataset_instance,
         reference_target_definition_instance,
         thresholded_quantity_min,
@@ -166,9 +166,9 @@ def reference_calibration_grid_instance(
 def reference_calibration_grid_instance_weights(
     reference_dataset_instance_weights, reference_target_definition_instance
 ):
-    """Create an CalibrationGrid instance with reference.csv data for testing."""
+    """Create an GridClassification instance with reference.csv data for testing."""
     thresholded_quantity_min = 0.9
-    calibration = CalibrationGrid(
+    calibration = GridClassification(
         reference_dataset_instance_weights,
         reference_target_definition_instance,
         thresholded_quantity_min,
@@ -481,7 +481,7 @@ class TestCalibrationProcess:
     ):
         """Test process methods with reference data and check C, P, F values."""
 
-        # CalibrationLinear
+        # LinearClassification
         calibration = reference_calibration_linear_instance
         calibration.process(cpu_number=1)
 
@@ -494,17 +494,17 @@ class TestCalibrationProcess:
 
         assert np.allclose(
             calibration.C, expected_C
-        ), f"Completeness mismatch for CalibrationLinear: expected {expected_C}, got {calibration.C}"
+        ), f"Completeness mismatch for LinearClassification: expected {expected_C}, got {calibration.C}"
 
         assert np.allclose(
             calibration.P, expected_P
-        ), f"Purity mismatch for CalibrationLinear: expected {expected_P}, got {calibration.P}"
+        ), f"Purity mismatch for LinearClassification: expected {expected_P}, got {calibration.P}"
 
         assert np.allclose(
             calibration.F, expected_F
-        ), f"Failure rate mismatch for CalibrationLinear: expected {expected_F}, got {calibration.F}"
+        ), f"Failure rate mismatch for LinearClassification: expected {expected_F}, got {calibration.F}"
 
-        # CalibrationGrid
+        # GridClassification
         calibration = reference_calibration_grid_instance
         calibration.process()
 
@@ -517,15 +517,15 @@ class TestCalibrationProcess:
 
         assert np.allclose(
             calibration.C, expected_C
-        ), f"Completeness mismatch for CalibrationGrid: expected {expected_C}, got {calibration.C}"
+        ), f"Completeness mismatch for GridClassification: expected {expected_C}, got {calibration.C}"
 
         assert np.allclose(
             calibration.P, expected_P
-        ), f"Purity mismatch for CalibrationGrid: expected {expected_P}, got {calibration.P}"
+        ), f"Purity mismatch for GridClassification: expected {expected_P}, got {calibration.P}"
 
         assert np.allclose(
             calibration.F, expected_F
-        ), f"Failure rate mismatch for CalibrationGrid: expected {expected_F}, got {calibration.F}"
+        ), f"Failure rate mismatch for GridClassification: expected {expected_F}, got {calibration.F}"
 
     def test_process_with_weights(
         self,
@@ -534,7 +534,7 @@ class TestCalibrationProcess:
     ):
         """Test process methods with reference data and check C, P, F values."""
 
-        # CalibrationLinear
+        # LinearClassification
         calibration = reference_calibration_linear_instance_weights
         calibration.process(cpu_number=1)
 
@@ -547,17 +547,17 @@ class TestCalibrationProcess:
 
         assert np.allclose(
             calibration.C, expected_C
-        ), f"Completeness mismatch for CalibrationLinear: expected {expected_C}, got {calibration.C}"
+        ), f"Completeness mismatch for LinearClassification: expected {expected_C}, got {calibration.C}"
 
         assert np.allclose(
             calibration.P, expected_P
-        ), f"Purity mismatch for CalibrationLinear: expected {expected_P}, got {calibration.P}"
+        ), f"Purity mismatch for LinearClassification: expected {expected_P}, got {calibration.P}"
 
         assert np.allclose(
             calibration.F, expected_F
-        ), f"Failure rate mismatch for CalibrationLinear: expected {expected_F}, got {calibration.F}"
+        ), f"Failure rate mismatch for LinearClassification: expected {expected_F}, got {calibration.F}"
 
-        # CalibrationGrid
+        # GridClassification
         calibration = reference_calibration_grid_instance_weights
         calibration.process()
 
@@ -570,15 +570,15 @@ class TestCalibrationProcess:
 
         assert np.allclose(
             calibration.C, expected_C
-        ), f"Completeness mismatch for CalibrationGrid: expected {expected_C}, got {calibration.C}"
+        ), f"Completeness mismatch for GridClassification: expected {expected_C}, got {calibration.C}"
 
         assert np.allclose(
             calibration.P, expected_P
-        ), f"Purity mismatch for CalibrationGrid: expected {expected_P}, got {calibration.P}"
+        ), f"Purity mismatch for GridClassification: expected {expected_P}, got {calibration.P}"
 
         assert np.allclose(
             calibration.F, expected_F
-        ), f"Failure rate mismatch for CalibrationGrid: expected {expected_F}, got {calibration.F}"
+        ), f"Failure rate mismatch for GridClassification: expected {expected_F}, got {calibration.F}"
 
 
 ############################

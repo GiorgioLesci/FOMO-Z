@@ -28,7 +28,7 @@ from ..auxiliary import (
 )
 
 
-class CalibrationGrid:
+class GridClassification:
     """Calibrate grid color selections."""
 
     def __init__(

@@ -25,8 +25,8 @@ from ..auxiliary import (
     update_dict_metadata,
     update_dict,
 )
-from .calibration_linear import CalibrationLinear
-from .calibration_grid import CalibrationGrid
+from .linear_classification import LinearClassification
+from .grid_classification import GridClassification
 
 
 class ColorSelection:
@@ -116,7 +116,7 @@ class ColorSelection:
 
     def _linear_selection(self, z_lim, mags, color_condition="all"):
         """
-        Select based a linear calibration derived with `CalibrationLinear`.
+        Select based a linear calibration derived with `LinearClassification`.
 
         Select objects at a given redshift threshold.
         - If calibrated limiting redshifts are lower limits:
@@ -230,7 +230,7 @@ class ColorSelection:
         For each redshift in ``z_lim``, this method evaluates the stored
         color conditions based on the magnitudes in ``dataset`` and produces
         a boolean mask. All results are stored in ``self.mask``.
-        It is possible to load both a `CalibrationLinear` and a `CalibrationGrid`
+        It is possible to load both a `LinearClassification` and a `GridClassification`
         selection. In this case, they'll be related through a OR operator.
 
         - If calibrated limiting redshifts are lower limits:
@@ -242,9 +242,9 @@ class ColorSelection:
           - if `z_lim` > `z_max`, then `z_lim` = `z_max` is imposed;
           - if `z_lim` < `z_min`, then no selection is applied.
 
-        `CalibrationLinear` selections handle `z_lim` values falling between
+        `LinearClassification` selections handle `z_lim` values falling between
         the limiting redshifts used in the calibration through interpolations.
-        For `CalibrationGrid`, instead, if `z_1 < z_lim < z_2`, we impose:
+        For `GridClassification`, instead, if `z_1 < z_lim < z_2`, we impose:
         - `z_lim = z_2` if the limiting redshifts are lower limits.
         - `z_lim = z_1` if the limiting redshifts are upper limits.
 
@@ -363,15 +363,15 @@ class ColorSelection:
 
     def load_parameters(self, calibration):
         """
-        Load selection parameters from a ``CalibrationLinear`` or ``CalibrationGrid`` instance.
+        Load selection parameters from a ``LinearClassification`` or ``GridClassification`` instance.
 
         Load precomputed optimal color cut parameters and reconstruct interpolator objects
         in case of linear color selection.
 
         Parameters
         ----------
-        calibration : CalibrationLinear
-            `CalibrationLinear` or `CalibrationGrid` object.
+        calibration : LinearClassification
+            `LinearClassification` or `GridClassification` object.
 
         Returns
         -------
@@ -381,13 +381,13 @@ class ColorSelection:
         """
         dictionary = calibration.dict
 
-        if isinstance(calibration, CalibrationLinear):
+        if isinstance(calibration, LinearClassification):
             self.dict_linear = copy.deepcopy(dictionary)
             self._reconstruct_interpolators()
-            print("CalibrationLinear parameters successfully loaded.")
-        elif isinstance(calibration, CalibrationGrid):
+            print("LinearClassification parameters successfully loaded.")
+        elif isinstance(calibration, GridClassification):
             self.dict_grid = copy.deepcopy(dictionary)
-            print("CalibrationGrid parameters successfully loaded.")
+            print("GridClassification parameters successfully loaded.")
         else:
             raise ValueError("Wrong type of the calibration parameter.")
 
@@ -396,10 +396,10 @@ class ColorSelection:
         Load selection parameters from file.
 
         This function acts depending on the format of the input file.
-          - If .yaml, the selection is interpreted as a `CalibrationLinear` selection.
+          - If .yaml, the selection is interpreted as a `LinearClassification` selection.
             In this case, this function loads precomputed optimal color cut parameters
             from the YAML file and reconstruct interpolator objects.
-          - If .fits, the selection is interpreted as a `CalibrationGrid` selection.
+          - If .fits, the selection is interpreted as a `GridClassification` selection.
             In this case, this function loads precomputed optimal color-color masks
             defined on grids.
 
@@ -426,7 +426,7 @@ class ColorSelection:
 
             self._reconstruct_interpolators()
 
-            print("CalibrationLinear parameters successfully loaded from file.")
+            print("LinearClassification parameters successfully loaded from file.")
 
         elif ext == ".fits":
             with fits.open(file_path) as hdul:
@@ -479,7 +479,7 @@ class ColorSelection:
                     z_l_is_lower_limit,
                 )
 
-            print("CalibrationGrid parameters successfully loaded from file.")
+            print("GridClassification parameters successfully loaded from file.")
 
         else:
             raise ValueError(

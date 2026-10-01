@@ -40,7 +40,7 @@ class SelectionDefinition:
             in a definite redshift range, use the input parameter `z_lim_opposite`.
             This defines the second edge of the redshift bin.
             If `z_gal_string=None` and no `PDZs` are provided to the `Dataset` object
-            passed to the `CalibrationLinear` and `CalibrationGrid` classes, then `z_lim` is not used.
+            passed to the `LinearClassification` and `GridClassification` classes, then `z_lim` is not used.
         is_zlim_lower : bool, default = True
             If True, `z_lim` is a set of lower redshift limits. Otherwise, `z_lim`
             is a set of higher limits.
@@ -161,7 +161,7 @@ class SelectionDefinition:
         - The returned mask can be used directly for calculating completeness, purity,
           and other selection metrics.
         - If `z_gal_string=None` and no `PDZs` are provided to the `Dataset` object
-          passed to the `CalibrationLinear` and `CalibrationGrid` classes, then `z_lim` is not used.
+          passed to the `LinearClassification` and `GridClassification` classes, then `z_lim` is not used.
         """
         input_weights = np.asarray(dataset["weights"].values)
         if CDZs is None and np.allclose(input_weights, 1.0):

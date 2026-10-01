@@ -293,7 +293,7 @@ def update_dict_color_limits(dictionary, dataset):
     r"""
     Update the color limits in the input dictionary's metadata.
 
-    Used by the `CalibrationGrid` class.
+    Used by the `GridClassification` class.
 
     Parameters
     ----------
@@ -331,7 +331,7 @@ def update_dict_metadata(
     r"""
     Update the input dictionary's metadata.
 
-    Used by the `CalibrationGrid` class.
+    Used by the `GridClassification` class.
 
     Parameters
     ----------
@@ -358,7 +358,7 @@ def update_dict(dictionary, dataset, metadata, reset_dictionary=True):
     r"""
     Update the input dictionary, given the input data set.
 
-    Used by the `CalibrationGrid` class.
+    Used by the `GridClassification` class.
 
     Parameters
     ----------

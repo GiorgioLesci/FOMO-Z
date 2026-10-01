@@ -1,4 +1,4 @@
 # API Reference
 
-::: fomoz.color_selection
+::: fomoz.binary_classification
     handler: python

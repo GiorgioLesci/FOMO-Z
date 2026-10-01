@@ -40,7 +40,7 @@ yaml.add_representer(list, inline_list_representer)
 yaml.add_representer(list, inline_list_representer, Dumper=yaml.SafeDumper)
 
 
-class CalibrationLinear:
+class LinearClassification:
     """Calibrate linear color selections."""
 
     def __init__(
@@ -65,7 +65,7 @@ class CalibrationLinear:
         This class implements methods that aim to select objects that occupy the
         outskirts of color-color distributions, a characteristic feature of, e.g.,
         background galaxy populations. For other science cases, refer to the
-        `CalibrationGrid` class.
+        `GridClassification` class.
 
 
         The following color conditions are considered in each color-color space:

@@ -22,7 +22,7 @@ from ..auxiliary.statistics import compute_metrics, get_color_color_mask
 from ..auxiliary.probability_helper import _matching_indices_numba
 from ..data.dataset import Dataset
 from ..data.selection_definition import SelectionDefinition
-from ..color_selection.calibration_grid import CalibrationGrid
+from ..binary_classification.grid_classification import GridClassification
 
 
 class PointProbability:
@@ -439,9 +439,9 @@ class PointProbability:
         step=0.01,
     ):
         r"""
-        Select informative colors through `CalibrationGrid` methods and backward elimination.
+        Select informative colors through `GridClassification` methods and backward elimination.
 
-        Calibrate a selection in all color-color grids with `CalibrationGrid`, then
+        Calibrate a selection in all color-color grids with `GridClassification`, then
         iteratively remove the colorproducing the smallest decrease in global completeness.
         Accept a removal only if both purity and completeness remain within
         `tolerance` of their fixed values from the initial calibration.
@@ -458,7 +458,7 @@ class PointProbability:
             to the fixed initial calibration baseline.
         purity_min : float, default=0.9
             Minimum global purity requested for the initial calibration.
-            If it is too low, `CalibrationGrid` may raise an error.
+            If it is too low, `GridClassification` may raise an error.
         grid_precision : float, default=0.15
             Resolution of the color-color grids.
         step : float, default=0.01
@@ -476,7 +476,7 @@ class PointProbability:
         # Initial calibration: unchanged.
         start = time.perf_counter()
 
-        calibration = CalibrationGrid(
+        calibration = GridClassification(
             self.reference_dataset,
             self.selection_definition,
             purity_min,
@@ -493,11 +493,11 @@ class PointProbability:
         if self.verbose:
             elapsed = time.perf_counter() - start
             print(
-                "CalibrationGrid processing complete. "
+                "GridClassification processing complete. "
                 f"Employed time: {elapsed:.2f} s."
             )
             print(
-                "\nCalibrationGrid's purity and completeness "
+                "\nGridClassification's purity and completeness "
                 f"(respectively): {purity_baseline:.2f}, "
                 f"{completeness_baseline:.2f}"
             )
