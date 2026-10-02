@@ -29,7 +29,7 @@ from .linear_classification import LinearClassification
 from .grid_classification import GridClassification
 
 
-class ColorSelection:
+class Classifier:
     """Apply precomputed optimal color selections to datasets."""
 
     def __init__(self):

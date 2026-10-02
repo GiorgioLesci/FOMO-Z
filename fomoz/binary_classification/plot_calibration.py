@@ -14,7 +14,7 @@ import numexpr as ne
 import numpy as np
 from scipy.interpolate import BSpline
 
-from .color_selection import ColorSelection
+from .classifier import Classifier
 from .linear_classification import LinearClassification
 from .grid_classification import GridClassification
 from ..data.dataset import Dataset
@@ -41,13 +41,13 @@ class PlotCalibration:
 
         Parameters
         ----------
-        color_selection : ColorSelection
-            `ColorSelection` instance.
+        color_selection : Classifier
+            `Classifier` instance.
         dataset : Dataset
             `Dataset` instance.
         """
-        if not isinstance(color_selection, ColorSelection):
-            raise ValueError("color_selection must be a ColorSelection object.")
+        if not isinstance(color_selection, Classifier):
+            raise ValueError("color_selection must be a Classifier object.")
         if not isinstance(dataset, Dataset):
             raise ValueError("dataset must be a Dataset object.")
 

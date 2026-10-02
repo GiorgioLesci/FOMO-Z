@@ -13,7 +13,7 @@ import yaml
 
 from fomoz.binary_classification.linear_classification import LinearClassification
 from fomoz.binary_classification.grid_classification import GridClassification
-from fomoz.binary_classification.color_selection import ColorSelection
+from fomoz.binary_classification.classifier import Classifier
 from fomoz.data.dataset import Dataset
 from fomoz.data.selection_definition import SelectionDefinition
 from fomoz.auxiliary import (
@@ -582,12 +582,12 @@ class TestCalibrationProcess:
 
 
 ############################
-### color_selection.py ###
+### classifier.py ###
 ############################
 
 
 class TestColorSelection:
-    """Test cases for ColorSelection.process() method with reference.csv."""
+    """Test cases for Classifier.process() method with reference.csv."""
 
     def test_process(
         self,
@@ -608,7 +608,7 @@ class TestColorSelection:
         # Select - linear
         zl_new = np.arange(min(calibration.td.z_lim), max(calibration.td.z_lim), 0.01)
 
-        sel = ColorSelection()
+        sel = Classifier()
         sel.load_parameters(calibration)
         sel.process(zl_new, test_sample)
         mask = sel.mask
@@ -631,7 +631,7 @@ class TestColorSelection:
             calibration_grid.td.z_lim[1] + 0.05,
         ]
 
-        sel = ColorSelection()
+        sel = Classifier()
         sel.load_parameters(calibration_grid)
         sel.process(zl_new, test_sample)
         mask = sel.mask

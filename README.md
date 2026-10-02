@@ -28,7 +28,7 @@ The figure below shows the execution time (top) and maximum RAM usage (bottom) o
 
 ![DEMO IMG](https://github.com/user-attachments/assets/a5142986-f632-409a-bc73-a47b51510014)
 
-Blue and red dots show results for `LinearClassification` using 1 and 12 CPUs, respectively. `GridClassification` processing, which is not parallelized, is represented by green crosses. Note that such calibrations are, in principle, performed only once, and then applied to any data via the `ColorSelection` class.
+Blue and red dots show results for `LinearClassification` using 1 and 12 CPUs, respectively. `GridClassification` processing, which is not parallelized, is represented by green crosses. Note that such calibrations are, in principle, performed only once, and then applied to any data via the `Classifier` class.
 
 ## Installation
 
