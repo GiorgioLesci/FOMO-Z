@@ -46,7 +46,7 @@ class LinearClassification:
     def __init__(
         self,
         dataset: Dataset,
-        target_definition: SelectionDefinition,
+        selection_definition: SelectionDefinition,
         thresholded_quantity_min,
         maximized_quantity="completeness",
         maximized_quantity_min=0.05,
@@ -124,7 +124,7 @@ class LinearClassification:
         ----------
         dataset : Dataset
             A `Dataset` object containing the dataset and band information.
-        target_definition : SelectionDefinition
+        selection_definition : SelectionDefinition
             A `SelectionDefinition` object containing target selections (e.g. redshift thresholds).
         thresholded_quantity_min : float or array-like
             Required minimum for the thresholded quantity, namely
@@ -208,8 +208,10 @@ class LinearClassification:
         self.colors = dataset.colors
         self.CDZs = dataset.CDZs
         self.PDZ_x = dataset.PDZ_x
+        self.z_gal_string = dataset.z_gal_string
+        self.missing_data = dataset.missing_data
         self.weights = np.array(self.dataset["weights"].values)
-        self.td = target_definition
+        self.td = selection_definition
 
         if isinstance(thresholded_quantity_min, float):
             self.thresholded_quantity_min = np.asarray(
@@ -277,7 +279,12 @@ class LinearClassification:
 
         # Create the target mask
         self.target_mask = self.td._get_target_mask(
-            self.dataset, self.td.z_lim, self.CDZs, self.PDZ_x
+            self.dataset,
+            self.td.z_lim,
+            self.CDZs,
+            self.PDZ_x,
+            self.z_gal_string,
+            self.missing_data,
         )
 
     def _process_for_one_z(self, args):
@@ -325,7 +332,14 @@ class LinearClassification:
             self.c_precision,
             self.step,
         )
-        measure.process(z_l, self.CDZs, self.PDZ_x, cpu_number=cpu_number)
+        measure.process(
+            z_l,
+            self.CDZs,
+            self.PDZ_x,
+            self.z_gal_string,
+            self.missing_data,
+            cpu_number=cpu_number,
+        )
 
         # Get the correct dictionary
         self.dict[z_l] = {}
@@ -589,7 +603,12 @@ class LinearClassification:
             # Get the target mask
             bt_CDZs = self.CDZs[indices] if self.CDZs is not None else None
             target_mask = self.td._get_target_mask(
-                bt_sample, self.td.z_lim, bt_CDZs, self.PDZ_x
+                bt_sample,
+                self.td.z_lim,
+                bt_CDZs,
+                self.PDZ_x,
+                self.z_gal_string,
+                self.missing_data,
             )
 
             # Compute the metrics

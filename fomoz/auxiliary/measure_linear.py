@@ -479,7 +479,7 @@ class MeasureLinear:
 
                 self.dict_all[z_lim][(mag1, mag2)][(mag3, mag4)] = sub_dict
 
-    def process(self, z_lim, CDZs, PDZ_x, cpu_number=None):
+    def process(self, z_lim, CDZs, PDZ_x, z_gal_string, missing_data, cpu_number=None):
         """
         Apply all color cuts and compute summary statistics.
 
@@ -497,6 +497,14 @@ class MeasureLinear:
             (whose key is defined by the "redshift" key in the data set).
         PDZ_x : array-like
             Redshift values where CDZs[i] is computed.
+        z_gal_string : str or None
+            Original redshift-column setting of the reference Dataset.
+            The DataFrame column is already standardized to "redshift".
+            If None and CDZs is None, no redshift condition is applied.
+        missing_data : scalar or sequence
+            Missing-value sentinels declared by the reference Dataset.
+            Required selection properties are checked for these values,
+            missing entries, and numerical infinities before evaluation.
         cpu_number : int or None, optional
             Number of CPUs to use for parallel processing when applying cuts.
             - If `None`, defaults to `max(mp.cpu_count() - 2, 1)`.
@@ -514,9 +522,9 @@ class MeasureLinear:
                 "z_lim must be one of the elements of TargetDefinition's z_lim"
             )
 
-        self.target_mask = self.td._get_target_mask(self.dataset, [z_lim], CDZs, PDZ_x)[
-            0
-        ]
+        self.target_mask = self.td._get_target_mask(
+            self.dataset, [z_lim], CDZs, PDZ_x, z_gal_string, missing_data
+        )[0]
 
         for i in range(len(self.colors)):
             self._apply_cuts(

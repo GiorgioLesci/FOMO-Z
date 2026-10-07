@@ -82,8 +82,8 @@ class ProbabilityFunction:
         random_variable : str, default="redshift"
             The random variable for which probability functions are estimated.
             The default, "redshift", implies the derivation of photo-zs.
-            `random_variable` must be a key of the DataFrames contained by
-            `reference_dataset` and `test_dataset`.
+            The corresponding column must be present in the reference dataset.
+            The variable does not need to be available in the test dataset.
         delta : float, default=0.02
             The sampling precision over the random variable's domain.
         min_variable : float, default=0.05
@@ -106,11 +106,6 @@ class ProbabilityFunction:
 
         if random_variable not in reference_dataset.dataset.columns:
             raise ValueError(f"{random_variable} is not a key of reference_dataset.")
-        if (
-            test_dataset is not None
-            and random_variable not in test_dataset.dataset.columns
-        ):
-            raise ValueError(f"{random_variable} is not a key of test_dataset.")
 
         self.test_dataset = (  # Retain the test sample
             reference_dataset if test_dataset is None else test_dataset
@@ -133,6 +128,16 @@ class ProbabilityFunction:
                 "Variable bounds must be finite, with max_variable > min_variable."
             )
 
+        if (
+            random_variable == "redshift"
+            and reference_dataset.z_gal_string is None
+            and reference_dataset.CDZs is None
+        ):
+            raise ValueError(
+                "Estimating redshift PDFs requires reference redshift "
+                "values or reference PDZs."
+            )
+
         self.delta = float(delta)
 
         # Build the dictionary
@@ -149,8 +154,10 @@ class ProbabilityFunction:
             else:
                 sel = SelectionDefinition(
                     additional_rules=[
-                        lambda df, threshold=s, column=random_variable: df[column]
-                        < threshold
+                        (
+                            random_variable,
+                            lambda values, threshold=s: values < threshold,
+                        )
                     ]
                 )
 
@@ -566,7 +573,7 @@ class ProbabilityFunction:
         if cumulative_matrix.shape != (x.size, self.N_test_objects):
             raise ValueError("cumulative_matrix must have shape (n_samples, n_test).")
 
-        # Construct clamped cubic B-spline bases on the sampled domain.
+        # Construct clamped cubic B-spline bases on the sampled domain
         internal_knots = np.linspace(x[0], x[-1], int(n_internal_knots) + 2)[1:-1]
 
         knots = np.concatenate(
@@ -575,20 +582,22 @@ class ProbabilityFunction:
                 internal_knots,
                 np.repeat(x[-1], 4),
             )
-        )
+        )  # Questa ripetizione (4 nodi) realizza una spline cubica clamped
 
         basis = BSpline(
             knots,
-            np.eye(n_coefficients),
+            np.eye(
+                n_coefficients
+            ),  # this is an identity matrix (ones on the diagonal, zeros elsewhere)
             k=3,
             extrapolate=False,
-        )
+        )  # using the identity matrix as the coefficients, the basis functions B_m,3 are constructed simultaneously
 
-        # Shared matrices: evaluate the cumulative and its analytic derivative.
-        design = basis(x)
+        # Shared matrices: evaluate the cumulative and its analytic derivative
+        design = basis(x)  # evaluate basis functions at each threshold
         derivative_design = basis.derivative()(x)
 
-        # Enforce c[m + 1] - c[m] >= 0.
+        # Enforce c[m + 1] - c[m] >= 0
         difference_matrix = np.diff(np.eye(n_coefficients), axis=0)
         constraints = {
             "type": "ineq",
@@ -609,7 +618,7 @@ class ProbabilityFunction:
             y = cumulative_matrix[:, i]
             finite = np.isfinite(y)
 
-            # Require enough observations and avoid extrapolating endpoints.
+            # Require enough observations and avoid extrapolating endpoints
             if (
                 np.count_nonzero(finite) < n_coefficients
                 or not finite[0]
@@ -624,7 +633,7 @@ class ProbabilityFunction:
             observed = np.clip(observed, 0.0, 1.0)
             matrix = design[finite]
 
-            # Feasible initial coefficients, including for nonmonotone data.
+            # Feasible initial coefficients, including for nonmonotone data
             initial = np.linspace(observed.min(), observed.max(), n_coefficients)
 
             def objective(coefficients):
@@ -648,7 +657,7 @@ class ProbabilityFunction:
 
             coefficients = result.x
 
-            # Reject constraint violations larger than numerical tolerance.
+            # Reject constraint violations larger than numerical tolerance
             if (
                 np.any(coefficients < -1e-8)
                 or np.any(coefficients > 1.0 + 1e-8)
@@ -656,17 +665,17 @@ class ProbabilityFunction:
             ):
                 continue
 
-            # Remove only residual numerical violations in fitted coefficients.
+            # Remove only residual numerical violations in fitted coefficients
             coefficients = np.maximum.accumulate(np.clip(coefficients, 0.0, 1.0))
 
-            # Clamped endpoint values equal the first and last coefficients.
+            # Clamped endpoint values equal the first and last coefficients
             interval_mass = coefficients[-1] - coefficients[0]
             if interval_mass <= 1e-10:
                 continue
 
             density = derivative_design @ coefficients
 
-            # The model derivative is nonnegative; clip numerical roundoff.
+            # The model derivative is nonnegative; clip numerical roundoff
             density = np.maximum(density, 0.0)
             normalization = np.trapz(density, x)
 
@@ -771,8 +780,6 @@ class ProbabilityFunction:
         Do not modify or reorder the test DataFrame between `process`
         and this call. Changes preserving its row count cannot be
         detected by this method.
-
-        This method modifies neither the test dataset nor the fitted PDFs.
 
         Examples
         --------

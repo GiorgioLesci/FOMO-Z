@@ -34,7 +34,7 @@ class GridClassification:
     def __init__(
         self,
         dataset: Dataset,
-        target_definition: SelectionDefinition,
+        selection_definition: SelectionDefinition,
         thresholded_quantity_min,
         maximized_quantity="completeness",
         grid_precision=0.15,
@@ -75,7 +75,7 @@ class GridClassification:
         ----------
         dataset : Dataset
             A `Dataset` object containing the dataset and band information.
-        target_definition : SelectionDefinition
+        selection_definition : SelectionDefinition
             A `SelectionDefinition` object containing target selections (e.g. redshift thresholds).
         thresholded_quantity_min : float or array-like
             Required minimum for the thresholded quantity, namely
@@ -149,9 +149,11 @@ class GridClassification:
         self.colors = dataset.colors
         self.CDZs = dataset.CDZs
         self.PDZ_x = dataset.PDZ_x
+        self.z_gal_string = dataset.z_gal_string
+        self.missing_data = dataset.missing_data
         self.weights = np.array(self.dataset["weights"].values)
         self.color_spaces = dataset.color_spaces
-        self.td = target_definition
+        self.td = selection_definition
 
         if isinstance(thresholded_quantity_min, float):
             self.thresholded_quantity_min = np.asarray(
@@ -224,13 +226,23 @@ class GridClassification:
 
         # Create the target masks
         self.target_mask = self.td._get_target_mask(
-            self.dataset, self.td.z_lim, self.CDZs, self.PDZ_x
+            self.dataset,
+            self.td.z_lim,
+            self.CDZs,
+            self.PDZ_x,
+            self.z_gal_string,
+            self.missing_data,
         )
 
         dataset_unweighted = self.dataset.copy()
         dataset_unweighted["weights"] = np.ones(len(self.dataset))
         self.target_mask_unweighted = self.td._get_target_mask(
-            dataset_unweighted, self.td.z_lim, None, None
+            dataset_unweighted,
+            self.td.z_lim,
+            None,
+            None,
+            self.z_gal_string,
+            self.missing_data,
         )
 
     def _process_for_one_z(self, args):
@@ -424,7 +436,12 @@ class GridClassification:
 
             bt_CDZs = self.CDZs[indices] if self.CDZs is not None else None
             target_mask = self.td._get_target_mask(
-                bt_sample, self.td.z_lim, bt_CDZs, self.PDZ_x
+                bt_sample,
+                self.td.z_lim,
+                bt_CDZs,
+                self.PDZ_x,
+                self.z_gal_string,
+                self.missing_data,
             )
             for i_z in range(len(self.td.z_lim)):
                 mask = self.get_mask(i_z, dictionary=dict_temp)

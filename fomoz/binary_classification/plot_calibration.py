@@ -244,6 +244,8 @@ class PlotCalibration:
                     [z_l],
                     self.dataset.CDZs,
                     self.dataset.PDZ_x,
+                    self.dataset.z_gal_string,
+                    self.dataset.missing_data,
                 )
                 mask = self.color_selection._linear_selection(z_l, self.mags, "all")
                 TP, FP, FN, TN = compute_metrics(

@@ -79,7 +79,7 @@ def reference_target_definition_instance():
     target_definition = SelectionDefinition(
         z_lim,
         z_lim_opposite=2.5,
-        additional_rules=[lambda df: df["g"] > 23.0],
+        additional_rules=[("g", lambda g: g > 23)],
     )
     return target_definition
 
@@ -102,7 +102,7 @@ def reference_measure_instance(
         0.0001,
     )
     for z_l in reference_target_definition_instance.z_lim:
-        measure.process(z_l, None, None, cpu_number=1)
+        measure.process(z_l, None, None, "redshift", None, cpu_number=1)
     return measure
 
 
@@ -462,7 +462,7 @@ class TestMeasureProcess:
             0.05,
             0.0001,
         )
-        measure.process(td.z_lim[0], None, None, cpu_number=1)
+        measure.process(td.z_lim[0], None, None, "redshift", None, cpu_number=1)
 
         assert measure.td.z_lim[0] in measure.dict_all
         assert len(measure.dict_all) == 1

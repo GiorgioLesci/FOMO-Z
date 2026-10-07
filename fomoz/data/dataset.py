@@ -71,7 +71,10 @@ class Dataset:
         missing_data : int, float, or list, optional
             Value(s) used in the dataset to denote missing entries. These are replaced
             with NaN for consistency (if missing data in your data set are NaN,
-            you don't need to specify it).
+            you don't need to specify it). This constructor replaces with NaN only
+            the missing values of the photometric bands. To remove (not replace)
+            missing data in other columns of the `dataset` `DataFrame` use
+            `Dataset.drop_missing()`.
         custom_colors : list of tuple(str, str), optional
             List of colors to use instead of all pairwise combinations of the input `bands`.
             Each color must be specified as a 2-element tuple of band names,
@@ -122,29 +125,87 @@ class Dataset:
             errMsg += "Please rename it or set z_gal_string='redshift'."
             raise ValueError(errMsg)
 
-        # PDZs
+        # Validate and normalize reference PDZs
         self.CDZs = None
-        self.PDZ_x = np.asarray(PDZ_x)
+        self.PDZ_x = None
 
         if PDZs is not None:
+            if PDZ_x is None:
+                raise ValueError("PDZ_x must be provided when PDZs are supplied.")
 
-            # Check the input values
-            if np.asarray(PDZs).shape[0] != len(dataset):
-                raise ValueError("PDZs.shape[0] != len(dataset)")
-            if np.asarray(PDZs).shape[1] != len(PDZ_x):
-                raise ValueError("PDZs.shape[1] != len(PDZ_x)")
-            if not np.all(np.diff(PDZ_x) > 0):
-                raise ValueError("PDZ_x must be strictly increasing (sorted).")
+            try:
+                pdzs = np.asarray(PDZs, dtype=float)
+                pdz_x = np.asarray(PDZ_x, dtype=float)
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "PDZs and PDZ_x must contain numerical values."
+                ) from error
 
-            # Normalize
-            total_int = np.trapz(np.asarray(PDZs), np.asarray(PDZ_x), axis=1)
-            PDZs_norm = np.asarray(PDZs) / total_int[:, None]
+            if pdzs.ndim != 2:
+                raise ValueError(
+                    "PDZs must be a two-dimensional array with shape "
+                    "(n_objects, n_samples)."
+                )
 
-            dz = np.diff(np.asarray(PDZ_x))
-            cdf = np.zeros_like(PDZs_norm)
-            cdf[:, 1:] = np.cumsum(
-                0.5 * (PDZs_norm[:, :-1] + PDZs_norm[:, 1:]) * dz, axis=1
+            if pdz_x.ndim != 1 or pdz_x.size < 2:
+                raise ValueError(
+                    "PDZ_x must be a one-dimensional array "
+                    "containing at least two samples."
+                )
+
+            if not np.all(np.isfinite(pdz_x)):
+                raise ValueError("PDZ_x must contain only finite values.")
+
+            if not np.all(np.diff(pdz_x) > 0):
+                raise ValueError("PDZ_x must be strictly increasing.")
+
+            if pdzs.shape != (len(dataset), pdz_x.size):
+                raise ValueError(
+                    f"PDZs must have shape ({len(dataset)}, {pdz_x.size}); "
+                    f"got {pdzs.shape}."
+                )
+
+            invalid_rows = np.any(
+                ~np.isfinite(pdzs) | (pdzs < 0),
+                axis=1,
             )
+            if np.any(invalid_rows):
+                raise ValueError(
+                    f"{np.count_nonzero(invalid_rows)} PDZ(s) contain "
+                    "nonfinite or negative densities. "
+                    "PDZ values must be finite and non-negative."
+                )
+
+            # Individual density samples may be zero, but each PDZ
+            # must have a finite, strictly positive integral.
+            with np.errstate(over="ignore", invalid="ignore"):
+                total_int = np.trapz(pdzs, pdz_x, axis=1)
+
+            invalid_integrals = ~np.isfinite(total_int) | (total_int <= 0)
+            if np.any(invalid_integrals):
+                raise ValueError(
+                    f"{np.count_nonzero(invalid_integrals)} PDZ(s) have "
+                    "a nonfinite or non-positive integral over PDZ_x. "
+                    "Each PDZ must have a finite, strictly positive integral."
+                )
+
+            with np.errstate(over="ignore", invalid="ignore"):
+                pdzs_norm = pdzs / total_int[:, None]
+
+            if not np.all(np.isfinite(pdzs_norm)):
+                raise ValueError(
+                    "PDZ normalization produced nonfinite densities. "
+                    "Check the density values and the PDZ_x sampling grid."
+                )
+
+            dz = np.diff(pdz_x)
+            cdf = np.zeros_like(pdzs_norm)
+            cdf[:, 1:] = np.cumsum(
+                (0.5 * pdzs_norm[:, :-1] + 0.5 * pdzs_norm[:, 1:]) * dz,
+                axis=1,
+            )
+
+            self.PDZ_x = pdz_x
             self.CDZs = cdf
 
         # Check if band keys have allowed names
@@ -166,7 +227,7 @@ class Dataset:
             missing_data, np.nan
         )
 
-        # Check for missing data - redshifts
+        # Check the redshifts
         if "redshift" not in self.dataset.columns and z_gal_string is not None:
             self.dataset["redshift"] = self.dataset[z_gal_string].values
             self.dataset = self.dataset.drop(columns=[z_gal_string])
@@ -174,9 +235,8 @@ class Dataset:
         if z_gal_string is None:
             self.dataset["redshift"] = np.nan
 
-        self.dataset["redshift"] = self.dataset["redshift"].replace(
-            missing_data, np.nan
-        )
+        self.z_gal_string = z_gal_string
+        self.missing_data = missing_data
 
         # Prior weights
         if weights is None:
@@ -191,9 +251,7 @@ class Dataset:
                 )
 
             if np.any(~np.isfinite(weights)) or np.any(weights < 0):
-                raise ValueError(
-                    "weights must contain non-negative and finite values."
-                )
+                raise ValueError("weights must contain non-negative and finite values.")
 
             self.dataset["weights"] = weights
 
@@ -275,3 +333,90 @@ class Dataset:
             )
 
         return validated_colors
+
+    def drop_missing(self, columns):
+        """
+        Remove objects with missing or infinite values in selected columns.
+
+        Invalid entries include NaN, None, pandas missing values,
+        sentinels declared in ``self.missing_data``, and positive or
+        negative numerical infinity. An object is removed if any of
+        the specified columns contains an invalid entry.
+
+        Parameters
+        ----------
+        columns : str or sequence of str
+            DataFrame column names to check. Only these columns
+            determine which objects are removed.
+
+        Notes
+        -----
+        This method modifies the Dataset in place and resets its
+        DataFrame index.
+        The same row mask is applied to the stored cumulative redshift
+        distributions, while their sampling grid remains unchanged.
+        """
+        if isinstance(columns, str):
+            columns = [columns]
+        elif isinstance(columns, (list, tuple)):
+            columns = list(columns)
+        else:
+            raise TypeError("columns must be a string or a list/tuple of strings.")
+
+        if not columns:
+            raise ValueError("Specify at least one column.")
+
+        if any(not isinstance(column, str) or not column.strip() for column in columns):
+            raise TypeError("Column names must be non-empty strings.")
+
+        columns = list(dict.fromkeys(columns))
+
+        unknown = [column for column in columns if column not in self.dataset.columns]
+        if unknown:
+            raise KeyError(f"Columns not found in dataset: {unknown}")
+
+        sentinels = self.missing_data
+        if sentinels is None:
+            sentinels = []
+        elif np.isscalar(sentinels):
+            sentinels = [sentinels]
+        else:
+            sentinels = list(sentinels)
+
+        invalid = np.zeros(len(self.dataset), dtype=bool)
+
+        for column in columns:
+            values = self.dataset[column]
+            invalid |= (
+                values.isna() | values.isin(sentinels) | values.isin([np.inf, -np.inf])
+            ).to_numpy(dtype=bool)
+
+        keep = ~invalid
+        if not np.any(keep):
+            raise ValueError(
+                f"No objects have valid values in all requested "
+                f"columns: {columns}. Dataset was not modified."
+            )
+
+        cdzs = None
+        if self.CDZs is not None:
+            cdzs = np.asarray(self.CDZs)
+            if cdzs.ndim != 2 or cdzs.shape[0] != len(self.dataset):
+                raise ValueError(
+                    "Stored CDZs are not aligned with the DataFrame. "
+                    "Dataset was not modified."
+                )
+
+        n_removed = int(np.count_nonzero(invalid))
+        if n_removed == 0:
+            self.dataset.reset_index(drop=True, inplace=True)
+            return
+
+        # Prepare both filtered structures before updating the instance.
+        filtered_dataset = self.dataset.loc[keep].reset_index(drop=True)
+        filtered_cdzs = cdzs[keep] if cdzs is not None else None
+
+        self.dataset = filtered_dataset
+        self.CDZs = filtered_cdzs
+
+        print(f"The Dataset.drop_missing() method removed {n_removed} objects.")

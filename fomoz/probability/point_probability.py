@@ -295,6 +295,8 @@ class PointProbability:
             selection_definition.z_lim,
             reference_dataset.CDZs,
             reference_dataset.PDZ_x,
+            reference_dataset.z_gal_string,
+            reference_dataset.missing_data,
         )[0]
 
         # Set other class variables
@@ -803,7 +805,7 @@ class PointProbability:
                     block_unmatched += 1
                     continue
 
-                # Dataset guarantees finite, strictly positive weights.
+                # Dataset guarantees finite, strictly positive weights
                 weight_sum = weights.sum()
                 prob[i] = n_good[i] / weight_sum
 
