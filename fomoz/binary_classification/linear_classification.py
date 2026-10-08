@@ -30,6 +30,7 @@ from ..auxiliary import (
     interpolate_parameters,
     make_yaml_serializable,
     restructure_dict,
+    get_distribution,
 )
 
 # Register the custom representers for both default and safe dumpers
@@ -737,6 +738,45 @@ class LinearClassification:
         if self.verbose:
             print("Linear cut calibration complete.")
 
+    def _get_redshift_distribution(self, zl_index, bin_edges, normalize=True):
+        """
+        Get the redshift distribution of color-selected objects.
+
+        Returns the redshift distribution relative to the input limiting redshift.
+        If weights were provided to `Dataset`, these histograms are weighted accordingly.
+        PDZs are not used.
+
+        Parameters
+        ------
+        zl_index : int
+            Index of the redshift threshold in SelectionDefinition.z_lim.
+        bin_edges : array-like
+            Number of histogram bins.
+        normalize : bool, optional
+            If true, the output histogram is a PDF. Otherwise, it is a count histogram.
+
+        Returns
+        -------
+        histogram : numpy.array
+            Array of histogram values.
+        """
+        if self.dataset["redshift"].isna().all():
+            raise ValueError(
+                "Point-estimate redshifts are required to reconstruct "
+                "the redshift distribution."
+            )
+
+        return get_distribution(
+            values=self.dataset["redshift"],
+            bin_edges=bin_edges,
+            prior_weights=self.weights,
+            classification_weights=self.get_mask(
+                zl_index, color_condition="all"
+            ),
+            normalize=normalize,
+            missing_data=self.missing_data,
+        )
+
     def write(
         self,
         output_dir,
@@ -772,17 +812,26 @@ class LinearClassification:
             purity, completeness, and failure rate
             as a function of limiting redshift, and their errors.
         write_redshift_distributions : bool, optional
-            If True, write the `FOMO-Z_{file_name}_redshift_distributions.csv` file,
-            containing the binned redshift distributions of color-selected objects.
-            This file contains the redshift bins and the histograms for each limiting
-            redshift point provided to `SelectionDefinition`.
-            Histograms are derived using the `get_redshift_distribution` method.
-            The first two columns of the file contain bin edges and bin centers,
-            respectively. Subsequent columns contain the redshift distributions
-            corresponding to each limiting redshift value provided to `SelectionDefinition`.
-            These histograms are normalized such that their integral is 1. All histograms
-            share the same bin edges. If weights were provided to `Dataset`, these histograms
-            are weighted accordingly.
+            If True, write the
+            `FOMO-Z_{file_name}_redshift_distributions.csv` file,
+            containing the redshift distributions of color-selected
+            reference objects for each limiting redshift in
+            `SelectionDefinition`.
+
+            Distributions are computed from reference point-estimate
+            redshifts and weighted by the prior weights supplied to
+            `Dataset`. Reference PDZs are not integrated when computing
+            these histograms.
+
+            The first three columns contain the lower bin edges,
+            upper bin edges, and bin centers. Subsequent columns,
+            named `z_lim_{i}`, contain the probability densities for
+            the corresponding limiting-redshift indices.
+
+            All histograms share the same bins and are normalized
+            to unit integral over [min_redshift, max_redshift].
+            An error is raised if a histogram has zero total weight
+            within this interval.
         n_bins_redshift : int, optional
             Number of redshift histogram bins. Used only if `write_redshift_distributions`
             is True.
@@ -853,7 +902,7 @@ class LinearClassification:
             )
 
             for i in range(len(self.td.z_lim)):
-                hist = self.get_redshift_distribution(i, bin_edges, normalize=True)
+                hist = self._get_redshift_distribution(i, bin_edges, normalize=True)
                 dist_df[f"z_lim_{i}"] = hist
 
             file_path = os.path.join(
@@ -934,34 +983,3 @@ class LinearClassification:
             mask |= ne.evaluate(key, local_dict=local_dict)
 
         return mask
-
-    def get_redshift_distribution(self, zl_index, bin_edges, normalize=True):
-        """
-        Get the redshift distribution of color-selected objects.
-
-        Returns the redshift distribution relative to the input limiting redshift.
-        If weights were provided to `Dataset`, these histograms are weighted accordingly.
-
-        Parameters
-        ------
-        zl_index : int
-            Index of the redshift threshold in SelectionDefinition.z_lim.
-        bin_edges : array-like
-            Number of histogram bins.
-        normalize : bool, optional
-            If true, the output histogram is a PDF. Otherwise, it is a count histogram.
-
-        Returns
-        -------
-        histogram : numpy.array
-            Array of histogram values.
-        """
-        if self.dataset["redshift"].isna().all():
-            raise ValueError("Redshifts were not provided to the Dataset class.")
-
-        mask = self.get_mask(zl_index, color_condition="all")
-        dataset = self.dataset["redshift"][mask]
-        hist, _ = np.histogram(
-            dataset, bins=bin_edges, density=normalize, weights=self.weights[mask]
-        )
-        return hist

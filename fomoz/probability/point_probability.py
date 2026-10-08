@@ -254,6 +254,8 @@ class PointProbability:
         test_dataset_was_given = test_dataset is not None
         if not test_dataset_was_given:
             test_dataset = reference_dataset
+
+        self.test_is_reference = test_dataset is reference_dataset
         self._combine_reference_errors = test_dataset_was_given
 
         if test_dataset_was_given:

@@ -25,6 +25,7 @@ from ..auxiliary import (
     update_dict_color_limits,
     update_dict_metadata,
     update_dict,
+    get_distribution,
 )
 
 
@@ -512,6 +513,45 @@ class GridClassification:
         if self.verbose:
             print("Grid calibration complete.")
 
+    def _get_redshift_distribution(self, zl_index, bin_edges, normalize=True):
+        """
+        Compute the redshift distribution of color-selected reference objects.
+
+        Use reference point-estimate redshifts and prior weights.
+        Reference PDZs are not integrated.
+
+        Parameters
+        ----------
+        zl_index : int
+            Index of the redshift threshold in SelectionDefinition.z_lim.
+        bin_edges : array-like
+            Finite, strictly increasing histogram bin edges.
+        normalize : bool, default=True
+            If True, return a probability density normalized over the
+            supplied bin range. Otherwise, return weighted bin counts.
+
+        Returns
+        -------
+        numpy.ndarray
+            Histogram values, with one entry per bin.
+        """
+        if self.dataset["redshift"].isna().all():
+            raise ValueError(
+                "Point-estimate redshifts are required to reconstruct "
+                "the redshift distribution."
+            )
+
+        return get_distribution(
+            values=self.dataset["redshift"],
+            bin_edges=bin_edges,
+            prior_weights=self.weights,
+            classification_weights=self.get_mask(
+                zl_index, color_space="all"
+            ),
+            normalize=normalize,
+            missing_data=self.missing_data,
+        )
+
     def write(
         self,
         output_dir,
@@ -555,7 +595,6 @@ class GridClassification:
             containing the binned redshift distributions of color-selected objects.
             This file contains the redshift bins and the histograms for each limiting
             redshift point provided to `SelectionDefinition`.
-            Histograms are derived using the `get_redshift_distribution` method.
             The first two columns of the file contain bin edges and bin centers,
             respectively. Subsequent columns contain the redshift distributions
             corresponding to each limiting redshift value provided to `SelectionDefinition`.
@@ -671,7 +710,7 @@ class GridClassification:
             )
 
             for i in range(len(self.td.z_lim)):
-                hist = self.get_redshift_distribution(i, bin_edges, normalize=True)
+                hist = self._get_redshift_distribution(i, bin_edges, normalize=True)
                 dist_df[f"z_lim_{i}"] = hist
 
             file_path = os.path.join(
@@ -726,34 +765,3 @@ class GridClassification:
             dictionary = self.dict
 
         return get_color_color_mask(zl_index, color_space, dictionary)
-
-    def get_redshift_distribution(self, zl_index, bin_edges, normalize=True):
-        """
-        Get the redshift distribution of color-selected objects.
-
-        Returns the redshift distribution relative to the input limiting redshift.
-        If weights were provided to `Dataset`, these histograms are weighted accordingly.
-
-        Parameters
-        ------
-        zl_index : int
-            Index of the redshift threshold in SelectionDefinition.z_lim.
-        bin_edges : array-like
-            Number of histogram bins.
-        normalize : bool, optional
-            If true, the output histogram is a PDF. Otherwise, it is a count histogram.
-
-        Returns
-        -------
-        histogram : numpy.array
-            Array of histogram values.
-        """
-        if self.dataset["redshift"].isna().all():
-            raise ValueError("Redshifts were not provided to the Dataset class.")
-
-        mask = self.get_mask(zl_index, color_space="all")
-        dataset = self.dataset["redshift"][mask]
-        hist, _ = np.histogram(
-            dataset, bins=bin_edges, density=normalize, weights=self.weights[mask]
-        )
-        return hist

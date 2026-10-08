@@ -1,10 +1,12 @@
-"""FOMO-Z.
+"""
+FOMO-Z.
 
-A package for the derivation of optimal galaxy color selections and photo-zs.
+A package for the derivation of optimal galaxy classifications and photo-zs.
 """
 
-__author__ = "Giorgio F. Lesci"
+__author__ = "Giorgio Francesco Lesci"
 
 from . import binary_classification
 from . import data
 from . import probability
+from . import reconstruction

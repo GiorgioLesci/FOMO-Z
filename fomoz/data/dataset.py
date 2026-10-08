@@ -58,8 +58,7 @@ class Dataset:
             Column name in `dataset` that contains the point-estimate redshift values.
             If redshift information is not needed, set it to `None`.
             If `PDZs` is `None`, it is used in the definition of the targeted sample and
-            in metrics computation. It is always used to derive the redshift distributions
-            by the `get_redshift_distribution` methods of the calibration classes.
+            in metrics computation.
         PDZs : array-like of array-like, default=None
             Redshift probability functions (normalization is not required) used
             in the metrics computation. If not provided, point-estimates are used
@@ -95,6 +94,13 @@ class Dataset:
             The choice of `custom_colors` directly determines the set of
             color–color spaces (`self.color_spaces`), which are constructed
             as all pairwise combinations of the selected colors.
+
+            The `z_gal_string` key is always used to derive the redshift distributions
+            by the `write` methods of the calibration classes (`LinearClassification`
+            and `GridClassification`), which write redshift distributions to file.
+            The same holds for the `Reconstruction` class:
+            those redshift distributions (which are the same as those written to file
+            by `write`) are based on redshift point estimates.
         """
         if not isinstance(dataset, pd.DataFrame):
             raise TypeError("dataset must be a pandas.DataFrame")
