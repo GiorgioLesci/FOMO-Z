@@ -267,6 +267,7 @@ class ProbabilityFunction:
                         purity_min=local_purity_min,
                         grid_precision=grid_precision,
                         step=step,
+                        retry_calibration=False,
                     )
                     return
 

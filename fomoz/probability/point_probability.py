@@ -444,6 +444,7 @@ class PointProbability:
         purity_min=0.9,
         grid_precision=0.15,
         step=0.01,
+        retry_calibration=True,
     ):
         r"""
         Select informative colors through `GridClassification` methods and backward elimination.
@@ -465,11 +466,16 @@ class PointProbability:
             to the fixed initial calibration baseline.
         purity_min : float, default=0.9
             Minimum global purity requested for the initial calibration.
-            If it is too low, `GridClassification` may raise an error.
+            May be increased automatically if `retry_calibration=True`.
         grid_precision : float, default=0.15
             Resolution of the color-color grids.
         step : float, default=0.01
             Threshold reduction step used during calibration.
+        retry_calibration : bool, default=True
+            If True, retry with a larger purity threshold if `purity_min`
+            is too low (i.e., if the `GridClassification` calibration
+            converges to a larger purity value). If False, the code raises
+            an error if `purity_min` is too low.
 
         Returns
         -------
@@ -479,20 +485,58 @@ class PointProbability:
         """
         if not isinstance(purity_min, float):
             raise ValueError("purity_min must be a float.")
+        if not np.isfinite(purity_min) or not 0.0 < purity_min < 1.0:
+            raise ValueError("purity_min must be finite and between 0 and 1.")
 
-        # Initial calibration: unchanged.
+        if not isinstance(retry_calibration, (bool, np.bool_)):
+            raise TypeError("retry_calibration must be a boolean.")
+
         start = time.perf_counter()
 
-        calibration = GridClassification(
-            self.reference_dataset,
-            self.selection_definition,
-            purity_min,
-            grid_precision=grid_precision,
-            step=step,
-            do_bootstrap=False,
-            verbose=False,
-        )
-        calibration.process()
+        initial_purity_min = purity_min
+        current_purity_min = purity_min
+        n_retries = 0
+
+        while True:
+            try:
+                calibration = GridClassification(
+                    self.reference_dataset,
+                    self.selection_definition,
+                    current_purity_min,
+                    grid_precision=grid_precision,
+                    step=step,
+                    do_bootstrap=False,
+                    verbose=False,
+                )
+                calibration.process()
+                break
+
+            except ValueError as error:
+                # Retry only the recognized calibration failure.
+                if (
+                    not retry_calibration
+                    or not hasattr(error, "calibration_purity")
+                ):
+                    raise
+
+                achieved_purity = float(error.calibration_purity)
+                new_purity_min = achieved_purity + 0.001
+
+                if (
+                    not np.isfinite(new_purity_min)
+                    or new_purity_min >= 1.0
+                    or new_purity_min <= current_purity_min
+                ):
+                    raise ValueError(
+                        "Cannot retry feature selection: "
+                        f"achieved purity={achieved_purity:.6f}, "
+                        f"current purity_min={current_purity_min:.6f}, "
+                        f"proposed purity_min={new_purity_min:.6f}. "
+                        "The new threshold must increase and remain below 1."
+                    ) from error
+
+                current_purity_min = new_purity_min
+                n_retries += 1
 
         purity_baseline = calibration.P[0]
         completeness_baseline = calibration.C[0]
@@ -656,6 +700,16 @@ class PointProbability:
                     "\nDiscarded features (self.discarded_colors):\n"
                     f"{discarded_colors}"
                 )
+
+        if n_retries:
+            warnings.warn(
+                f"Calibration required {n_retries} retries. "
+                f"The requested purity_min increased from "
+                f"{initial_purity_min:.6f} to "
+                f"{current_purity_min:.6f}. "
+                "Feature selection completed successfully.",
+                stacklevel=2,
+            )
 
     def process(
         self,
