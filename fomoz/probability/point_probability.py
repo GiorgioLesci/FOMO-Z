@@ -261,7 +261,7 @@ class PointProbability:
         self.test_is_reference = test_dataset is reference_dataset
         self._combine_reference_errors = not self.test_is_reference
 
-        if test_dataset_was_given:
+        if not self.test_is_reference:
             if test_dataset.CDZs is not None:
                 warnings.warn(
                     "PDZs were set in test_dataset, but they are not used by the PointProbability class."
