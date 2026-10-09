@@ -116,8 +116,10 @@ class PointProbability:
         to each selected color; covariance between colors sharing
         a band is not modeled.
 
-        If `test_dataset` is None, the reference sample is also used
-        as the test sample, and the tolerance is instead
+        If `test_dataset` is None or if it matches exactly `reference_dataset`,
+        the reference sample is also used as the test sample, and
+        matching tolerances use only the test object's color uncertainties.
+        Thus, the tolerance differs from the expression above and reads as
 
         .. math::
 
@@ -126,8 +128,9 @@ class PointProbability:
         Reference uncertainties are not added in quadrature in this
         mode, and self-matches are retained. This is a self-test
         convention, not an independent validation or a leave-one-out
-        evaluation. Explicitly passing `reference_dataset` as
-        `test_dataset` still uses the combined-error convention.
+        evaluation. We stress that this behavior is obtained both
+        when `test_dataset` is None and when the reference
+        `Dataset` is explicitly supplied as `test_dataset`.
 
         Once Sigma_i has been identified, `process` estimates the
         probability that test object i satisfies the selection rules R,
@@ -249,14 +252,14 @@ class PointProbability:
                 f"'test_dataset' must be a Dataset instance or None, got {type(test_dataset).__name__}."
             )
 
-        # If no test dataset is supplied, reuse the reference sample
-        # and apply the test-error-only matching convention.
+        # Reuse the reference sample when no test dataset is supplied
         test_dataset_was_given = test_dataset is not None
         if not test_dataset_was_given:
             test_dataset = reference_dataset
 
+        # Combine uncertainties only for distinct Dataset instances
         self.test_is_reference = test_dataset is reference_dataset
-        self._combine_reference_errors = test_dataset_was_given
+        self._combine_reference_errors = not self.test_is_reference
 
         if test_dataset_was_given:
             if test_dataset.CDZs is not None:

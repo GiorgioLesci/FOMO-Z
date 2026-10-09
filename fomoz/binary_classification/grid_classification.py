@@ -545,9 +545,7 @@ class GridClassification:
             values=self.dataset["redshift"],
             bin_edges=bin_edges,
             prior_weights=self.weights,
-            classification_weights=self.get_mask(
-                zl_index, color_space="all"
-            ),
+            classification_weights=self.get_mask(zl_index, color_space="all"),
             normalize=normalize,
             missing_data=self.missing_data,
         )

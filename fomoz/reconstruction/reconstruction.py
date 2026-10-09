@@ -28,21 +28,22 @@ class Reconstruction:
 
         Parameters
         ----------
-        classification : LinearClassification, GridClassification or PointProbability
+        classification : `LinearClassification`, `GridClassification` or `PointProbability`
             Classification object whose process() method has already
             completed.
 
-            For PointProbability, the test sample must be the reference
+            For `PointProbability`, the test sample must be the reference
             Dataset itself: initialize it with test_dataset=None or
-            explicitly pass the same Dataset as reference and test.
+            explicitly pass the same `Dataset` as reference and test.
         zl_index : int, optional
             Index of the calibrated redshift threshold for a binary
-            classification. Required when multiple thresholds are
-            available; even if None, it defaults to zero when only
-            one is available. This happens only for the binary classification
-            classes.
+            classification. Required when multiple redshift thresholds are
+            available (i.e. it is required if `classification` is either a
+            `LinearClassification` or a `GridClassification` object).
+            Even if None, it defaults to zero when only one threshold is
+            available.
 
-            Must be None for PointProbability, which already represents
+            Must be `None` for `PointProbability`, which already represents
             a single selection definition.
 
         Notes
@@ -50,23 +51,20 @@ class Reconstruction:
         This class does not run calibration, feature selection, or
         probability estimation.
 
-        The reference DataFrame and prior weights are retained without
+        The reference `DataFrame` and prior weights are retained without
         making a full dataset copy. Do not modify or reorder the source
         dataset after classification.
 
-        Create a new Reconstruction instance if the classification
+        Create a new `Reconstruction` instance if the classification
         results change.
 
         Interpreting the reconstructed distribution as that of an
         independent test sample requires a representative reference
-        sample, accounting for prior weights, and the same selection
-        or probability-weighting procedure.
+        sample.
         """
         if isinstance(classification, PointProbability):
             if zl_index is not None:
-                raise ValueError(
-                    "zl_index must be None for PointProbability."
-                )
+                raise ValueError("zl_index must be None for PointProbability.")
 
             if not classification.test_is_reference:
                 raise ValueError(
@@ -106,16 +104,14 @@ class Reconstruction:
                     )
                 zl_index = 0
 
-            if (
-                isinstance(zl_index, (bool, np.bool_))
-                or not isinstance(zl_index, (int, np.integer))
+            if isinstance(zl_index, (bool, np.bool_)) or not isinstance(
+                zl_index, (int, np.integer)
             ):
                 raise TypeError("zl_index must be an integer.")
 
             if not 0 <= zl_index < n_thresholds:
                 raise ValueError(
-                    f"zl_index must lie between 0 and "
-                    f"{n_thresholds - 1}."
+                    f"zl_index must lie between 0 and " f"{n_thresholds - 1}."
                 )
 
             if isinstance(classification, LinearClassification):
@@ -208,8 +204,7 @@ class Reconstruction:
 
         if variable not in self.dataset.columns:
             raise KeyError(
-                f"Column {variable!r} is not present in the "
-                "reference dataset."
+                f"Column {variable!r} is not present in the " "reference dataset."
             )
 
         values = self.dataset[variable].to_numpy(

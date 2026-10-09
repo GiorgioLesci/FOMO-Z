@@ -80,9 +80,7 @@ def get_distribution(
     values = np.asarray(values, dtype=float)
     bin_edges = np.asarray(bin_edges, dtype=float)
     prior_weights = np.asarray(prior_weights, dtype=float)
-    classification_weights = np.asarray(
-        classification_weights, dtype=float
-    )
+    classification_weights = np.asarray(classification_weights, dtype=float)
 
     if values.ndim != 1:
         raise ValueError("values must be a one-dimensional array.")
@@ -110,13 +108,8 @@ def get_distribution(
     if not isinstance(normalize, (bool, np.bool_)):
         raise TypeError("normalize must be a boolean.")
 
-    if (
-        not np.all(np.isfinite(prior_weights))
-        or np.any(prior_weights < 0)
-    ):
-        raise ValueError(
-            "prior_weights must contain finite, non-negative values."
-        )
+    if not np.all(np.isfinite(prior_weights)) or np.any(prior_weights < 0):
+        raise ValueError("prior_weights must contain finite, non-negative values.")
 
     if (
         not np.all(np.isfinite(classification_weights))
@@ -124,8 +117,7 @@ def get_distribution(
         or np.any(classification_weights > 1)
     ):
         raise ValueError(
-            "classification_weights must contain finite values "
-            "between zero and one."
+            "classification_weights must contain finite values " "between zero and one."
         )
 
     effective_weights = prior_weights * classification_weights
