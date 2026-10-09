@@ -513,10 +513,7 @@ class PointProbability:
 
             except ValueError as error:
                 # Retry only the recognized calibration failure.
-                if (
-                    not retry_calibration
-                    or not hasattr(error, "calibration_purity")
-                ):
+                if not retry_calibration or not hasattr(error, "calibration_purity"):
                     raise
 
                 achieved_purity = float(error.calibration_purity)
