@@ -3,6 +3,7 @@ Reconstruct reference-property distributions from classification results.
 """
 
 import numpy as np
+import warnings
 
 from ..auxiliary.distributions import get_distribution as _get_distribution
 from ..binary_classification.linear_classification import LinearClassification
@@ -61,6 +62,11 @@ class Reconstruction:
         Interpreting the reconstructed distribution as that of an
         independent test sample requires a representative reference
         sample.
+
+        Reference objects with NaN membership probabilities are
+        excluded from all reconstructed distributions, without
+        modifying the source dataset. A warning reports their number.
+        If all membership probabilities are NaN, a ValueError is raised.
         """
         if isinstance(classification, PointProbability):
             if zl_index is not None:
@@ -148,6 +154,31 @@ class Reconstruction:
                 "one entry per reference object."
             )
 
+        # Exclude undefined PointProbability results from reconstruction
+        # Binary classifications are left unchanged
+        self._valid_probability = slice(None)
+
+        if isinstance(classification, PointProbability):
+            valid = ~np.isnan(self.classification_weights)
+            n_missing = np.count_nonzero(~valid)
+
+            if not np.any(valid):
+                raise ValueError(
+                    "Cannot reconstruct distributions: all membership "
+                    "probabilities are NaN."
+                )
+
+            if n_missing:
+                self._valid_probability = valid
+
+                warnings.warn(
+                    f"Excluding {n_missing} reference objects with "
+                    "undefined membership probabilities from reconstruction. "
+                    "Normalized distributions refer only to objects "
+                    "with defined probabilities.",
+                    stacklevel=2,
+                )
+
     def get_distribution(self, variable, bin_edges, normalize=True):
         """
         Compute the distribution of a reference property.
@@ -184,9 +215,15 @@ class Reconstruction:
         classification weights. The latter are binary masks or
         membership probabilities, not target-definition weights.
 
-        Missing property values are allowed only for objects with
-        zero effective weight. Invalid classification probabilities,
-        including NaN, raise an error.
+        Objects with NaN membership probabilities from PointProbability
+        are excluded, with a warning issued when Reconstruction is
+        initialized. Normalized distributions refer to the remaining
+        objects within the supplied bin range.
+
+        Among retained objects, missing property values are allowed
+        only for objects with zero effective weight. Infinite
+        classification probabilities or values outside [0, 1]
+        raise an error.
 
         For redshift, this method uses point estimates even when
         reference PDZs were supplied during classification.
@@ -213,10 +250,12 @@ class Reconstruction:
         )
 
         return _get_distribution(
-            values=values,
+            values=values[self._valid_probability],
             bin_edges=bin_edges,
-            prior_weights=self.prior_weights,
-            classification_weights=self.classification_weights,
+            prior_weights=self.prior_weights[self._valid_probability],
+            classification_weights=self.classification_weights[
+                self._valid_probability
+            ],
             normalize=normalize,
             missing_data=self.missing_data,
         )
