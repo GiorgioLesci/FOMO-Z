@@ -14,8 +14,11 @@ import yaml
 from fomoz.binary_classification.linear_classification import LinearClassification
 from fomoz.binary_classification.grid_classification import GridClassification
 from fomoz.binary_classification.classifier import Classifier
+from fomoz.probability.point_probability import PointProbability
+from fomoz.probability.probability_function import ProbabilityFunction
 from fomoz.data.dataset import Dataset
 from fomoz.data.selection_definition import SelectionDefinition
+from fomoz.reconstruction import Reconstruction
 from fomoz.auxiliary import (
     MeasureLinear,
     build_nested_dict,
@@ -177,6 +180,32 @@ def reference_calibration_grid_instance_weights(
     )
 
     return calibration
+
+@pytest.fixture(params=[False, True], ids=["unweighted", "weighted"])
+def probability_dataset_instance(request):
+    """Create a small dataset with identical colors and known redshifts."""
+    n_objects = 40
+    bands = ["g", "r", "i"]
+
+    df = pd.DataFrame(
+        {
+            "redshift": np.linspace(0.025, 1.975, n_objects),
+            "g": np.full(n_objects, 23.0),
+            "r": np.full(n_objects, 22.5),
+            "i": np.full(n_objects, 22.0),
+            "g_error": np.full(n_objects, 0.05),
+            "r_error": np.full(n_objects, 0.05),
+            "i_error": np.full(n_objects, 0.05),
+        }
+    )
+
+    weights = (
+        np.linspace(1.0, 3.0, n_objects)
+        if request.param
+        else np.ones(n_objects)
+    )
+
+    return Dataset(df, bands, weights=weights)
 
 
 ####################
@@ -644,6 +673,213 @@ class TestColorSelection:
             assert np.allclose(
                 np.sum(mask[i]), expected_N[i]
             ), f"[Grid calibration]: Number of selected galaxies mismatch for the {i}-th test z_l: expected {expected_N[i]}, got {np.sum(mask[i])}"
+
+
+###########################
+### point_probability.py ###
+###########################
+
+
+class TestPointProbability:
+    """Test point probabilities against known weighted memberships."""
+
+    def test_process(self, probability_dataset_instance):
+        """Test probabilities when all reference objects match."""
+        dataset = probability_dataset_instance
+        td = SelectionDefinition(0.5)
+
+        point_prob = PointProbability(td, dataset, verbose=False)
+        point_prob.process(cpu_number=1)
+
+        probabilities = point_prob.probability_dictionary["prob"]
+
+        redshift = dataset.dataset["redshift"].to_numpy()
+        weights = dataset.dataset["weights"].to_numpy()
+
+        expected_probability = (
+            np.sum(weights[redshift > 0.5]) / np.sum(weights)
+        )
+
+        assert probabilities.shape == (len(dataset.dataset),)
+        assert np.all(np.isfinite(probabilities))
+        assert np.allclose(
+            probabilities, expected_probability
+        ), (
+            f"Probability mismatch: expected {expected_probability}, "
+            f"got {probabilities}"
+        )
+
+        # Check that exporting results preserves row alignment.
+        results = point_prob.get_results_dataframe()
+
+        pd.testing.assert_frame_equal(
+            results[dataset.dataset.columns],
+            dataset.dataset,
+        )
+
+
+##############################
+### probability_function.py ###
+##############################
+
+
+class TestProbabilityFunction:
+    """Test cumulative estimates, PDF normalization, and refitting."""
+
+    def test_process_and_update_fit(self, probability_dataset_instance):
+        """Test reconstruction against a known weighted cumulative."""
+        dataset = probability_dataset_instance
+
+        prob_func = ProbabilityFunction(
+            dataset,
+            delta=0.1,
+            min_variable=0.01,
+            max_variable=2.1,
+            verbose=False,
+        )
+
+        prob_func.process(
+            cpu_number=1,
+            n_internal_knots=3,
+        )
+
+        redshift = dataset.dataset["redshift"].to_numpy()
+        weights = dataset.dataset["weights"].to_numpy()
+        x = prob_func.variable_samples
+        n_objects = len(dataset.dataset)
+
+        expected_cumulative = np.array(
+            [
+                np.sum(weights[redshift < threshold]) / np.sum(weights)
+                for threshold in x
+            ]
+        )
+
+        assert prob_func.cumulative_matrix.shape == (
+            len(x), n_objects
+        )
+        assert np.allclose(
+            prob_func.cumulative_matrix,
+            expected_cumulative[:, None],
+        ), "Cumulative probabilities differ from the expected weighted fractions."
+
+        assert np.all(prob_func.fit_success)
+        assert prob_func.probability_functions.shape == (
+            n_objects, len(x)
+        )
+        assert np.all(np.isfinite(prob_func.probability_functions))
+        assert np.all(prob_func.probability_functions >= 0.0)
+
+        integrals = np.trapz(
+            prob_func.probability_functions,
+            x=x,
+            axis=1,
+        )
+        assert np.allclose(integrals, 1.0)
+
+        # Check the ordering of the reconstructed percentiles.
+        results = prob_func.get_results_dataframe()
+
+        assert np.all(results["fomoz_p16"] <= results["fomoz_median"])
+        assert np.all(results["fomoz_median"] <= results["fomoz_p84"])
+
+        pd.testing.assert_frame_equal(
+            results[dataset.dataset.columns],
+            dataset.dataset,
+        )
+
+        # Refit without changing the previously computed cumulative estimates.
+        cumulative_before = prob_func.cumulative_matrix.copy()
+
+        prob_func.update_fit(n_internal_knots=5)
+
+        np.testing.assert_array_equal(
+            prob_func.cumulative_matrix,
+            cumulative_before,
+        )
+
+        assert prob_func.n_internal_knots == 5
+        assert np.all(prob_func.fit_success)
+        assert np.all(np.isfinite(prob_func.probability_functions))
+        assert np.all(prob_func.probability_functions >= 0.0)
+
+        integrals = np.trapz(
+            prob_func.probability_functions,
+            x=x,
+            axis=1,
+        )
+        assert np.allclose(integrals, 1.0)
+
+
+#########################
+### reconstruction.py ###
+#########################
+
+
+class TestReconstruction:
+    """Test reconstructed histograms against known weighted counts."""
+
+    def test_get_distribution(self, probability_dataset_instance):
+        """Test weighted counts and normalized probability densities."""
+        dataset = probability_dataset_instance
+        td = SelectionDefinition(0.5)
+
+        point_prob = PointProbability(td, dataset, verbose=False)
+        point_prob.process(cpu_number=1)
+
+        reconstruction = Reconstruction(point_prob)
+
+        redshift = dataset.dataset["redshift"].to_numpy()
+        weights = dataset.dataset["weights"].to_numpy()
+        bin_edges = np.array([0.0, 0.4, 1.0, 2.0])
+
+        # Identical colors imply the same probability for every object.
+        expected_probability = (
+            np.sum(weights[redshift > 0.5]) / np.sum(weights)
+        )
+
+        expected_counts, _ = np.histogram(
+            redshift,
+            bins=bin_edges,
+            weights=weights * expected_probability,
+        )
+
+        counts = reconstruction.get_distribution(
+            "redshift",
+            bin_edges,
+            normalize=False,
+        )
+
+        assert counts.shape == (len(bin_edges) - 1,)
+        assert np.allclose(
+            counts, expected_counts
+        ), (
+            f"Reconstructed counts mismatch: expected {expected_counts}, "
+            f"got {counts}"
+        )
+
+        # Unequal bin widths also test conversion from counts to density.
+        expected_density = (
+            expected_counts / np.sum(expected_counts) / np.diff(bin_edges)
+        )
+
+        density = reconstruction.get_distribution(
+            "redshift",
+            bin_edges,
+            normalize=True,
+        )
+
+        assert np.allclose(
+            density, expected_density
+        ), (
+            f"Reconstructed density mismatch: expected {expected_density}, "
+            f"got {density}"
+        )
+
+        assert np.isclose(
+            np.sum(density * np.diff(bin_edges)),
+            1.0,
+        )
 
 
 if __name__ == "__main__":

@@ -201,7 +201,7 @@ class ProbabilityFunction:
             Threshold reduction step used during calibration.
         cpu_number : int or None, default=4
             Maximum number of concurrent threshold workers. Explicit values
-            are capped at max(cpu_count() - 2, 1). None uses that limit.
+            are capped at max(cpu_count() - 2, 1). `None` uses that limit.
             Use 1 for sequential processing.
             More workers increase the memory required for simultaneous
             calibrations and may not provide proportional speedups.
