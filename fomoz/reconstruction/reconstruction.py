@@ -186,9 +186,7 @@ class Reconstruction:
         Parameters
         ----------
         variable : str
-            Column name in the reference DataFrame, such as "redshift"
-            or "lp_mass_med". Use the standardized name "redshift"
-            regardless of the original redshift-column name.
+            Column name in the reference DataFrame, such as "redshift".
         bin_edges : array-like
             Finite, strictly increasing histogram bin edges.
         normalize : bool, default=True
