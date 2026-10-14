@@ -10,6 +10,7 @@ distributions of other physical quantities, such as stellar masses and star form
 """
 
 import warnings
+from copy import copy
 import numpy as np
 from tqdm import tqdm
 from scipy.interpolate import BSpline
@@ -81,8 +82,17 @@ class ProbabilityFunction:
             `PointProbability`).
         random_variable : str, default="redshift"
             The random variable for which probability functions are estimated.
-            The default, "redshift", implies the derivation of photo-zs.
-            The corresponding column must be present in the reference dataset.
+            Use ``"redshift"`` or the column name designated by
+            ``reference_dataset.z_gal_string`` to estimate redshift PDFs.
+            These names are equivalent: reference PDZs take precedence over
+            point estimates when available. With ``z_gal_string=None``, use
+            ``"redshift"`` to request the reference PDZs.
+
+            Any other name identifies a point-valued property in the reference
+            DataFrame. Its cumulative probabilities use only thresholds on
+            that property; reference redshift cuts and PDZs are disabled in
+            an internal view without modifying the supplied Dataset. Prior
+            weights and photometric uncertainties are retained.
             The variable does not need to be available in the test dataset.
         delta : float, default=0.02
             The sampling precision over the random variable's domain.
@@ -104,7 +114,19 @@ class ProbabilityFunction:
         else:
             self.N_test_objects = len(test_dataset.dataset)
 
-        if random_variable not in reference_dataset.dataset.columns:
+        if not isinstance(random_variable, str) or not random_variable:
+            raise TypeError("random_variable must be a non-empty string.")
+
+        # Resolve the declared redshift alias before choosing the selection method.
+        if (
+            reference_dataset.z_gal_string is not None
+            and random_variable == reference_dataset.z_gal_string
+        ):
+            random_variable = "redshift"
+
+        if random_variable not in reference_dataset.dataset.columns and not (
+            random_variable == "redshift" and reference_dataset.CDZs is not None
+        ):
             raise ValueError(f"{random_variable} is not a key of reference_dataset.")
 
         self.test_dataset = (  # Retain the test sample
@@ -146,6 +168,14 @@ class ProbabilityFunction:
         if self.variable_samples.size < 2:
             raise ValueError("At least two variable samples are required.")
 
+        # Generic properties must not inherit the default redshift constraint.
+        probability_reference = reference_dataset
+        if random_variable != "redshift":
+            probability_reference = copy(reference_dataset)
+            probability_reference.z_gal_string = None
+            probability_reference.CDZs = None
+            probability_reference.PDZ_x = None
+
         self.dict_point = {}
         for s in self.variable_samples:
             # Define SelectionDefinition
@@ -164,7 +194,7 @@ class ProbabilityFunction:
             # Fill the dict
             self.dict_point[s] = PointProbability(
                 sel,
-                reference_dataset,
+                probability_reference,
                 test_dataset=test_dataset,
                 verbose=False,
             )
@@ -947,3 +977,4 @@ class ProbabilityFunction:
         output["fomoz_interval_probability"] = interval_probability.copy()
 
         return output
+
