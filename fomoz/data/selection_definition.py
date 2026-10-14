@@ -40,7 +40,8 @@ class SelectionDefinition:
             in a definite redshift range, use the input parameter `z_lim_opposite`.
             This defines the second edge of the redshift bin.
             If `z_gal_string=None` and no `PDZs` are provided to the `Dataset` object
-            passed to the `LinearClassification` and `GridClassification` classes, then `z_lim` is not used.
+            passed to the `LinearClassification` and `GridClassification` classes,
+            then `z_lim` is not used.
         is_zlim_lower : bool, default = True
             If True, `z_lim` is a set of lower redshift limits. Otherwise, `z_lim`
             is a set of higher limits.
@@ -268,6 +269,23 @@ class SelectionDefinition:
 
         if z_lim.ndim != 1 or z_lim.size == 0:
             raise ValueError("z_lim must be a non-empty one-dimensional array-like.")
+
+        has_redshift_information = CDZs is not None or z_gal_string is not None
+
+        has_redshift_constraint = (
+            np.any(z_lim != 0.0)
+            or self.z_lim_opposite is not None
+            or not self.is_zlim_lower
+        )
+
+        if has_redshift_constraint and not has_redshift_information:
+            raise ValueError(
+                "A redshift selection was requested, but the reference Dataset "
+                "provides neither point-estimate redshifts nor PDZs. "
+                "Set z_gal_string to the reference redshift column, or provide "
+                "PDZs and PDZ_x. For selections based only on additional_rules, "
+                "leave the redshift-selection parameters at their defaults."
+            )
 
         # Validate the reference properties required by the selection
         columns_to_check = list(self.required_columns)

@@ -90,10 +90,8 @@ class ProbabilityFunction:
 
             Any other name identifies a point-valued property in the reference
             DataFrame. Its cumulative probabilities use only thresholds on
-            that property; reference redshift cuts and PDZs are disabled in
-            an internal view without modifying the supplied Dataset. Prior
-            weights and photometric uncertainties are retained.
-            The variable does not need to be available in the test dataset.
+            that property. The variable does not need to be available in the
+            test dataset.
         delta : float, default=0.02
             The sampling precision over the random variable's domain.
         min_variable : float, default=0.05

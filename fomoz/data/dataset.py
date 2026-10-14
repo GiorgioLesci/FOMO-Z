@@ -20,7 +20,7 @@ class Dataset:
         self,
         dataset,
         bands,
-        z_gal_string="redshift",
+        z_gal_string=None,
         PDZs=None,
         PDZ_x=None,
         weights=None,
@@ -54,9 +54,9 @@ class Dataset:
             optionally, estimates of redshift and other physical properties.
         bands : list of str
             Names of the photometric bands to include in the analysis.
-        z_gal_string : str, default="redshift"
-            Column name in `dataset` that contains the point-estimate redshift values.
-            If redshift information is not needed, set it to `None`.
+        z_gal_string : str, default=None
+            Column name in `dataset` that contains the reference point-estimate redshift values.
+            If reference redshift information is not needed, set it to `None`.
             If `PDZs` is `None`, it is used in the definition of the targeted sample and
             in metrics computation.
         PDZs : array-like of array-like, default=None
@@ -73,7 +73,9 @@ class Dataset:
             you don't need to specify it). This constructor replaces with NaN only
             the missing values of the photometric bands. To remove (not replace)
             missing data in other columns of the `dataset` `DataFrame` use
-            `Dataset.drop_missing()`.
+            `Dataset.drop_missing()`. Default includes a non-exhaustive list of
+            missing-value representations that your average astronomer might come up with.
+            If you encounter a new one, e.g. 9999 or -9.9, please contact the author of this package.
         custom_colors : list of tuple(str, str), optional
             List of colors to use instead of all pairwise combinations of the input `bands`.
             Each color must be specified as a 2-element tuple of band names,
@@ -98,9 +100,6 @@ class Dataset:
             The `z_gal_string` key is always used to derive the redshift distributions
             by the `write` methods of the calibration classes (`LinearClassification`
             and `GridClassification`), which write redshift distributions to file.
-            The same holds for the `Reconstruction` class:
-            those redshift distributions (which are the same as those written to file
-            by `write`) are based on redshift point estimates.
         """
         if not isinstance(dataset, pd.DataFrame):
             raise TypeError("dataset must be a pandas.DataFrame")
@@ -236,7 +235,6 @@ class Dataset:
         # Check the redshifts
         if "redshift" not in self.dataset.columns and z_gal_string is not None:
             self.dataset["redshift"] = self.dataset[z_gal_string].values
-            self.dataset = self.dataset.drop(columns=[z_gal_string])
 
         if z_gal_string is None:
             self.dataset["redshift"] = np.nan

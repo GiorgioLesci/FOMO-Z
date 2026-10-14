@@ -38,6 +38,10 @@ nosetests.xml
 coverage.xml
 *.cover
 
+# Docs
+docs/_build/
+docs/generated/
+
 # Environments
 .env
 .venv
