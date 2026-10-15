@@ -37,9 +37,18 @@ class Reconstruction:
         Numerical property defining the selection, available in both samples.
         This can differ from the property reconstructed by
         :meth:`~fomoz.reconstruction.reconstruction.Reconstruction.get_distribution`,
-        which is required only in the reference sample. Original column names
-        standardized by :class:`~fomoz.data.dataset.Dataset` to ``'redshift'``
-        are also accepted.
+        which is required only in the reference sample.
+        In each Dataset, its non-None ``z_gal_string`` is resolved to
+        ``"redshift"`` before looking up a column, even if the original
+        column is retained. The standardized column takes precedence.
+        Other names are read literally. With ``z_gal_string=None``, no
+        original-name alias is inferred.
+
+        Selection always uses observed numerical values, never PDZ integrals.
+        Ensure the requested property has the same physical meaning in both
+        samples; their designated redshift columns need not represent the
+        same estimator. For example, select on a separate photometric-redshift
+        column and reconstruct spectroscopic redshift from the reference.
     selection_min, selection_max : float
         Selection is ``selection_min < value <= selection_max`` throughout,
         including feature calibration. These limits do NOT cut the property
@@ -365,11 +374,16 @@ class Reconstruction:
 
     @staticmethod
     def _resolve(ds, variable):
+        """Resolve the declared redshift alias before looking up a column."""
+        requested = variable
+        if ds.z_gal_string is not None and variable == ds.z_gal_string:
+            variable = "redshift"
         if variable in ds.dataset.columns:
             return variable
-        if variable == ds.z_gal_string and "redshift" in ds.dataset.columns:
-            return "redshift"
-        raise KeyError(f"Column {variable!r} is absent from a required dataset.")
+        raise KeyError(
+            f"Column {requested!r} (resolved to {variable!r}) "
+            "is absent from a required dataset."
+        )
 
     @staticmethod
     def _values(ds, key):
@@ -909,4 +923,5 @@ class Reconstruction:
         if retained > 1 + tolerance:
             raise ValueError("Reference PDZ bin probabilities exceed unit mass.")
         return mass * total_weight, max(0.0, 1.0 - retained)
+
 
