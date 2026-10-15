@@ -54,11 +54,15 @@ class Dataset:
             optionally, estimates of redshift and other physical properties.
         bands : list of str
             Names of the photometric bands to include in the analysis.
-        z_gal_string : str, default=None
-            Column name in `dataset` that contains the reference point-estimate redshift values.
-            If reference redshift information is not needed, set it to `None`.
-            If `PDZs` is `None`, it is used in the definition of the targeted sample and
-            in metrics computation.
+        z_gal_string : str or None, default=None
+            Column containing reference point-estimate redshifts. Its values are
+            copied to the standardized ``"redshift"`` column; the original column
+            is retained.
+
+            If None, no point-redshift column is designated for redshift selections.
+            Existing columns are preserved, but are not automatically used for
+            those selections. Reference PDZs, when supplied, remain available
+            independently of this setting.
         PDZs : array-like of array-like, default=None
             Redshift probability functions (normalization is not required) used
             in the metrics computation. If not provided, point-estimates are used
@@ -232,14 +236,14 @@ class Dataset:
             missing_data, np.nan
         )
 
-        # Check the redshifts
-        if "redshift" not in self.dataset.columns and z_gal_string is not None:
-            self.dataset["redshift"] = self.dataset[z_gal_string].values
-
-        if z_gal_string is None:
+        # Preserve original columns and provide the standardized redshift key.
+        if z_gal_string is not None:
+            self.dataset["redshift"] = self.dataset[z_gal_string].copy()
+        elif "redshift" not in self.dataset.columns:
             self.dataset["redshift"] = np.nan
 
         self.z_gal_string = z_gal_string
+
         self.missing_data = missing_data
 
         # Prior weights

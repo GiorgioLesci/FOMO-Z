@@ -825,7 +825,7 @@ class PointProbability:
         prob_error = np.full(self.N_test_objects, np.nan)
         n_colors_used = np.zeros(self.N_test_objects, dtype=int)
 
-        # Compile/load the Numba specialization before starting workers.
+        # Compile/load the Numba specialization before starting workers
         if self.N_test_objects > 0:
             self._matching_indices(0)
 
@@ -847,7 +847,7 @@ class PointProbability:
                     block_below_min_colors += 1
                     continue
 
-                # The compiled kernel releases the GIL during matching.
+                # The compiled kernel releases the GIL during matching
                 indices = self._matching_indices(i)
 
                 values = self.target_mask[indices]

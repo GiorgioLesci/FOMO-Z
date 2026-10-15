@@ -535,7 +535,7 @@ class GridClassification:
         numpy.ndarray
             Histogram values, with one entry per bin.
         """
-        if self.dataset["redshift"].isna().all():
+        if self.z_gal_string is None:
             raise ValueError(
                 "Point-estimate redshifts are required to reconstruct "
                 "the redshift distribution."
