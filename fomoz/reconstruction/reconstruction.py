@@ -632,7 +632,9 @@ class Reconstruction:
         ncolors = np.zeros(nt, dtype=int)
         supported = np.zeros(nt, dtype=bool)
 
-        point._matching_indices(0)  # Compile/load the Numba specialization before starting workers
+        point._matching_indices(
+            0
+        )  # Compile/load the Numba specialization before starting workers
 
         # The run_block function outputs contributions, having dimension nr.
         # It runs over blocks of test objects. For each test i,
@@ -835,6 +837,7 @@ class Reconstruction:
         conditional on that range. If :meth:`process` used ``unmatched='drop'``,
         it also represents only the supported test subset.
         """
+        # Initial checks
         if self.reference_weights is None:
             raise RuntimeError("Run process() successfully before get_distribution().")
         if list(self.colors) != self._processed_colors:
@@ -851,13 +854,16 @@ class Reconstruction:
             raise TypeError("variable must be a non-empty column-name string.")
         if use_pdzs is not None and not isinstance(use_pdzs, (bool, np.bool_)):
             raise TypeError("use_pdzs must be a boolean or None.")
+
         reference = self.reference_dataset
-        # Dataset attaches PDZs to redshift, not to every numerical property.
+
+        # Dataset attaches PDZs to redshift, not to every numerical property
         is_redshift = variable == "redshift" or (
             reference.z_gal_string is not None and variable == reference.z_gal_string
         )
         has_pdzs = reference.CDZs is not None
         pdz_mode = (is_redshift and has_pdzs) if use_pdzs is None else bool(use_pdzs)
+
         if pdz_mode:
             if not is_redshift:
                 raise ValueError(
@@ -890,6 +896,7 @@ class Reconstruction:
                     "distribution; using redshift point estimates instead.",
                     stacklevel=2,
                 )
+
         if lost_fraction > 1e-12:
             warnings.warn(
                 f"{lost_fraction:.6%} of transferred weight lies outside the "
@@ -909,16 +916,62 @@ class Reconstruction:
         return hist
 
     def _pdz_histogram(self, edges):
-        """Sum reference CDF increments with the transferred weights.
+        r"""
+        Compute weighted bin counts from reference cumulative redshift distributions.
 
-        Use the same left-search/clipping convention as SelectionDefinition
-        in PointProbability. No new matching or feature selection is performed.
-        Validate contributing CDF rows only; their positions refer to the full
-        reference catalogue, not to the internally selected subset.
+        For each contributing reference object, obtain the probability mass
+        in each bin from differences between its cumulative probabilities.
+        Multiply these masses by the reference weights transferred during
+        :meth:`process` and sum over reference objects:
+
+        .. math::
+
+            N_b = \sum_j w_{\mathrm{rec}}^j
+            \left[F_j(\tilde e_{b+1}) - F_j(\tilde e_b)\right].
+
+        Here, :math:`F_j` is the reference cumulative redshift distribution,
+        and :math:`\tilde e_b` is the grid position used to evaluate bin edge
+        :math:`e_b`, following the lookup convention described below.
+
+        Parameters
+        ----------
+        edges : numpy.ndarray
+            One-dimensional array of finite, strictly increasing redshift
+            bin edges. These conditions are checked by :meth:`get_distribution`
+            before calling this method.
+
+        Returns
+        -------
+        counts : numpy.ndarray
+            Unnormalized weighted counts, with shape ``(len(edges) - 1,)``.
+            Counts are not divided by bin widths. For full-grid coverage,
+            their sum equals the total transferred reference weight.
+        lost_fraction : float
+            Fraction of the total transferred weight outside the represented
+            bin range, computed as one minus the retained probability fraction.
+            This is a weighted probability fraction, not an object fraction.
+
+        Notes
+        -----
+        This method requires reference PDZs and transferred weights computed
+        by :meth:`process`, with a positive total transferred weight.
+        CDF rows and weights refer to the full reference catalogue.
+        Only rows with positive transferred weight are checked and used.
+        Edge lookup uses ``searchsorted(..., side="left")``, clipped to the
+        grid endpoints, consistently with SelectionDefinition.
+        Edges below or above the grid use the first or last cumulative value,
+        respectively. Edges mapped to the same grid index enclose zero mass.
+        The supplied PDZ grid defines the normalized probability support;
+        probability outside that grid is unknown.
+        No matching, feature selection, or density normalization is performed.
+        The returned lost fraction is used by :meth:`get_distribution` to
+        report excluded weight; this method does not itself issue that warning.
         """
         reference = self.reference_dataset
         grid = np.asarray(reference.PDZ_x, dtype=float)
         cdfs = np.asarray(reference.CDZs, dtype=float)
+
+        # Initial checks
         if (
             grid.ndim != 1
             or grid.size < 2
@@ -930,6 +983,8 @@ class Reconstruction:
             raise ValueError(
                 "Reference CDZs must align with the full reference and PDZ_x."
             )
+
+        # ...
         active = self.reference_weights > 0
         rows = cdfs[active]
         tolerance = 1e-10
@@ -945,6 +1000,8 @@ class Reconstruction:
                 "Contributing reference CDZs must be finite, nondecreasing, "
                 "and normalized from zero to one over PDZ_x."
             )
+
+        # ...
         indices = np.clip(np.searchsorted(grid, edges, side="left"), 0, grid.size - 1)
         within = (edges > grid[0]) & (edges < grid[-1])
         if np.any(within & (grid[indices] != edges)):
@@ -955,6 +1012,7 @@ class Reconstruction:
                 "Use edges on PDZ_x to avoid grid-dependent bin shifts.",
                 stacklevel=3,
             )
+
         # Normalize weights before multiplication to avoid overflow. The bin
         # probabilities equal the weighted average of PointProbability values.
         weights = self.reference_weights[active]
@@ -966,5 +1024,3 @@ class Reconstruction:
         if retained > 1 + tolerance:
             raise ValueError("Reference PDZ bin probabilities exceed unit mass.")
         return mass * total_weight, max(0.0, 1.0 - retained)
-
-
