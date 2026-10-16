@@ -30,8 +30,8 @@ from ..auxiliary import (
     interpolate_parameters,
     make_yaml_serializable,
     restructure_dict,
-    get_distribution,
 )
+from ...auxiliary.distributions import get_distribution as compute_distribution
 
 # Register the custom representers for both default and safe dumpers
 yaml.add_representer(float, float_representer)
@@ -738,41 +738,89 @@ class LinearClassification:
         if self.verbose:
             print("Linear cut calibration complete.")
 
-    def _get_redshift_distribution(self, zl_index, bin_edges, normalize=True):
+    def get_distribution(self, zl_index, variable, bin_edges, normalize=True):
         """
-        Get the redshift distribution of color-selected objects.
+        Compute a property distribution of color-selected reference objects.
 
-        Returns the redshift distribution relative to the input limiting redshift.
-        If weights were provided to `Dataset`, these histograms are weighted accordingly.
-        PDZs are not used.
+        Combine reference prior weights with the color-selection mask.
+        Redshift distributions always use reference PDZs when available.
+        Otherwise, use point estimates. Other properties use point values.
 
         Parameters
-        ------
+        ----------
         zl_index : int
-            Index of the redshift threshold in SelectionDefinition.z_lim.
-        bin_edges : array-like
-            Number of histogram bins.
-        normalize : bool, optional
-            If true, the output histogram is a PDF. Otherwise, it is a count histogram.
+            Index of the threshold in SelectionDefinition.z_lim.
+        variable : str
+            Name of the reference property to histogram.
+            Use "redshift" or the original Dataset.z_gal_string alias
+            for redshift. Other column names are read literally.
+        bin_edges : array-like of shape (n_bins + 1,)
+            Finite, strictly increasing edges in units of variable.
+        normalize : bool, default=True
+            Return a density normalized over the bin range if True;
+            otherwise return weighted counts.
 
         Returns
         -------
-        histogram : numpy.array
-            Array of histogram values.
-        """
-        if self.z_gal_string is None:
-            raise ValueError(
-                "Point-estimate redshifts are required to reconstruct "
-                "the redshift distribution."
-            )
+        numpy.ndarray of shape (n_bins,)
+            Weighted counts or normalized probability densities.
 
-        return get_distribution(
-            values=self.dataset["redshift"],
+        Raises
+        ------
+        TypeError
+            If variable is not a non-empty string.
+        ValueError
+            If point-estimate redshifts are requested without a designated
+            redshift column, or if distribution inputs are invalid.
+        KeyError
+            If the requested point-value column is absent.
+
+        Notes
+        -----
+        The original non-None Dataset.z_gal_string is resolved to "redshift".
+
+        Reference PDZs describe redshift only. When available, their use for
+        redshift reconstruction is mandatory and no point estimates are
+        required. With Dataset.z_gal_string=None, only "redshift" selects
+        PDZ mode. No other column is automatically treated as an alias.
+
+        The result describes the color-selected reference sample, weighted
+        by its prior weights. It does not transfer a distribution to an
+        independent test sample. Normalization is conditional on the
+        supplied bin range.
+        """
+        if not isinstance(variable, str) or not variable:
+            raise TypeError("variable must be a non-empty string.")
+
+        is_redshift = variable == "redshift" or (
+            self.z_gal_string is not None and variable == self.z_gal_string
+        )
+        pdz_mode = is_redshift and self.CDZs is not None
+
+        if pdz_mode:
+            values = None
+        else:
+            if is_redshift and self.z_gal_string is None:
+                raise ValueError(
+                    "Redshift reconstruction requires reference PDZs "
+                    "or a point-estimate column designated through "
+                    "Dataset.z_gal_string."
+                )
+
+            key = "redshift" if is_redshift else variable
+            if key not in self.dataset.columns:
+                raise KeyError(f"Reference property column {key!r} is missing.")
+            values = self.dataset[key]
+
+        return compute_distribution(
+            values=values,
             bin_edges=bin_edges,
             prior_weights=self.weights,
             classification_weights=self.get_mask(zl_index, color_condition="all"),
             normalize=normalize,
             missing_data=self.missing_data,
+            CDZs=self.CDZs if pdz_mode else None,
+            PDZ_x=self.PDZ_x if pdz_mode else None,
         )
 
     def write(
@@ -782,7 +830,7 @@ class LinearClassification:
         reference_sample_name="",
         notes="",
         write_metrics=True,
-        write_redshift_distributions=True,
+        write_redshift_distributions=False,
         n_bins_redshift=200,
         min_redshift=0.0,
         max_redshift=4.0,
@@ -791,7 +839,7 @@ class LinearClassification:
         Save the optimal color selection.
 
         The dictionary of optimal cuts is saved to a YAML file.
-        Metrics and redshift distributions, are saved to CSV files.
+        Metrics and redshift distributions are saved to CSV files.
 
         Parameters
         ----------
@@ -817,9 +865,9 @@ class LinearClassification:
             `SelectionDefinition`.
 
             Distributions are computed from reference point-estimate
-            redshifts and weighted by the prior weights supplied to
-            `Dataset`. Reference PDZs are not integrated when computing
-            these histograms.
+            redshifts (if PDZs are not provided) and weighted by the prior weights supplied
+            to `Dataset`. If PDZs were provided to dataset, they are used to
+            compute the histograms rather than using redshift point estimates.
 
             The first three columns contain the lower bin edges,
             upper bin edges, and bin centers. Subsequent columns,
@@ -900,7 +948,7 @@ class LinearClassification:
             )
 
             for i in range(len(self.td.z_lim)):
-                hist = self._get_redshift_distribution(i, bin_edges, normalize=True)
+                hist = self.get_distribution(i, "redshift", bin_edges, normalize=True)
                 dist_df[f"z_lim_{i}"] = hist
 
             file_path = os.path.join(

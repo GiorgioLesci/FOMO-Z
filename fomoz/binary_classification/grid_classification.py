@@ -9,6 +9,7 @@ given any condition on redshift or any other galaxy properties.
 
 import copy
 import os
+import warnings
 
 import numpy as np
 from scipy.stats import beta
@@ -25,8 +26,8 @@ from ..auxiliary import (
     update_dict_color_limits,
     update_dict_metadata,
     update_dict,
-    get_distribution,
 )
+from ...auxiliary.distributions import get_distribution as compute_distribution
 
 
 class GridClassification:
@@ -513,41 +514,89 @@ class GridClassification:
         if self.verbose:
             print("Grid calibration complete.")
 
-    def _get_redshift_distribution(self, zl_index, bin_edges, normalize=True):
+    def get_distribution(self, zl_index, variable, bin_edges, normalize=True):
         """
-        Compute the redshift distribution of color-selected reference objects.
+        Compute a property distribution of color-selected reference objects.
 
-        Use reference point-estimate redshifts and prior weights.
-        Reference PDZs are not integrated.
+        Combine reference prior weights with the color-selection mask.
+        Redshift distributions always use reference PDZs when available.
+        Otherwise, use point estimates. Other properties use point values.
 
         Parameters
         ----------
         zl_index : int
-            Index of the redshift threshold in SelectionDefinition.z_lim.
-        bin_edges : array-like
-            Finite, strictly increasing histogram bin edges.
+            Index of the threshold in SelectionDefinition.z_lim.
+        variable : str
+            Name of the reference property to histogram.
+            Use "redshift" or the original Dataset.z_gal_string alias
+            for redshift. Other column names are read literally.
+        bin_edges : array-like of shape (n_bins + 1,)
+            Finite, strictly increasing edges in units of variable.
         normalize : bool, default=True
-            If True, return a probability density normalized over the
-            supplied bin range. Otherwise, return weighted bin counts.
+            Return a density normalized over the bin range if True;
+            otherwise return weighted counts.
 
         Returns
         -------
-        numpy.ndarray
-            Histogram values, with one entry per bin.
-        """
-        if self.z_gal_string is None:
-            raise ValueError(
-                "Point-estimate redshifts are required to reconstruct "
-                "the redshift distribution."
-            )
+        numpy.ndarray of shape (n_bins,)
+            Weighted counts or normalized probability densities.
 
-        return get_distribution(
-            values=self.dataset["redshift"],
+        Raises
+        ------
+        TypeError
+            If variable is not a non-empty string.
+        ValueError
+            If point-estimate redshifts are requested without a designated
+            redshift column, or if distribution inputs are invalid.
+        KeyError
+            If the requested point-value column is absent.
+
+        Notes
+        -----
+        The original non-None Dataset.z_gal_string is resolved to "redshift".
+
+        Reference PDZs describe redshift only. When available, their use for
+        redshift reconstruction is mandatory and no point estimates are
+        required. With Dataset.z_gal_string=None, only "redshift" selects
+        PDZ mode. No other column is automatically treated as an alias.
+
+        The result describes the color-selected reference sample, weighted
+        by its prior weights. It does not transfer a distribution to an
+        independent test sample. Normalization is conditional on the
+        supplied bin range.
+        """
+        if not isinstance(variable, str) or not variable:
+            raise TypeError("variable must be a non-empty string.")
+
+        is_redshift = variable == "redshift" or (
+            self.z_gal_string is not None and variable == self.z_gal_string
+        )
+        pdz_mode = is_redshift and self.CDZs is not None
+
+        if pdz_mode:
+            values = None
+        else:
+            if is_redshift and self.z_gal_string is None:
+                raise ValueError(
+                    "Redshift reconstruction requires reference PDZs "
+                    "or a point-estimate column designated through "
+                    "Dataset.z_gal_string."
+                )
+
+            key = "redshift" if is_redshift else variable
+            if key not in self.dataset.columns:
+                raise KeyError(f"Reference property column {key!r} is missing.")
+            values = self.dataset[key]
+
+        return compute_distribution(
+            values=values,
             bin_edges=bin_edges,
             prior_weights=self.weights,
-            classification_weights=self.get_mask(zl_index, color_space="all"),
+            classification_weights=self.get_mask(zl_index, color_condition="all"),
             normalize=normalize,
             missing_data=self.missing_data,
+            CDZs=self.CDZs if pdz_mode else None,
+            PDZ_x=self.PDZ_x if pdz_mode else None,
         )
 
     def write(
@@ -557,7 +606,7 @@ class GridClassification:
         reference_sample_name="",
         notes="",
         write_metrics=True,
-        write_redshift_distributions=True,
+        write_redshift_distributions=False,
         n_bins_redshift=200,
         min_redshift=0.0,
         max_redshift=4.0,
@@ -589,16 +638,26 @@ class GridClassification:
             purity, completeness, and failure rate
             as a function of limiting redshift, and their errors.
         write_redshift_distributions : bool, optional
-            If True, write the `FOMO-Z_{file_name}_redshift_distributions.csv` file,
-            containing the binned redshift distributions of color-selected objects.
-            This file contains the redshift bins and the histograms for each limiting
-            redshift point provided to `SelectionDefinition`.
-            The first two columns of the file contain bin edges and bin centers,
-            respectively. Subsequent columns contain the redshift distributions
-            corresponding to each limiting redshift value provided to `SelectionDefinition`.
-            These histograms are normalized such that their integral is 1. All histograms
-            share the same bin edges. If weights were provided to `Dataset`, these histograms
-            are weighted accordingly.
+            If True, write the
+            `FOMO-Z_{file_name}_redshift_distributions.csv` file,
+            containing the redshift distributions of color-selected
+            reference objects for each limiting redshift in
+            `SelectionDefinition`.
+
+            Distributions are computed from reference point-estimate
+            redshifts (if PDZs are not provided) and weighted by the prior weights supplied
+            to `Dataset`. If PDZs were provided to dataset, they are used to
+            compute the histograms rather than using redshift point estimates.
+
+            The first three columns contain the lower bin edges,
+            upper bin edges, and bin centers. Subsequent columns,
+            named `z_lim_{i}`, contain the probability densities for
+            the corresponding limiting-redshift indices.
+
+            All histograms share the same bins and are normalized
+            to unit integral over [min_redshift, max_redshift].
+            An error is raised if a histogram has zero total weight
+            within this interval.
         n_bins_redshift : int, optional
             Number of redshift histogram bins. Used only if `write_redshift_distributions`
             is True.
@@ -708,7 +767,7 @@ class GridClassification:
             )
 
             for i in range(len(self.td.z_lim)):
-                hist = self._get_redshift_distribution(i, bin_edges, normalize=True)
+                hist = self.get_distribution(i, "redshift", bin_edges, normalize=True)
                 dist_df[f"z_lim_{i}"] = hist
 
             file_path = os.path.join(
