@@ -64,13 +64,13 @@ class Dataset:
             those selections. Reference PDZs, when supplied, remain available
             independently of this setting.
         PDZs : array-like of array-like, default=None
-            Redshift probability functions (normalization is not required) used
-            in the metrics computation. If not provided, point-estimates are used
-            (whose key is defined by `z_gal_string`). Must have shape `(len(dataset), len(PDZ_x))`.
+            Redshift probability functions (normalization is not required).
+            If not provided, point-estimates are used (whose key is defined by `z_gal_string`).
+            Must have shape `(len(dataset), len(PDZ_x))`.
         PDZ_x : array-like, default=None
             Redshift values where `PDZs[i]` is computed.
         weights : array-like, default=None
-            Prior per-object weights used to compute the selection metrics.
+            Prior per-object weights.
         missing_data : int, float, or list, optional
             Value(s) used in the dataset to denote missing entries. These are replaced
             with NaN for consistency (if missing data in your data set are NaN,
