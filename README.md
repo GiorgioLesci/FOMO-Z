@@ -10,7 +10,7 @@ The package supports reference weights, missing photometric measurements, and re
 
 ## Binary selection: `binary_classification`
 
-The `binary_classification` subpackage calibrates color-based selections that maximize completeness subject to a prescribed minimum purity. These selections can target galaxies satisfying redshift cuts or criteria involving other reference properties.
+The `binary_classification` subpackage calibrates color-based selections that maximize completeness given a prescribed minimum purity. These selections can target galaxies satisfying redshift cuts or criteria involving other reference properties.
 
 ### `LinearClassification`
 
