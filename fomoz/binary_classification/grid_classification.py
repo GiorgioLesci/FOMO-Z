@@ -27,7 +27,7 @@ from ..auxiliary import (
     update_dict_metadata,
     update_dict,
 )
-from ...auxiliary.distributions import get_distribution as compute_distribution
+from ..auxiliary.distributions import get_distribution as compute_distribution
 
 
 class GridClassification:

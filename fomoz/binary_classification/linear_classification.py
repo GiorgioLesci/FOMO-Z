@@ -31,7 +31,7 @@ from ..auxiliary import (
     make_yaml_serializable,
     restructure_dict,
 )
-from ...auxiliary.distributions import get_distribution as compute_distribution
+from ..auxiliary.distributions import get_distribution as compute_distribution
 
 # Register the custom representers for both default and safe dumpers
 yaml.add_representer(float, float_representer)
