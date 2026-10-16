@@ -16,9 +16,9 @@ from fomoz.binary_classification.grid_classification import GridClassification
 from fomoz.binary_classification.classifier import Classifier
 from fomoz.probability.point_probability import PointProbability
 from fomoz.probability.probability_function import ProbabilityFunction
+from fomoz.probability.reconstruction import Reconstruction
 from fomoz.data.dataset import Dataset
 from fomoz.data.selection_definition import SelectionDefinition
-from fomoz.reconstruction import Reconstruction
 from fomoz.auxiliary import (
     MeasureLinear,
     build_nested_dict,
@@ -51,7 +51,7 @@ def reference_dataset():
 def reference_dataset_instance(reference_dataset):
     """Create a Dataset instance with reference.csv data for testing."""
     bands = ["g", "r", "i"]
-    dataset = Dataset(reference_dataset, bands)
+    dataset = Dataset(reference_dataset, bands, z_gal_string="redshift")
     return dataset
 
 
@@ -60,7 +60,10 @@ def reference_dataset_instance_weights(reference_dataset):
     """Create a Dataset instance with reference.csv data for testing."""
     bands = ["g", "r", "i"]
     dataset = Dataset(
-        reference_dataset, bands, weights=np.full(len(reference_dataset), 0.1)
+        reference_dataset,
+        bands,
+        z_gal_string="redshift",
+        weights=np.full(len(reference_dataset), 0.1),
     )
     return dataset
 
@@ -70,7 +73,7 @@ def reference_dataset_instance_weights(reference_dataset):
 def reference_colors(reference_dataset):
     """Create a Dataset instance with reference.csv data for testing."""
     bands = ["g", "r", "i"]
-    dataset = Dataset(reference_dataset, bands)
+    dataset = Dataset(reference_dataset, bands, z_gal_string="redshift")
     return dataset.colors
 
 
@@ -205,7 +208,7 @@ def probability_dataset_instance(request):
         else np.ones(n_objects)
     )
 
-    return Dataset(df, bands, weights=weights)
+    return Dataset(df, bands, z_gal_string="redshift", weights=weights)
 
 
 ####################
@@ -817,69 +820,130 @@ class TestProbabilityFunction:
 
 
 class TestReconstruction:
-    """Test reconstructed histograms against known weighted counts."""
+    """Test distribution transfer from reference to selected test objects."""
 
     def test_get_distribution(self, probability_dataset_instance):
-        """Test weighted counts and normalized probability densities."""
+        """Test transferred weights, redshift aliases, and normalized density."""
         dataset = probability_dataset_instance
-        td = SelectionDefinition(0.5)
+        bands = ["g", "r", "i"]
 
-        point_prob = PointProbability(td, dataset, verbose=False)
-        point_prob.process(cpu_number=1)
-
-        reconstruction = Reconstruction(point_prob)
-
-        redshift = dataset.dataset["redshift"].to_numpy()
-        weights = dataset.dataset["weights"].to_numpy()
-        bin_edges = np.array([0.0, 0.4, 1.0, 2.0])
-
-        # Identical colors imply the same probability for every object.
-        expected_probability = (
-            np.sum(weights[redshift > 0.5]) / np.sum(weights)
+        # Full reference: retain objects inside and outside the selection.
+        reference_frame = dataset.dataset.copy()
+        reference_frame["z_spec"] = reference_frame.pop("redshift")
+        reference_frame["selection_value"] = np.linspace(
+            0.1, 0.9, len(reference_frame)
         )
 
-        expected_counts, _ = np.histogram(
-            redshift,
-            bins=bin_edges,
-            weights=weights * expected_probability,
+        reference = Dataset(
+            reference_frame,
+            bands,
+            z_gal_string="z_spec",
+            weights=reference_frame["weights"].to_numpy(),
         )
 
-        counts = reconstruction.get_distribution(
-            "redshift",
-            bin_edges,
-            normalize=False,
+        # Independent full test sample, with the same photometric colors.
+        test_frame = reference_frame.iloc[:4].copy()
+        test_frame = test_frame.drop(columns=["z_spec"])
+        test_frame["selection_value"] = [0.2, 0.4, 0.7, 0.9]
+        test_weights = np.array([2.0, 3.0, 5.0, 7.0])
+
+        test = Dataset(
+            test_frame,
+            bands,
+            z_gal_string=None,
+            weights=test_weights,
         )
 
-        assert counts.shape == (len(bin_edges) - 1,)
-        assert np.allclose(
-            counts, expected_counts
-        ), (
-            f"Reconstructed counts mismatch: expected {expected_counts}, "
-            f"got {counts}"
+        reconstruction = Reconstruction(
+            reference_dataset=reference,
+            test_dataset=test,
+            selection_variable="selection_value",
+            selection_min=0.0,
+            selection_max=0.5,
+            verbose=False,
         )
 
-        # Unequal bin widths also test conversion from counts to density.
-        expected_density = (
-            expected_counts / np.sum(expected_counts) / np.diff(bin_edges)
+        # Fix the colors to isolate matching and weight transfer.
+        reconstruction.colors = [("g", "r"), ("r", "i")]
+        reconstruction.process(cpu_number=1)
+
+        selected_reference = (
+            (reference.dataset["selection_value"] > 0.0)
+            & (reference.dataset["selection_value"] <= 0.5)
+        ).to_numpy()
+
+        selected_test = (
+            (test.dataset["selection_value"] > 0.0)
+            & (test.dataset["selection_value"] <= 0.5)
+        ).to_numpy()
+
+        reference_weights = reference.dataset["weights"].to_numpy()
+        selected_test_weight = test_weights[selected_test].sum()
+
+        # All colors are identical, so each selected test matches every
+        # selected reference. Transfer the test weight proportionally
+        # to the selected reference prior weights.
+        expected_weights = np.zeros(len(reference.dataset))
+        expected_weights[selected_reference] = (
+            selected_test_weight
+            * reference_weights[selected_reference]
+            / reference_weights[selected_reference].sum()
         )
 
-        density = reconstruction.get_distribution(
-            "redshift",
-            bin_edges,
-            normalize=True,
+        np.testing.assert_allclose(
+            reconstruction.reference_weights,
+            expected_weights,
         )
-
-        assert np.allclose(
-            density, expected_density
-        ), (
-            f"Reconstructed density mismatch: expected {expected_density}, "
-            f"got {density}"
-        )
-
         assert np.isclose(
-            np.sum(density * np.diff(bin_edges)),
-            1.0,
+            reconstruction.reference_weights.sum(),
+            selected_test_weight,
         )
+
+        bin_edges = np.array([0.0, 0.4, 1.0, 2.0])
+        expected_counts, _ = np.histogram(
+            reference.dataset["redshift"],
+            bins=bin_edges,
+            weights=expected_weights,
+        )
+
+        # Both names must resolve to the designated reference redshift.
+        for variable in ["redshift", "z_spec"]:
+            counts = reconstruction.get_distribution(
+                variable,
+                bin_edges,
+                normalize=False,
+            )
+            np.testing.assert_allclose(counts, expected_counts)
+
+            density = reconstruction.get_distribution(
+                variable,
+                bin_edges,
+                normalize=True,
+            )
+            expected_density = (
+                expected_counts
+                / expected_counts.sum()
+                / np.diff(bin_edges)
+            )
+            np.testing.assert_allclose(density, expected_density)
+            assert np.isclose(
+                np.sum(density * np.diff(bin_edges)),
+                1.0,
+            )
+
+    def test_reject_same_dataset(self, probability_dataset_instance):
+        """Reject using the same Dataset as reference and test."""
+        dataset = probability_dataset_instance
+
+        with pytest.raises(ValueError):
+            Reconstruction(
+                reference_dataset=dataset,
+                test_dataset=dataset,
+                selection_variable="redshift",
+                selection_min=0.0,
+                selection_max=1.0,
+                verbose=False,
+            )
 
 
 if __name__ == "__main__":

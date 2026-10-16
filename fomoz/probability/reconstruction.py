@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from ..data.dataset import Dataset
 from ..data.selection_definition import SelectionDefinition
-from ..probability.point_probability import PointProbability
+from .point_probability import PointProbability
 
 
 class Reconstruction:
@@ -37,7 +37,7 @@ class Reconstruction:
         Observed selection variable.
         It is a numerical property defining the selection, available in both samples.
         This should differ from the property reconstructed by
-        :meth:`~fomoz.reconstruction.reconstruction.Reconstruction.get_distribution`,
+        :meth:`~fomoz.probability.reconstruction.Reconstruction.get_distribution`,
         which is required only in the reference sample.
 
         This selection always uses observed scalar values, never PDZs.
@@ -48,7 +48,7 @@ class Reconstruction:
     selection_min, selection_max : float
         Selection is ``selection_min < value <= selection_max`` throughout,
         including feature calibration. These limits do NOT cut the property
-        passed to :meth:`~fomoz.reconstruction.reconstruction.Reconstruction.get_distribution`.
+        passed to :meth:`~fomoz.probability.reconstruction.Reconstruction.get_distribution`.
     verbose : bool, default=True
         Print selection counts, the reconstruction method, and matching
         progress. Validation errors and warnings are not suppressed.
@@ -57,7 +57,7 @@ class Reconstruction:
     ----------
     colors : list of tuple(str, str) or None
         Colors retained by
-        :meth:`~fomoz.reconstruction.reconstruction.Reconstruction.select_features_grid`;
+        :meth:`~fomoz.probability.reconstruction.Reconstruction.select_features_grid`;
         ``None`` before calibration.
     discarded_colors : list of tuple(str, str)
         Candidate colors removed by feature selection.
@@ -68,11 +68,11 @@ class Reconstruction:
     reference_weights : numpy.ndarray or None
         Transferred test weights aligned to the FULL reference DataFrame.
         Entries outside the selection are zero. Available after successful
-        :meth:`~fomoz.reconstruction.reconstruction.Reconstruction.process`;
+        :meth:`~fomoz.probability.reconstruction.Reconstruction.process`;
         their sum equals the weight of supported selected test objects.
     diagnostics : dict or None
         Matching diagnostics set by
-        :meth:`~fomoz.reconstruction.reconstruction.Reconstruction.process`.
+        :meth:`~fomoz.probability.reconstruction.Reconstruction.process`.
 
     Notes
     -----
@@ -88,11 +88,11 @@ class Reconstruction:
     selection. It does not yet perform feature calibration or matching.
     The reconstruction then proceeds as follows:
 
-    1. Call :meth:`~fomoz.reconstruction.reconstruction.Reconstruction.select_features_grid`.
+    1. Call :meth:`~fomoz.probability.reconstruction.Reconstruction.select_features_grid`.
        The internal ``PointProbability`` uses the FULL reference sample to
        identify colors that distinguish objects inside the selection interval
        from those outside it. No external test sample is needed for this step.
-    2. Call :meth:`~fomoz.reconstruction.reconstruction.Reconstruction.process`.
+    2. Call :meth:`~fomoz.probability.reconstruction.Reconstruction.process`.
        Both parent samples are restricted internally to the same interval in
        ``selection_variable``. A SECOND internal ``PointProbability`` receives
        these selected reference and test samples and the previously selected
@@ -103,7 +103,7 @@ class Reconstruction:
        contribution equal to that test object's weight, then sum contributions
        from all supported test objects. No membership probability is used as
        an additional weight.
-    4. Call :meth:`~fomoz.reconstruction.reconstruction.Reconstruction.get_distribution`
+    4. Call :meth:`~fomoz.probability.reconstruction.Reconstruction.get_distribution`
        with a reference-property name and histogram edges. It transfers point
        estimates, or reference PDZ bin integrals when reconstructing redshift,
        using the accumulated contributions. The property may be
@@ -175,10 +175,12 @@ class Reconstruction:
     selected colors and matching sets are used for all histogram intervals.
     These probabilities are implicit: no new PointProbability calibration is
     performed for each interval. For point estimates the final histogram bin
-    includes its right edge, following NumPy's convention. PDZ integration uses
-    the same discrete CDF lookup as SelectionDefinition in PointProbability:
-    each edge is mapped to the first PDZ_x value at or above it, with clipping
-    to the grid endpoints. Use histogram edges on PDZ_x for exact bin alignment.
+    includes its right edge, following NumPy's convention.
+
+    PDZ integration uses linear interpolation of the reference cumulative
+    distributions at the requested bin edges, consistently with
+    SelectionDefinition. Cumulative values below and above the supplied
+    PDZ_x grid are set to zero and one, respectively.
 
     Denote the supported, positive-weight selected test sample by
     :math:`\mathcal{T}`. Its input weights are written
@@ -496,7 +498,7 @@ class Reconstruction:
         to distribute each reference object's transferred weight across redshift
         bins. Reference prior weights remain active during feature selection.
 
-        Run before :meth:`~fomoz.reconstruction.reconstruction.Reconstruction.process`.
+        Run before :meth:`~fomoz.probability.reconstruction.Reconstruction.process`.
         """
         self.reference_weights = None
         self.diagnostics = None
@@ -562,7 +564,7 @@ class Reconstruction:
         in quadrature when matching the two separate samples.
 
         Changing ``self.colors`` requires re-running
-        :meth:`~fomoz.reconstruction.reconstruction.Reconstruction.process`.
+        :meth:`~fomoz.probability.reconstruction.Reconstruction.process`.
         Input :class:`~fomoz.data.dataset.Dataset` objects
         must remain unchanged throughout the lifetime of this reconstruction.
         """
@@ -740,7 +742,7 @@ class Reconstruction:
             )
 
     def get_distribution(self, variable, bin_edges, normalize=True, use_pdzs=None):
-        """
+        r"""
         Reconstruct a bulk property from weighted point estimates.
 
         The :meth:`process` method has already matched each selected test object
@@ -820,7 +822,7 @@ class Reconstruction:
         Raises
         ------
         RuntimeError
-            If :meth:`~fomoz.reconstruction.reconstruction.Reconstruction.process`
+            If :meth:`~fomoz.probability.reconstruction.Reconstruction.process`
             has not succeeded or ``self.colors`` changed afterwards.
 
         Notes
@@ -875,6 +877,13 @@ class Reconstruction:
                 raise ValueError("use_pdzs=True requires reference PDZs.")
             hist, lost_fraction = self._pdz_histogram(edges)
         else:
+            if is_redshift and reference.z_gal_string is None:
+                raise ValueError(
+                    "Point-estimate redshift reconstruction requires "
+                    "reference_dataset.z_gal_string to identify the "
+                    "redshift column. To use reference PDZs instead, "
+                    "set use_pdzs=None or True and provide PDZs."
+                )
             key = self._resolve(reference, variable)
             values, invalid = self._values(reference, key)
             active = self.reference_weights > 0
@@ -927,11 +936,12 @@ class Reconstruction:
         .. math::
 
             N_b = \sum_j w_{\mathrm{rec}}^j
-            \left[F_j(\tilde e_{b+1}) - F_j(\tilde e_b)\right].
+            \left[F_j^{\mathrm{interp}}(e_{b+1})
+            - F_j^{\mathrm{interp}}(e_b)\right].
 
-        Here, :math:`F_j` is the reference cumulative redshift distribution,
-        and :math:`\tilde e_b` is the grid position used to evaluate bin edge
-        :math:`e_b`, following the lookup convention described below.
+        Here, :math:`F_j^{\mathrm{interp}}` is the reference cumulative
+        redshift distribution linearly interpolated at the requested
+        bin edges :math:`e_b`.
 
         Parameters
         ----------
@@ -957,12 +967,10 @@ class Reconstruction:
         by :meth:`process`, with a positive total transferred weight.
         CDF rows and weights refer to the full reference catalogue.
         Only rows with positive transferred weight are checked and used.
-        Edge lookup uses ``searchsorted(..., side="left")``, clipped to the
-        grid endpoints, consistently with SelectionDefinition.
-        Edges below or above the grid use the first or last cumulative value,
-        respectively. Edges mapped to the same grid index enclose zero mass.
-        The supplied PDZ grid defines the normalized probability support;
-        probability outside that grid is unknown.
+        Cumulative probabilities are linearly interpolated at the requested
+        bin edges. Below and above the supplied PDZ grid, cumulative values
+        are set to zero and one, respectively. The grid defines the normalized
+        probability support; probability outside that grid is unknown.
         No matching, feature selection, or density normalization is performed.
         The returned lost fraction is used by :meth:`get_distribution` to
         report excluded weight; this method does not itself issue that warning.
@@ -984,7 +992,6 @@ class Reconstruction:
                 "Reference CDZs must align with the full reference and PDZ_x."
             )
 
-        # ...
         active = self.reference_weights > 0
         rows = cdfs[active]
         tolerance = 1e-10
@@ -1001,26 +1008,20 @@ class Reconstruction:
                 "and normalized from zero to one over PDZ_x."
             )
 
-        # ...
-        indices = np.clip(np.searchsorted(grid, edges, side="left"), 0, grid.size - 1)
-        within = (edges > grid[0]) & (edges < grid[-1])
-        if np.any(within & (grid[indices] != edges)):
-            warnings.warn(
-                "Some bin edges do not coincide with PDZ_x. As in "
-                "PointProbability/SelectionDefinition, CDFs are evaluated at "
-                "the first grid point at or above each edge (no interpolation). "
-                "Use edges on PDZ_x to avoid grid-dependent bin shifts.",
-                stacklevel=3,
-            )
+        # Evaluate each reference CDF at the requested bin edges.
+        # Outside PDZ_x, use the endpoints of the normalized distribution.
+        edge_cdfs = np.array(
+            [np.interp(edges, grid, cdf, left=0.0, right=1.0) for cdf in rows]
+        )
 
         # Normalize weights before multiplication to avoid overflow. The bin
         # probabilities equal the weighted average of PointProbability values.
         weights = self.reference_weights[active]
         total_weight = weights.sum()
-        edge_cdfs = rows[:, indices]
         probabilities = np.clip(np.diff(edge_cdfs, axis=1), 0.0, 1.0)
         mass = (weights / total_weight) @ probabilities
         retained = mass.sum()
         if retained > 1 + tolerance:
-            raise ValueError("Reference PDZ bin probabilities exceed unit mass.")
+            raise ValueError("Reference PDZ bin probabilities exceed unit integral.")
+
         return mass * total_weight, max(0.0, 1.0 - retained)

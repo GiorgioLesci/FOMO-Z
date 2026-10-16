@@ -263,6 +263,10 @@ class SelectionDefinition:
           satisfy the redshift condition AND all additional rules to be marked as True.
         - The returned mask can be used directly for calculating completeness, purity,
           and other selection metrics.
+        - Reference cumulative redshift distributions are linearly interpolated
+          at the requested thresholds. Below and above the supplied ``PDZ_x``
+          grid, cumulative probabilities are set to zero and one, respectively.
+          This convention matches the PDZ integration used by Reconstruction.
         """
         z_lim = np.asarray(z_lim)
 
@@ -371,15 +375,25 @@ class SelectionDefinition:
             weights = input_weights
 
         if CDZs is not None:
-            idxs = np.searchsorted(PDZ_x, z_lim, side="left")
-            idxs = np.clip(idxs, 0, len(PDZ_x) - 1)
+            # Evaluate reference CDFs at all requested redshift thresholds
+            cdf_limits = np.array(
+                [np.interp(z_lim, PDZ_x, cdf, left=0.0, right=1.0) for cdf in CDZs]
+            ).reshape(len(dataset), len(z_lim))
 
-            # If an additional redshift rule is present, precompute its CDF index
+            # The opposite boundary is shared by all thresholds
             if self.z_lim_opposite is not None:
-                idx_additional = np.searchsorted(
-                    PDZ_x, self.z_lim_opposite, side="left"
+                cdf_opposite = np.array(
+                    [
+                        np.interp(
+                            self.z_lim_opposite,
+                            PDZ_x,
+                            cdf,
+                            left=0.0,
+                            right=1.0,
+                        )
+                        for cdf in CDZs
+                    ]
                 )
-                idx_additional = np.clip(idx_additional, 0, len(PDZ_x) - 1)
 
         for i, zz in enumerate(z_lim):
 
@@ -401,18 +415,16 @@ class SelectionDefinition:
                     )
 
             else:
-
                 if self.z_lim_opposite is not None:
                     if self.is_zlim_lower:
-                        probs = CDZs[:, idx_additional] - CDZs[:, idxs[i]]
+                        probs = cdf_opposite - cdf_limits[:, i]
                     else:
-                        probs = CDZs[:, idxs[i]] - CDZs[:, idx_additional]
-
+                        probs = cdf_limits[:, i] - cdf_opposite
                 else:
                     if self.is_zlim_lower:
-                        probs = 1 - CDZs[:, idxs[i]]
+                        probs = 1.0 - cdf_limits[:, i]
                     else:
-                        probs = CDZs[:, idxs[i]]
+                        probs = cdf_limits[:, i]
 
                 target_mask[i] = np.clip(probs, 0.0, 1.0)
 
