@@ -52,7 +52,7 @@ For redshift inference, it produces individual photometric redshift distribution
 
 `Reconstruction` infers population distributions for a selected test sample using property measurements available in a distinct reference sample.
 
-The `Reconstruction` class can be used as an alternative to self-organizing maps when reconstructing redshift distributions.
+The `Reconstruction` class can be used as an alternative to self-organizing maps.
 
 The user supplies the full reference and test samples, together with an observed variable and an interval defining the target selection. Feature selection uses the full reference sample. Matching is then performed between the selected subsets. Reference PDZs can be integrated when reconstructing redshift distributions.
 
