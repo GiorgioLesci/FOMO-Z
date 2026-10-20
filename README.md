@@ -6,7 +6,7 @@ A Python package for optimized galaxy classification, photometric redshift estim
 
 `FOMO-Z` (Flexible Optimizer of Multi-dimensional Operators and photo-Zs) uses reference samples to relate galaxy photometry to physical properties. It provides tools for calibrating binary color selections, estimating individual membership probabilities and property distributions, and reconstructing population distributions for selected test samples.
 
-The package supports reference weights, missing photometric measurements, and reference redshift probability distributions (PDZs). Its probabilistic matching methods account for photometric uncertainties and support color feature selection.
+The package supports reference weights and reference redshift probability distributions (PDZs). Its probabilistic matching methods account for photometric uncertainties and support color feature selection.
 
 ## Binary selection: `binary_classification`
 
