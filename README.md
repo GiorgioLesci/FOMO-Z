@@ -30,16 +30,6 @@ The animation shows an example of the optimization procedure for a lower redshif
 
 Both calibration classes also provide `get_distribution()` to compute weighted distributions of properties in the color-selected reference sample. For redshift distributions, reference PDZs are used whenever available; otherwise, point estimates are used.
 
-### Calibration performance
-
-The figure below shows execution time (top) and peak RAM usage (bottom) as a function of the number of photometric bands, using COSMOS20 as the reference sample.
-
-![Binary selection calibration performance](https://github.com/user-attachments/assets/a5142986-f632-409a-bc73-a47b51510014)
-
-Blue and red dots show `LinearClassification` results using 1 and 12 CPUs, respectively. Green crosses show `GridClassification`, whose calibration is not parallelized in this benchmark.
-
-Once calibrated for a given reference sample and selection configuration, the resulting color selections can be applied to compatible photometric datasets through `Classifier` without repeating the calibration.
-
 ## Probabilistic inference: `probability`
 
 The `probability` subpackage uses photometrically compatible reference objects to infer properties of test galaxies. Matching accounts for photometric uncertainties, and feature selection identifies informative colors for the requested task.
@@ -69,6 +59,16 @@ Each supported test object's weight is distributed among its compatible referenc
 Reference PDZs can be integrated when reconstructing redshift distributions. The matching results can be reused for different properties or histogram bins.
 
 Unlike the calibration classes' `get_distribution()` method, `Reconstruction` transfers information from a reference sample to a separate test population.
+
+## Calibration performance
+
+The figure below shows execution time (top) and peak memory usage (bottom) as a function of the number of photometric bands. COSMOS20 is used as the reference sample and, for the probability routines, also as the test sample.
+
+![FOMO-Z performance](https://github.com/user-attachments/assets/005a674a-e4a0-43da-b4cf-9904338531a3)
+
+The panels compare `LinearClassification` and `GridClassification` (left), `PointProbability` and `Reconstruction` (middle), and the feature-selection and processing stages of `ProbabilityFunction` (right). CPU configurations are indicated in the legends. Memory is measured using PSS, which accounts proportionally for shared memory. `ProbabilityFunction` repeats feature selection at each sampled threshold, making its computational cost substantial compared to `PointProbability` and `Reconstruction`.
+
+Once calibrated for a given reference sample and selection configuration, the resulting color selections can be applied to compatible photometric datasets through `Classifier` without repeating the calibration.
 
 ## Installation
 
