@@ -56,7 +56,7 @@ class ProbabilityFunction:
         `PointProbability` for more details.
 
         Raw cumulative estimates are retained in `cumulative_matrix`. Use
-        `update_fit` to change the number of spline knots without repeating
+        `update_fit` to change the spline knot spacing without repeating
         the point-probability calculations. Valid densities are normalized
         over the sampled interval; numpy.arange excludes max_variable.
 
@@ -377,7 +377,7 @@ class ProbabilityFunction:
         min_colors_used=2,
         cpu_number=None,
         block_size=256,
-        n_internal_knots=10,
+        knot_spacing=0.05,
     ):
         r"""
         Compute and retain cumulative estimates, then fit probability densities.
@@ -398,10 +398,12 @@ class ProbabilityFunction:
             limit. Spline fits are performed sequentially.
         block_size : int, default=256
             Number of test objects per task.
-        n_internal_knots : int, default=10
-            Number of equally spaced interior knots for the initial fit.
-            These divide the sampled domain into n_internal_knots + 1
-            intervals. See `update_fit` for details and fitting constraints.
+        knot_spacing : float, default=0.05
+            Requested maximum spacing between consecutive spline knots,
+            including the domain endpoints, in the units of the reconstructed
+            variable. The sampled interval is divided into equal subintervals
+            whose width is no greater than this value. See `update_fit`
+            for details and fitting constraints.
 
         Returns
         -------
@@ -416,7 +418,7 @@ class ProbabilityFunction:
         RuntimeError
             If processing has already started on this instance.
         ValueError
-            If the knot count or sampling grid is invalid.
+            If the knot spacing or sampling grid is invalid.
 
         Notes
         -----
@@ -437,7 +439,7 @@ class ProbabilityFunction:
             )
 
         # Validate before consuming or releasing any PointProbability instance.
-        self._validate_fit_grid(n_internal_knots)
+        self._validate_fit_grid(knot_spacing)
 
         if not self.features_were_selected:
             warnings.warn(
@@ -459,34 +461,80 @@ class ProbabilityFunction:
             self.dict_point[s] = None
 
         self.cumulative_matrix = cumulative_matrix
-        self.update_fit(n_internal_knots)
+        self.update_fit(knot_spacing=knot_spacing)
 
-    def _validate_fit_grid(self, n_internal_knots):
-        """Validate the knot count and grid without modifying stored results."""
+    def _validate_fit_grid(self, knot_spacing):
+        """Validate the requested spacing and derive the spline dimensions.
+
+        Parameters
+        ----------
+        knot_spacing : float
+            Finite, positive maximum spacing between consecutive knots,
+            including the sampled domain endpoints.
+
+        Returns
+        -------
+        x : numpy.ndarray
+            Validated, strictly increasing sampling grid.
+        n_coefficients : int
+            Number of cubic B-spline coefficients. The number of internal
+            knots is this value minus four.
+
+        Raises
+        ------
+        ValueError
+            If the spacing or sampling grid is invalid, or if the requested
+            spacing requires more coefficients than available sampling points.
+        """
         if (
-            isinstance(n_internal_knots, (bool, np.bool_))
-            or not isinstance(n_internal_knots, (int, np.integer))
-            or n_internal_knots < 0
+            isinstance(knot_spacing, (bool, np.bool_))
+            or not isinstance(knot_spacing, (int, float, np.integer, np.floating))
+            or not np.isfinite(knot_spacing)
+            or knot_spacing <= 0
         ):
-            raise ValueError("n_internal_knots must be a non-negative integer.")
+            raise ValueError("knot_spacing must be a finite, positive number.")
 
         x = np.asarray(self.variable_samples, dtype=float)
-        n_coefficients = int(n_internal_knots) + 4
 
         if (
             x.ndim != 1
-            or x.size < n_coefficients
+            or x.size < 4
             or not np.all(np.isfinite(x))
             or np.any(np.diff(x) <= 0)
         ):
             raise ValueError(
                 "variable_samples must be finite, strictly increasing, "
-                "and contain at least n_internal_knots + 4 points."
+                "and contain at least four points."
+            )
+
+        span = x[-1] - x[0]
+        if not np.isfinite(span):
+            raise ValueError("The sampled interval must have finite width.")
+
+        # A cubic spline with n_intervals pieces has n_intervals + 3
+        # coefficients. Check feasibility before computing their number.
+        max_intervals = x.size - 3
+        minimum_spacing = span / max_intervals
+
+        if knot_spacing < minimum_spacing:
+            raise ValueError(
+                f"knot_spacing={knot_spacing:g} is too small for "
+                f"{x.size} sampled thresholds. Use knot_spacing >= "
+                f"{minimum_spacing:.12g}, or sample more thresholds."
+            )
+
+        n_intervals = max(1, int(np.ceil(span / float(knot_spacing))))
+        n_coefficients = n_intervals + 3
+
+        if n_coefficients > x.size:
+            raise ValueError(
+                "The requested knot spacing requires more spline coefficients "
+                "than available thresholds. Increase knot_spacing."
             )
 
         return x, n_coefficients
 
-    def update_fit(self, n_internal_knots):
+    def update_fit(self, knot_spacing):
         r"""
         Refit saved cumulative estimates with monotone cubic B-splines.
 
@@ -497,26 +545,32 @@ class ProbabilityFunction:
 
         Parameters
         ----------
-        n_internal_knots : int
-            Number of equally spaced knots strictly inside the fitting
-            domain. The endpoints are not counted. The knots divide the
-            domain into ``n_internal_knots + 1`` intervals, each described
-            by a cubic polynomial. Adjacent pieces are joined with
-            continuous first and second derivatives and fitted jointly
-            under monotonicity constraints.
+        knot_spacing : float
+            Requested maximum spacing between consecutive spline knots,
+            including the domain endpoints, in the units of the reconstructed
+            variable.
 
-            For example, over [0, 2.5], five internal knots create six
-            intervals of width approximately 0.417. This differs from
-            `delta`, which controls the spacing of the thresholds at
-            which point probabilities are estimated.
+            Let L be the width of the actual sampled interval,
+            ``variable_samples[-1] - variable_samples[0]``. The method creates
+            ``ceil(L / knot_spacing)`` equal subintervals, with a minimum
+            of one. The actual spacing is therefore no greater than the
+            requested value. A spacing greater than or equal to L produces
+            no internal knots and fits a single cubic polynomial.
 
-            More knots allow greater flexibility and can resolve finer
-            structure, but may introduce artificial peaks in the derived
-            PDF. Fewer knots can broaden, merge, or shift real peaks.
-            Knot spacing is not a strict minimum peak width.
+            For example, over [0, 2.5], a requested spacing of 0.4 produces
+            seven subintervals of width approximately 0.357 and six internal
+            knots. This differs from `delta`, which controls the spacing of
+            the thresholds at which cumulative probabilities are estimated.
 
-            The cubic spline has ``n_internal_knots + 4`` coefficients.
-            Each object requires at least this many finite cumulative
+            Smaller spacing allows greater flexibility but may introduce
+            artificial peaks in the derived PDF. Larger spacing can broaden,
+            merge, or shift real peaks. Knot spacing is not a strict minimum
+            peak width.
+
+            Adjacent cubic pieces have continuous first and second
+            derivatives and are fitted jointly under monotonicity constraints.
+            The number of coefficients is the number of subintervals plus
+            three. Each object requires at least this many finite cumulative
             estimates, including estimates at both domain endpoints.
 
         Returns
@@ -535,14 +589,19 @@ class ProbabilityFunction:
                 between the domain endpoints, before density normalization.
                 NaN for invalid fits.
             n_internal_knots : int
-                Knot count used for the newly stored results.
+                Derived number of internal knots used for the stored results.
+            knot_spacing : float
+                Requested maximum knot spacing.
+            actual_knot_spacing : float
+                Actual spacing after dividing the sampled interval into
+                equal subintervals.
 
         Raises
         ------
         RuntimeError
             If complete cumulative estimates have not been saved by process.
         ValueError
-            If the knot count, sampling grid, or cumulative matrix shape is
+            If the knot spacing, sampling grid, or cumulative matrix shape is
             invalid. Previously stored fits are preserved in this case.
 
         Notes
@@ -597,13 +656,16 @@ class ProbabilityFunction:
                 "Run process successfully through cumulative estimation first."
             )
 
-        x, n_coefficients = self._validate_fit_grid(n_internal_knots)
+        x, n_coefficients = self._validate_fit_grid(knot_spacing)
+        n_internal_knots = n_coefficients - 4
+        actual_knot_spacing = (x[-1] - x[0]) / (n_internal_knots + 1)
+
         cumulative_matrix = self.cumulative_matrix
         if cumulative_matrix.shape != (x.size, self.N_test_objects):
             raise ValueError("cumulative_matrix must have shape (n_samples, n_test).")
 
-        # Construct clamped cubic B-spline bases on the sampled domain
-        internal_knots = np.linspace(x[0], x[-1], int(n_internal_knots) + 2)[1:-1]
+        # Equally spaced internal knots over the actual sampled domain
+        internal_knots = np.linspace(x[0], x[-1], n_internal_knots + 2)[1:-1]
 
         knots = np.concatenate(
             (
@@ -718,7 +780,10 @@ class ProbabilityFunction:
         self.probability_functions = probability_functions
         self.fit_success = fit_success
         self.interval_probability = interval_probability
-        self.n_internal_knots = int(n_internal_knots)
+
+        self.n_internal_knots = n_internal_knots
+        self.knot_spacing = float(knot_spacing)
+        self.actual_knot_spacing = actual_knot_spacing
 
         n_invalid = np.count_nonzero(~fit_success)
         if n_invalid:
@@ -830,7 +895,7 @@ class ProbabilityFunction:
 
         Recompute summaries after changing the spline fit:
 
-        >>> pdf.update_fit(n_internal_knots=15)
+        >>> pdf.update_fit(knot_spacing=0.1)
         >>> results = pdf.get_results_dataframe()
         """
         required = (

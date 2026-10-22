@@ -743,8 +743,12 @@ class TestProbabilityFunction:
 
         prob_func.process(
             cpu_number=1,
-            n_internal_knots=3,
+            knot_spacing=0.5,
         )
+
+        assert prob_func.n_internal_knots == 3
+        assert prob_func.knot_spacing == pytest.approx(0.5)
+        assert prob_func.actual_knot_spacing == pytest.approx(0.5)
 
         redshift = dataset.dataset["redshift"].to_numpy()
         weights = dataset.dataset["weights"].to_numpy()
@@ -794,7 +798,7 @@ class TestProbabilityFunction:
         # Refit without changing the previously computed cumulative estimates.
         cumulative_before = prob_func.cumulative_matrix.copy()
 
-        prob_func.update_fit(n_internal_knots=5)
+        prob_func.update_fit(knot_spacing=0.35)
 
         np.testing.assert_array_equal(
             prob_func.cumulative_matrix,
@@ -802,6 +806,9 @@ class TestProbabilityFunction:
         )
 
         assert prob_func.n_internal_knots == 5
+        assert prob_func.knot_spacing == pytest.approx(0.35)
+        assert prob_func.actual_knot_spacing == pytest.approx((x[-1] - x[0]) / 6)
+        assert prob_func.actual_knot_spacing <= prob_func.knot_spacing
         assert np.all(prob_func.fit_success)
         assert np.all(np.isfinite(prob_func.probability_functions))
         assert np.all(prob_func.probability_functions >= 0.0)
