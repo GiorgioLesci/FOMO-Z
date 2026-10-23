@@ -179,9 +179,7 @@ class GridClassification:
             self.thresholded_quantity_min = np.asarray(purity_min)
         for t in self.thresholded_quantity_min:
             if not (0.0 <= t < 1.0):
-                raise ValueError(
-                    "purity_min accepted values lie in the range [0, 1)."
-                )
+                raise ValueError("purity_min accepted values lie in the range [0, 1).")
 
         maximized_quantity = "completeness"  # hard-coded for now
         if maximized_quantity not in ["completeness", "purity"]:

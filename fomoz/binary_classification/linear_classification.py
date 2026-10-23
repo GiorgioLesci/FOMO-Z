@@ -229,11 +229,9 @@ class LinearClassification:
             self.thresholded_quantity_min = np.asarray(purity_min)
         for t in self.thresholded_quantity_min:
             if not (0.0 <= t < 1.0):
-                raise ValueError(
-                    "purity_min accepted values lie in the range [0, 1)."
-                )
+                raise ValueError("purity_min accepted values lie in the range [0, 1).")
 
-        maximized_quantity="completeness"  # hard-coded for now
+        maximized_quantity = "completeness"  # hard-coded for now
         if maximized_quantity not in ["completeness", "purity"]:
             errMsg = "maximized_quantity must be either 'completeness' or 'purity'."
             raise ValueError(errMsg)
@@ -397,7 +395,9 @@ class LinearClassification:
                 errMsg += " For example, the minimum global purity (or completeness) set by the user could be too low."
                 errMsg += " This can happen for low-redshift background selections, where the number"
                 errMsg += " of contaminants is low."
-                errMsg += " To check this, try to set threshold_buffer equal to purity_min."
+                errMsg += (
+                    " To check this, try to set threshold_buffer equal to purity_min."
+                )
                 raise ValueError(errMsg)
 
             if current_thresh > start_threshold:
