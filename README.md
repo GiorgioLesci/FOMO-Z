@@ -1,9 +1,6 @@
 # FOMO-Z
 
 [![Docs](https://img.shields.io/badge/docs-latest-blue)](https://giorgiolesci.github.io/FOMO-Z/)
-[![License: MIT](https://img.shields.io/github/license/GiorgioLesci/FOMO-Z)](LICENSE)
-[![CI](https://github.com/GiorgioLesci/FOMO-Z/actions/workflows/NOME_FILE.yml/badge.svg)](https://github.com/GiorgioLesci/FOMO-Z/actions/workflows/NOME_FILE.yml)
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
 
 A Python package for optimized galaxy classification, photometric redshift estimation, and reconstruction of population distributions.
 
