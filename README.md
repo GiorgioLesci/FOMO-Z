@@ -1,5 +1,10 @@
 # FOMO-Z
 
+[![Docs](https://img.shields.io/badge/docs-latest-blue)](https://giorgiolesci.github.io/FOMO-Z/)
+[![License: MIT](https://img.shields.io/github/license/GiorgioLesci/FOMO-Z)](LICENSE)
+[![CI](https://github.com/GiorgioLesci/FOMO-Z/actions/workflows/NOME_FILE.yml/badge.svg)](https://github.com/GiorgioLesci/FOMO-Z/actions/workflows/NOME_FILE.yml)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+
 A Python package for optimized galaxy classification, photometric redshift estimation, and reconstruction of population distributions.
 
 ## Description
@@ -111,21 +116,18 @@ python -m pip install -e ".[dev]"
 
 ## Documentation
 
-The API docstrings describe class parameters, methods, and usage conventions. The documentation source is included in the `docs/` directory.
-
-To build the HTML documentation locally:
-
-```bash
-python -m pip install sphinx furo
-sphinx-build -b html docs docs/_build/html
-```
-
-Open `docs/_build/html/index.html` to browse the generated documentation.
+Full documentation, including the API reference and tutorials, is available at **[giorgiolesci.github.io/FOMO-Z](https://giorgiolesci.github.io/FOMO-Z/)**.
 
 ## License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
+## Contributing
+
+Bug reports, questions, and feature suggestions are welcome through the [issue tracker](https://github.com/GiorgioLesci/FOMO-Z/issues). For bug reports, please include the `FOMO-Z` version, your Python, numpy, and scipy versions, a minimal reproducible example, and the full traceback.
+
+`FOMO-Z` does not currently accept pull requests from non-collaborators. If you have a fix or an improvement in mind, please describe it in an issue instead, and I will consider implementing it. You are of course free to fork the repository under the terms of the [MIT License](LICENSE).
+
 ## Citation
 
-If you use `FOMO-Z` in your research, please cite:
+If you use `FOMO-Z` in your research, please cite the accompanying paper (Lesci 2027). Citation metadata are also available in [CITATION.cff](CITATION.cff) and via the "Cite this repository" button on GitHub.
