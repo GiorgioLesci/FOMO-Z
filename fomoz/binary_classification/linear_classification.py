@@ -48,9 +48,8 @@ class LinearClassification:
         self,
         dataset: Dataset,
         selection_definition: SelectionDefinition,
-        thresholded_quantity_min,
-        maximized_quantity="completeness",
-        maximized_quantity_min=0.05,
+        purity_min,
+        completeness_min=0.05,
         threshold_buffer=0.05,
         s_samples=np.linspace(0.3, 2.5, 50),
         c_precision=0.05,
@@ -61,147 +60,150 @@ class LinearClassification:
         verbose=True,
     ):
         r"""
-        Class calibrating optimal linear color selections.
+        Calibrate optimal linear color selections.
 
-        This class implements methods that aim to select objects that occupy the
-        outskirts of color-color distributions, a characteristic feature of, e.g.,
-        background galaxy populations. For other science cases, refer to the
-        `GridClassification` class.
+        This class selects objects occupying the outskirts of color-color
+        distributions, as is often the case for background galaxy populations.
+        For more general selections, see
+        :class:`~fomoz.binary_classification.grid_classification.GridClassification`.
 
+        For each pair of colors :math:`(x, y)`, the following conditions
+        are considered:
 
-        The following color conditions are considered in each color-color space:
+        .. math::
 
-          - color1 > c1
-          - color1 < c2
-          - color2 > c3
-          - color2 < c4
-          - color1 > s1 * color2 + c5
-          - color1 > s2 * color2 + c6
-          - color1 < s3 * color2 + c7
-          - color1 < s4 * color2 + c8
+            \begin{aligned}
+                x &> c_1, & x &< c_2, \\
+                y &> c_3, & y &< c_4, \\
+                x &> s_1 y + c_5, & x &> s_2 y + c_6, \\
+                x &< s_3 y + c_7, & x &< s_4 y + c_8.
+            \end{aligned}
 
-        where c1...c8 are real numbers, s1 and s3 are non-zero positive real numbers,
-        while s2 and s4 are non-zero negative real numbers. All color conditions,
-        within the same space and between different spaces, are connected
-        through the logical "or" operator.
+        Here, :math:`c_1,\ldots,c_8` are real-valued parameters,
+        :math:`s_1,s_3>0`, and :math:`s_2,s_4<0`.
+        All conditions, both within and across color-color spaces,
+        are combined through the logical OR operator, :math:`\lor`.
 
-        The maximized quantity (either completeness or purity) is defined by the
-        `maximized_quantity` value given in input to this constructor.
-        The method implemented here incrementally relaxes the single color cut purity (completeness)
-        threshold in order to identify a set of cuts that maximize total completeness
-        (purity) while still satisfying the global threshold. The algorithm
-        proceeds iteratively, starting from a strict initial threshold and reducing
-        it by `step` until the total purity (or completeness) remains above
-        `thresholded_quantity_min`.
-        Also bootstrap errors on the metrics are derived.
+        The algorithm progressively relaxes the purity threshold applied
+        to individual cuts to increase global completeness while maintaining
+        the required global purity. Bootstrap uncertainties on the resulting
+        metrics can also be estimated.
 
-        For each limiting redshift value specified in `SelectionDefinition`,
-        this method searches for the set of cuts that
-        ($\delta\mathcal{P}_{\rm step}$: `step`,
-        $\mathcal{C}_{\rm min}$: `maximized_quantity_min`,
-        $\mathcal{P}_{\rm min}$: `thresholded_quantity_min`):
-        - Update $\mathcal{P}_{\rm iter}^n = 1 - n\,\delta\mathcal{P}_{\rm step}$,
-          where $n$ is the iteration index, starting from 0.
-        - For any $(x,y)$ color pair, select the $k$th condition
-          if there exists at least one parameter set that yields
-          a single-condition purity $\mathcal{P}^k>\mathcal{P}_{\rm iter}^n$
-          and a single-condition completeness $\mathcal{C}^k>\mathcal{C_min}$.
-        - For each color condition selected on step 2, define the optimal
-          parameter set as the one that maximizes $\mathcal{C}^k$.
-        - Combine the selected conditions, with optimal parameters,
-          in all $(x,y)$ spaces through the $\lor$ logical operator
-          Then, evaluate the global purity, $\mathcal{P}$.
-        - Repeat from point 1 as long as
-          $\mathcal{P}(z_{\rm l})>\mathcal{P}_{\rm min}$.
+        For each limiting redshift specified in ``selection_definition``,
+        let :math:`\delta\mathcal{P}_{\rm step}` denote ``step``,
+        :math:`\mathcal{C}_{\rm min}` denote ``completeness_min``, and
+        :math:`\mathcal{P}_{\rm min}` denote ``purity_min``.
+        The optimization proceeds as follows:
 
-        After the optimal cuts are found for all redshift bins, the results are:
-        1. Combined into global purity, completeness, and failure rate metrics.
-        2. Restructured into an expression-based dictionary.
-        3. Interpolated across redshift bins to provide continuous cut parameters.
+        1. Progressively lower the single-cut purity threshold from unity
+           in increments of :math:`\delta\mathcal{P}_{\rm step}`.
+           After :math:`n` decrements, the threshold is
 
-        Single color conditions having failure rate equal to 1 are always excluded.
+           .. math::
+
+               \mathcal{P}_{\rm iter}^{n}
+               = 1 - n\,\delta\mathcal{P}_{\rm step}.
+
+        2. For each color pair, retain a candidate condition if at least
+           one parameter combination satisfies both
+           :math:`\mathcal{P}^{j}>\mathcal{P}_{\rm iter}^{n}` and
+           :math:`\mathcal{C}^{j}>\mathcal{C}_{\rm min}`.
+           Here, :math:`j` indexes the candidate conditions, while
+           :math:`\mathcal{P}^{j}` and :math:`\mathcal{C}^{j}` are their
+           individual purity and completeness.
+
+        3. For each retained condition, choose the admissible parameter
+           combination that maximizes :math:`\mathcal{C}^{j}`.
+
+        4. Combine the resulting cuts across all color-color spaces using
+           :math:`\lor`, and evaluate the global purity :math:`\mathcal{P}`
+           and completeness :math:`\mathcal{C}`.
+
+        5. Continue relaxing the single-cut threshold while the combined
+           selection satisfies :math:`\mathcal{P}>\mathcal{P}_{\rm min}`,
+           retaining the optimal admissible cuts.
+
+        The calibrated cuts are stored in an expression-based dictionary,
+        together with global purity, completeness, and failure rate metrics.
+        Cut parameters are interpolated across limiting redshifts to
+        provide continuous selections.
+
+        Individual conditions with a failure rate equal to one are
+        always excluded.
 
         Parameters
         ----------
         dataset : Dataset
-            A `Dataset` object containing the dataset and band information.
+            Reference dataset containing photometry, target properties,
+            and band information.
         selection_definition : SelectionDefinition
-            A `SelectionDefinition` object containing target selections (e.g. redshift thresholds).
-        thresholded_quantity_min : float or array-like
-            Required minimum for the thresholded quantity, namely
-            global purity (if `maximized_quantity == "completeness"`)
-            or completeness (if `maximized_quantity == "purity"`) across all redshift bins.
-            If float, the same threshold is applied at any limiting redshift point.
-            If array-like, a different threshold is used at each limiting
+            Target selection criteria, such as redshift thresholds.
+        purity_min : float or array-like
+            Required minimum global purity at each limiting redshift.
+            If a scalar, the same threshold is applied at every limiting
+            redshift. If array-like, provide one threshold per limiting
             redshift.
-        maximized_quantity : str, default="completeness"
-            The quantity to maximize. Possibilities are either "completeness" or
-            "purity".
-        maximized_quantity_min : float, default=0.05
-            Required minimum for the maximized completeness (if `maximized_quantity == "completeness"`)
-            or purity (if `maximized_quantity == "purity"`) across all redshift bins.
-            This is not a threshold on the global value of the maximized quantity.
-            Only single color conditions that meet the requirement on
-            this parameter are considered. The default
-            value is 0.05, namely 5%. This threshold is useful to exclude random fluctuations
-            and reduce statistical uncertainties on global purity and completeness.
+        completeness_min : float, default=0.05
+            Minimum completeness required for an individual color cut.
+            This constraint applies to single cuts, not to the combined
+            selection. It helps exclude cuts supported by very few target
+            objects and reduces sensitivity to statistical fluctuations.
         threshold_buffer : float, default=0.05
-            Quantity subtracted from `thresholded_quantity_min`.
-            Color conditions not satisfying the final threshold, namely
-            `thresholded_quantity_min - threshold_buffer`, are not
-            considered in the optimization process. This is useful to avoid filling memory
-            with unused information. The default value is 0.05, namely a 5 percentage point
-            subtraction. If this value is too small, the optimization method raises an error.
-        s_samples : array-like, default=np.linspace(0.3, 1.7, 30)
-            Array of slope values, s_j, for generating linear cuts in color-color space.
-            These samples must be strictly positive.
+            Buffer subtracted from ``purity_min`` when retaining candidate
+            color cuts. Conditions not satisfying
+            ``purity_min - threshold_buffer`` are discarded before
+            optimization to reduce memory usage.
+            The default corresponds to five percentage points.
+            An error is raised if the buffer is too small for the
+            optimization to proceed.
+        s_samples : array-like, default=np.linspace(0.3, 2.5, 50)
+            Strictly positive slope magnitudes used to generate inclined
+            cuts. Both positive and negative slopes are considered.
+            The default provides 50 equally spaced values between
+            0.3 and 2.5, including both endpoints.
         c_precision : float, default=0.05
-            Precision of the c_i parameters sampling. Smaller values
-            increase accuracy but significantly increase the number of operations.
-            If `c_precision` is halved, expect about 2 times more c_i steps per s_j
-            (also runtime and RAM roughly double).
+            Sampling step for the parameters :math:`c_i`.
+            Smaller values provide finer sampling at greater computational
+            cost. Halving this step approximately doubles the number of
+            intercept samples per slope, with a corresponding increase
+            in runtime and memory usage.
         k : int, default=1
-            Requested degree of the spline interpolation, used to interpolate color
-            condition parameters. Default is 1 (linear).
-            The actual degree is adjusted case by case:
-            - If there are fewer than ``k+1`` points, the degree is reduced
-              to ``n_points - 1``.
-            - If there is only one point, interpolation is skipped.
+            Requested spline degree for interpolating cut parameters.
+            The default gives linear interpolation. If fewer than
+            ``k + 1`` points are available, the degree is reduced to
+            ``n_points - 1``. Interpolation is skipped when only one
+            point is available.
         step : float, default=0.0001
-            Defines the threshold reduction on single color conditions. Default is 0.0001.
+            Decrement of the single-cut purity threshold at each
+            optimization iteration,
+            :math:`\delta\mathcal{P}_{\rm step}`.
         do_bootstrap : bool, default=True
-            If True, derive uncertainties on C, P, and F through bootstrap.
+            If True, estimate uncertainties on completeness, purity,
+            and failure rate through bootstrap resampling.
         n_bootstraps : int, default=1000
-            Number of bootstrap resamples to perform. It defines
-            the number of resampling in error estimation.
+            Number of bootstrap resamples used to estimate uncertainties.
         verbose : bool, default=True
-            If True, print messages during execution (e.g. referring to
-            the time employed for computation, status of the calibration)
+            If True, print progress messages and computation times.
 
         Attributes
         ----------
         dict : dict
-            Container for storing results based on linear color cuts.
-        P : numpy.array
-            Total purity values.
-        C : numpy.array
-            Total completeness values.
-        F : numpy.array
-            Total failure rates.
-        P_std : numpy.array
-            Total purity error.
-        C_std : numpy.array
-            Total completeness error.
-        F_std : numpy.array
-            Total failure rate error.
-        attained_threshold : np.array
-            Single-cut threshold attained in the optimization process.
-            Each element corresponds to a limiting redshift value.
-
-        Notes
-        -----
-        Purity maximization is not implemented yet. `maximized_quantity == "completeness"`
-        is the only accepted value.
+            Calibrated linear color cuts and associated results.
+        P : numpy.ndarray
+            Global purity at each limiting redshift.
+        C : numpy.ndarray
+            Global completeness at each limiting redshift.
+        F : numpy.ndarray
+            Global failure rate at each limiting redshift.
+        P_std : numpy.ndarray
+            Bootstrap uncertainty on global purity.
+        C_std : numpy.ndarray
+            Bootstrap uncertainty on global completeness.
+        F_std : numpy.ndarray
+            Bootstrap uncertainty on global failure rate.
+        attained_threshold : numpy.ndarray
+            Single-cut purity threshold attained during optimization
+            at each limiting redshift.
         """
         self.verbose = verbose
         self.dataset = dataset.dataset
@@ -214,23 +216,24 @@ class LinearClassification:
         self.weights = np.array(self.dataset["weights"].values)
         self.td = selection_definition
 
-        if isinstance(thresholded_quantity_min, float):
+        if isinstance(purity_min, float):
             self.thresholded_quantity_min = np.asarray(
-                [thresholded_quantity_min] * len(self.td.z_lim)
+                [purity_min] * len(self.td.z_lim)
             )
         else:
-            if len(thresholded_quantity_min) != len(self.td.z_lim):
+            if len(purity_min) != len(self.td.z_lim):
                 raise ValueError(
-                    f"thresholded_quantity_min length ({len(thresholded_quantity_min)}) "
+                    f"purity_min length ({len(purity_min)}) "
                     f"must match z_lim length ({len(self.td.z_lim)})"
                 )
-            self.thresholded_quantity_min = np.asarray(thresholded_quantity_min)
+            self.thresholded_quantity_min = np.asarray(purity_min)
         for t in self.thresholded_quantity_min:
             if not (0.0 <= t < 1.0):
                 raise ValueError(
-                    "thresholded_quantity_min accepted values lie in the range [0, 1)."
+                    "purity_min accepted values lie in the range [0, 1)."
                 )
 
+        maximized_quantity="completeness"  # hard-coded for now
         if maximized_quantity not in ["completeness", "purity"]:
             errMsg = "maximized_quantity must be either 'completeness' or 'purity'."
             raise ValueError(errMsg)
@@ -240,17 +243,17 @@ class LinearClassification:
             raise NotImplementedError("Purity maximization is not implemented yet.")
             self.thresholded_quantity = "completeness"
 
-        if isinstance(maximized_quantity_min, (float, int)):
-            if not (0.0 <= maximized_quantity_min <= 1.0):
-                raise ValueError("maximized_quantity_min must range from 0 to 1.")
-            self.maximized_quantity_min = maximized_quantity_min
+        if isinstance(completeness_min, (float, int)):
+            if not (0.0 <= completeness_min <= 1.0):
+                raise ValueError("completeness_min must range from 0 to 1.")
+            self.maximized_quantity_min = completeness_min
         else:
-            raise TypeError("maximized_quantity_min must be a float or integer.")
+            raise TypeError("completeness_min must be a float or integer.")
 
         for t in self.thresholded_quantity_min:
             if threshold_buffer > t:
                 raise ValueError(
-                    "threshold_buffer must be strictly smaller than thresholded_quantity_min."
+                    "threshold_buffer must be strictly smaller than purity_min."
                 )
         self.buffered_threshold = self.thresholded_quantity_min - threshold_buffer
 
@@ -394,7 +397,7 @@ class LinearClassification:
                 errMsg += " For example, the minimum global purity (or completeness) set by the user could be too low."
                 errMsg += " This can happen for low-redshift background selections, where the number"
                 errMsg += " of contaminants is low."
-                errMsg += " To check this, try to set threshold_buffer equal to thresholded_quantity_min."
+                errMsg += " To check this, try to set threshold_buffer equal to purity_min."
                 raise ValueError(errMsg)
 
             if current_thresh > start_threshold:
@@ -553,7 +556,7 @@ class LinearClassification:
                 break  # below the threshold
 
         if current_thresh <= 0:
-            errMsg = f"For z_l={z_l}, the convergence is attained for a value larger than the user-defined thresholded_quantity_min."
+            errMsg = f"For z_l={z_l}, the convergence is attained for a value larger than the user-defined purity_min."
             errMsg += f" The current global P, C, and F are {P_tot[i_z]}, {C_tot[i_z]}, and {F_tot[i_z]}, respectively."
             raise ValueError(errMsg)
 

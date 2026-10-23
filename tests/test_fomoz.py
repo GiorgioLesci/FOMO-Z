@@ -125,7 +125,7 @@ def reference_calibration_linear_instance(
         reference_target_definition_instance,
         thresholded_quantity_min,
         s_samples=np.linspace(0.3, 1.7, 30),
-        maximized_quantity_min=0,
+        completeness_min=0,
         step=0.0001,
         k=3,
     )
@@ -144,7 +144,7 @@ def reference_calibration_linear_instance_weights(
         reference_target_definition_instance,
         thresholded_quantity_min,
         s_samples=np.linspace(0.3, 1.7, 30),
-        maximized_quantity_min=0,
+        completeness_min=0,
         step=0.0001,
         k=3,
     )
@@ -814,7 +814,7 @@ class TestProbabilityFunction:
         assert np.all(np.isfinite(prob_func.probability_functions))
         assert np.all(prob_func.probability_functions >= 0.0)
 
-        integrals = np.trapz(
+        integrals = trapezoid(
             prob_func.probability_functions,
             x=x,
             axis=1,

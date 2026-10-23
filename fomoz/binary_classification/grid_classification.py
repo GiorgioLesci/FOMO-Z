@@ -37,8 +37,7 @@ class GridClassification:
         self,
         dataset: Dataset,
         selection_definition: SelectionDefinition,
-        thresholded_quantity_min,
-        maximized_quantity="completeness",
+        purity_min,
         grid_precision=0.15,
         alpha=1,
         step=0.001,
@@ -47,103 +46,113 @@ class GridClassification:
         verbose=True,
     ):
         r"""
-        Class calibrating optimal grid color selections.
+        Calibrate optimal grid-based color selections.
 
-        This class implements a general approach which identifies optimal selection regions
-        in color-color spaces by directly exploring discretized grids. At each point of
-        these color-color grids, the following probability to find a target
-        object is computed:
+        This class identifies selection regions in color-color spaces by
+        exploring discretized grids. In each color-color bin, the probability
+        of finding a target object is estimated as
 
-        $P_T = \frac{N_T}{N_S}\,,$
+        .. math::
 
-        where $N_T$ is the number of target objects in the color-color bin, and
-        $N_S$ is the total number of objects in the reference sample falling in the bin.
+            P_{\rm T} = \frac{N_{\rm T}}{N_{\rm S}},
 
-        For each limiting redshift value specified in `SelectionDefinition`,
-        this method searches for the set of cuts that
-        ($\delta\mathcal{P}_{\rm step}$: `step`,
-        $\mathcal{P}_{\rm min}$: `thresholded_quantity_min`,
-        $\mathcal{C}$: `maximized_quantity`):
-        - Update $\mathcal{P}_{\rm iter}^n = 1 - n\,\delta\mathcal{P}_{\rm step}$,
-          where $n$ is the iteration index, starting from 0.
-        - Remove the color-color bins where $P_T < \mathcal{P}_{\rm iter}^n$.
-        - Compute the global purity $\mathcal{P}$, assuming that all color-color
-          bins yield a significant measurement of $P_T$. If $\mathcal{P}>\mathcal{P}_{\rm min}$,
-          repeat from step 1.
-        - Mask not significant bins, based on the value of `alpha`. Then, recompute
-          the selection metrics.
+        where :math:`N_{\rm T}` is the number of target objects in the bin
+        and :math:`N_{\rm S}` is the total number of reference objects in
+        the same bin.
+
+        For each limiting redshift specified in ``selection_definition``,
+        let :math:`\delta\mathcal{P}_{\rm step}` denote ``step`` and
+        :math:`\mathcal{P}_{\rm min}` denote ``purity_min``.
+        The optimization proceeds as follows:
+
+        1. Progressively lower the bin purity threshold from unity
+           in increments of :math:`\delta\mathcal{P}_{\rm step}`.
+           After :math:`n` decrements, the threshold is
+
+           .. math::
+
+               \mathcal{P}_{\rm iter}^{n}
+               = 1 - n\,\delta\mathcal{P}_{\rm step}.
+
+        2. Retain bins satisfying
+           :math:`P_{\rm T}\geq\mathcal{P}_{\rm iter}^{n}`.
+
+        3. Evaluate the global purity :math:`\mathcal{P}` without applying
+           statistical filtering to individual bins. Continue relaxing
+           the threshold while the combined selection satisfies
+           :math:`\mathcal{P}>\mathcal{P}_{\rm min}`.
+
+        4. Apply the statistical filtering controlled by ``alpha`` to the
+           retained bins, then recompute the selection metrics.
+
+        Bootstrap uncertainties on the resulting metrics can also be estimated.
 
         Parameters
         ----------
         dataset : Dataset
-            A `Dataset` object containing the dataset and band information.
+            Reference dataset containing photometry, target properties,
+            and band information.
         selection_definition : SelectionDefinition
-            A `SelectionDefinition` object containing target selections (e.g. redshift thresholds).
-        thresholded_quantity_min : float or array-like
-            Required minimum for the thresholded quantity, namely
-            global purity (if `maximized_quantity == "completeness"`)
-            or completeness (if `maximized_quantity == "purity"`) across all redshift bins.
-            If float, the same threshold is applied at any limiting redshift point.
-            If array-like, a different threshold is used at each limiting
+            Target selection criteria, such as redshift thresholds.
+        purity_min : float or array-like
+            Required minimum global purity at each limiting redshift.
+            If a scalar, the same threshold is applied at every limiting
+            redshift. If array-like, provide one threshold per limiting
             redshift.
-        maximized_quantity : str, default="completeness"
-            The quantity to maximize. Possibilities are either "completeness" or
-            "purity".
         grid_precision : float, default=0.15
-            Precision of the color-color grids. A smaller value yields a finer,
-            more accurate grid at the cost of increased computation, RAM usage, and
+            Bin width of the color-color grids. Smaller values provide finer
+            sampling at greater computational cost, memory usage, and
             storage requirements.
         alpha : float, default=1
-            Significance level used to discard statistically non-robust grid bins.
-            For each bin, let k be the number of target objects (successes) out of
-            n total objects (trials), and let p denote the true per-bin purity.
-            Assuming a Binomial likelihood P(k | p, n) and a uniform prior on p
-            over the interval [0, 1], the posterior distribution P(p | k, n)
-            follows a Beta distribution.
-            A bin is considered statistically significant only if the posterior
-            probability that its true purity lies below the minimum acceptable
-            purity p_min satisfies:
+            Maximum tolerated posterior probability that a bin's true
+            purity lies below the minimum acceptable purity.
 
-                P(p < p_min | k, n) < alpha.
+            For a bin containing :math:`k` target objects out of
+            :math:`n` total objects, assume a binomial likelihood and a
+            uniform prior on the true purity :math:`p` over :math:`[0,1]`.
+            The posterior distribution is then
 
-            Therefore, alpha represents the maximum tolerated posterior probability
-            that a bin's true purity is below the required threshold.
-            For example, alpha = 0.1 corresponds to allowing at most a 10%
-            posterior probability that the bin purity is below p_min.
-            To disable this statistical filtering and retain all bins,
-            set alpha = 1.
+            .. math::
+
+                p \mid k,n \sim \operatorname{Beta}(k+1,n-k+1).
+
+            A bin is retained only if
+
+            .. math::
+
+                \Pr(p < p_{\rm min} \mid k,n) < \alpha,
+
+            where :math:`p_{\rm min}` is the minimum acceptable bin purity.
+            For example, ``alpha=0.1`` requires the posterior probability
+            of falling below this threshold to be less than 10%.
+            Set ``alpha=1`` to disable statistical filtering.
         step : float, default=0.001
-            Defines the threshold reduction on grid elements. Default is 0.001.
+            Decrement of the bin purity threshold at each optimization
+            iteration, :math:`\delta\mathcal{P}_{\rm step}`.
         do_bootstrap : bool, default=True
-            If True, derive uncertainties on C, P, and F through bootstrap.
+            If True, estimate uncertainties on completeness, purity,
+            and failure rate through bootstrap resampling.
         n_bootstraps : int, default=1000
-            Number of bootstrap resamples to perform. It defines
-            the number of resampling in error estimation.
+            Number of bootstrap resamples used to estimate uncertainties.
         verbose : bool, default=True
-            If True, print messages during execution (e.g. referring to
-            the time employed for computation, status of the calibration)
+            If True, print progress messages and computation times.
 
         Attributes
         ----------
         dict : dict
-            Container for storing results based on color selections.
-        P : numpy.array
-            Total purity values.
-        C : numpy.array
-            Total completeness values.
-        F : numpy.array
-            Total failure rates.
-        P_std : numpy.array
-            Total purity error.
-        C_std : numpy.array
-            Total completeness error.
-        F_std : numpy.array
-            Total failure rate error.
-
-        Notes
-        -----
-        Purity maximization is not implemented yet. `maximized_quantity == "completeness"`
-        is the only accepted value.
+            Calibrated grid-based color selections and associated results.
+        P : numpy.ndarray
+            Global purity at each limiting redshift.
+        C : numpy.ndarray
+            Global completeness at each limiting redshift.
+        F : numpy.ndarray
+            Global failure rate at each limiting redshift.
+        P_std : numpy.ndarray
+            Bootstrap uncertainty on global purity.
+        C_std : numpy.ndarray
+            Bootstrap uncertainty on global completeness.
+        F_std : numpy.ndarray
+            Bootstrap uncertainty on global failure rate.
         """
         self.verbose = verbose
         self.dataset = dataset.dataset
@@ -157,23 +166,24 @@ class GridClassification:
         self.color_spaces = dataset.color_spaces
         self.td = selection_definition
 
-        if isinstance(thresholded_quantity_min, float):
+        if isinstance(purity_min, float):
             self.thresholded_quantity_min = np.asarray(
-                [thresholded_quantity_min] * len(self.td.z_lim)
+                [purity_min] * len(self.td.z_lim)
             )
         else:
-            if len(thresholded_quantity_min) != len(self.td.z_lim):
+            if len(purity_min) != len(self.td.z_lim):
                 raise ValueError(
-                    f"thresholded_quantity_min length ({len(thresholded_quantity_min)}) "
+                    f"purity_min length ({len(purity_min)}) "
                     f"must match z_lim length ({len(self.td.z_lim)})"
                 )
-            self.thresholded_quantity_min = np.asarray(thresholded_quantity_min)
+            self.thresholded_quantity_min = np.asarray(purity_min)
         for t in self.thresholded_quantity_min:
             if not (0.0 <= t < 1.0):
                 raise ValueError(
-                    "thresholded_quantity_min accepted values lie in the range [0, 1)."
+                    "purity_min accepted values lie in the range [0, 1)."
                 )
 
+        maximized_quantity = "completeness"  # hard-coded for now
         if maximized_quantity not in ["completeness", "purity"]:
             errMsg = "maximized_quantity must be either 'completeness' or 'purity'."
             raise ValueError(errMsg)
