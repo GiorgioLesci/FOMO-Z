@@ -1,7 +1,7 @@
 """
 FOMO-Z.
 
-A package for the derivation of optimal galaxy classifications and photo-zs.
+A package for the derivation of optimal galaxy classifications, photo-zs, and reconstruction of sample properties.
 """
 
 __author__ = "Giorgio Francesco Lesci"

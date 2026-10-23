@@ -1,4 +1,4 @@
-"""Tools for color selection classes and probability computation."""
+"""Tools for calibration classes and probability computation."""
 
 from .color_domain import *
 from .distributions import *

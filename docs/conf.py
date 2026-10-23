@@ -22,6 +22,14 @@ napoleon_google_docstring = False
 # Include constructor documentation in class descriptions.
 autoclass_content = "both"
 
+# Include public methods, including inherited ones.
+autodoc_default_options = {
+    "members": True,
+    "inherited-members": True,
+    "undoc-members": True,
+    "show-inheritance": True,
+}
+
 autodoc_member_order = "bysource"
 autodoc_typehints = "description"
 

@@ -1,4 +1,4 @@
-"""Color selection module of FOMO-Z."""
+"""Binary classification module of FOMO-Z."""
 
 from .classifier import *
 from .linear_classification import *
