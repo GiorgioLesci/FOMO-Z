@@ -92,19 +92,19 @@ class LinearClassification:
         For each limiting redshift specified in ``selection_definition``,
         let :math:`\delta\mathcal{P}_{\rm step}` denote ``step``,
         :math:`\mathcal{C}_{\rm min}` denote ``completeness_min``, and
-        :math:`\mathcal{P}_{\rm min}` denote ``purity_min``.
+        :math:`\mathcal{P}_{\rm min}^{\rm glob}` denote ``purity_min``.
         The optimization proceeds as follows:
 
         1. Progressively lower the single-cut purity threshold from unity
            in increments of :math:`\delta\mathcal{P}_{\rm step}`.
-           After :math:`n` decrements, the threshold is
+           After :math:`n` decrements, where :math:`n>0`, the threshold is
 
            .. math::
 
                \mathcal{P}_{\rm iter}^{n}
                = 1 - n\,\delta\mathcal{P}_{\rm step}.
 
-        2. For each color pair, retain a candidate condition if at least
+        2. For each color pair, retain a candidate color condition if at least
            one parameter combination satisfies both
            :math:`\mathcal{P}^{j}>\mathcal{P}_{\rm iter}^{n}` and
            :math:`\mathcal{C}^{j}>\mathcal{C}_{\rm min}`.
@@ -116,11 +116,11 @@ class LinearClassification:
            combination that maximizes :math:`\mathcal{C}^{j}`.
 
         4. Combine the resulting cuts across all color-color spaces using
-           :math:`\lor`, and evaluate the global purity :math:`\mathcal{P}`
-           and completeness :math:`\mathcal{C}`.
+           :math:`\lor`, and evaluate the global purity :math:`\mathcal{P}^{\rm glob}`
+           and completeness :math:`\mathcal{C}^{\rm glob}`.
 
         5. Continue relaxing the single-cut threshold while the combined
-           selection satisfies :math:`\mathcal{P}>\mathcal{P}_{\rm min}`,
+           selection satisfies :math:`\mathcal{P}>\mathcal{P}_{\rm min}^{\rm glob}`,
            retaining the optimal admissible cuts.
 
         The calibrated cuts are stored in an expression-based dictionary,
