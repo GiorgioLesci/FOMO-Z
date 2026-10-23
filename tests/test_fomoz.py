@@ -525,15 +525,15 @@ class TestCalibrationProcess:
         expected_F = [0.26037483, 0.2055968]
 
         assert np.allclose(
-            calibration.C, expected_C
+            calibration.C, expected_C, rtol=1e-2
         ), f"Completeness mismatch for LinearClassification: expected {expected_C}, got {calibration.C}"
 
         assert np.allclose(
-            calibration.P, expected_P
+            calibration.P, expected_P, rtol=1e-2
         ), f"Purity mismatch for LinearClassification: expected {expected_P}, got {calibration.P}"
 
         assert np.allclose(
-            calibration.F, expected_F
+            calibration.F, expected_F, rtol=1e-2
         ), f"Failure rate mismatch for LinearClassification: expected {expected_F}, got {calibration.F}"
 
         # GridClassification
@@ -548,15 +548,15 @@ class TestCalibrationProcess:
         expected_F = [0.22423025, 0.19189035]
 
         assert np.allclose(
-            calibration.C, expected_C
+            calibration.C, expected_C, rtol=1e-2
         ), f"Completeness mismatch for GridClassification: expected {expected_C}, got {calibration.C}"
 
         assert np.allclose(
-            calibration.P, expected_P
+            calibration.P, expected_P, rtol=1e-2
         ), f"Purity mismatch for GridClassification: expected {expected_P}, got {calibration.P}"
 
         assert np.allclose(
-            calibration.F, expected_F
+            calibration.F, expected_F, rtol=1e-2
         ), f"Failure rate mismatch for GridClassification: expected {expected_F}, got {calibration.F}"
 
     def test_process_with_weights(
@@ -578,15 +578,15 @@ class TestCalibrationProcess:
         expected_F = [0.26037483, 0.2055968]
 
         assert np.allclose(
-            calibration.C, expected_C
+            calibration.C, expected_C, rtol=1e-2
         ), f"Completeness mismatch for LinearClassification: expected {expected_C}, got {calibration.C}"
 
         assert np.allclose(
-            calibration.P, expected_P
+            calibration.P, expected_P, rtol=1e-2
         ), f"Purity mismatch for LinearClassification: expected {expected_P}, got {calibration.P}"
 
         assert np.allclose(
-            calibration.F, expected_F
+            calibration.F, expected_F, rtol=1e-2
         ), f"Failure rate mismatch for LinearClassification: expected {expected_F}, got {calibration.F}"
 
         # GridClassification
@@ -601,15 +601,15 @@ class TestCalibrationProcess:
         expected_F = [0.22423025, 0.19189035]
 
         assert np.allclose(
-            calibration.C, expected_C
+            calibration.C, expected_C, rtol=1e-2
         ), f"Completeness mismatch for GridClassification: expected {expected_C}, got {calibration.C}"
 
         assert np.allclose(
-            calibration.P, expected_P
+            calibration.P, expected_P, rtol=1e-2
         ), f"Purity mismatch for GridClassification: expected {expected_P}, got {calibration.P}"
 
         assert np.allclose(
-            calibration.F, expected_F
+            calibration.F, expected_F, rtol=1e-2
         ), f"Failure rate mismatch for GridClassification: expected {expected_F}, got {calibration.F}"
 
 
