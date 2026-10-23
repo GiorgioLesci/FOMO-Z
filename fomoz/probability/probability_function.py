@@ -19,6 +19,7 @@ import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import nullcontext
 from threading import Lock
+from scipy.integrate import trapezoid
 
 from ..auxiliary.probability_helper import _process_multiple_points
 from ..data.dataset import Dataset
@@ -768,7 +769,7 @@ class ProbabilityFunction:
 
             # The model derivative is nonnegative; clip numerical roundoff
             density = np.maximum(density, 0.0)
-            normalization = np.trapz(density, x)
+            normalization = trapezoid(density, x)
 
             if not np.isfinite(normalization) or normalization <= 0:
                 continue
@@ -982,8 +983,8 @@ class ProbabilityFunction:
             # Normalize locally without changing the stored PDF.
             p = density / normalization
 
-            mean = np.trapz(x * p, x)
-            variance = np.trapz((x - mean) ** 2 * p, x)
+            mean = trapezoid(x * p, x)
+            variance = trapezoid((x - mean) ** 2 * p, x)
 
             summaries["mode"][i] = x[np.argmax(p)]
             summaries["mean"][i] = mean

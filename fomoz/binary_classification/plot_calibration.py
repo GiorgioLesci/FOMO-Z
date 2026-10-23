@@ -171,7 +171,7 @@ class PlotCalibration:
             Limiting redshift points. If not None, derive the metrics at these points
             using interpolations (in the case of linear calibration). Default is None.
         """
-        if self.C == []:
+        if np.size(self.C) == 0:
             raise ValueError(
                 "Before calling this function, set the calibration metrics using the 'load_metrics()' or 'load_metrics_from_file()' functions in this class."
             )

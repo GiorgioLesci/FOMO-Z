@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import yaml
+from scipy.integrate import trapezoid
 
 from fomoz.binary_classification.linear_classification import LinearClassification
 from fomoz.binary_classification.grid_classification import GridClassification
@@ -777,7 +778,7 @@ class TestProbabilityFunction:
         assert np.all(np.isfinite(prob_func.probability_functions))
         assert np.all(prob_func.probability_functions >= 0.0)
 
-        integrals = np.trapz(
+        integrals = trapezoid(
             prob_func.probability_functions,
             x=x,
             axis=1,

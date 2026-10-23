@@ -11,6 +11,7 @@ import re
 
 import numpy as np
 import pandas as pd
+from scipy.integrate import trapezoid
 
 
 class Dataset:
@@ -188,7 +189,7 @@ class Dataset:
             # Individual density samples may be zero, but each PDZ
             # must have a finite, strictly positive integral.
             with np.errstate(over="ignore", invalid="ignore"):
-                total_int = np.trapz(pdzs, pdz_x, axis=1)
+                total_int = trapezoid(pdzs, pdz_x, axis=1)
 
             invalid_integrals = ~np.isfinite(total_int) | (total_int <= 0)
             if np.any(invalid_integrals):
