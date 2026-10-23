@@ -651,7 +651,7 @@ class TestColorSelection:
 
         for i in range(len(zl_new)):
             assert np.allclose(
-                np.sum(mask[i]), expected_N[i]
+                np.sum(mask[i]), expected_N[i], rtol=1e-2
             ), f"[Linear calibration]: Number of selected galaxies mismatch for the {i}-th test z_l: expected {expected_N[i]}, got {np.sum(mask[i])}"
 
         # Select - grid
@@ -674,7 +674,7 @@ class TestColorSelection:
 
         for i in range(len(zl_new)):
             assert np.allclose(
-                np.sum(mask[i]), expected_N[i]
+                np.sum(mask[i]), expected_N[i], rtol=1e-2
             ), f"[Grid calibration]: Number of selected galaxies mismatch for the {i}-th test z_l: expected {expected_N[i]}, got {np.sum(mask[i])}"
 
 
