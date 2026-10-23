@@ -40,11 +40,9 @@ The `probability` subpackage uses photometrically compatible reference objects t
 
 For each test object, it identifies reference objects with compatible colors and computes their weighted membership fraction. Reference prior weights and, for redshift criteria, reference PDZs can contribute to this estimate.
 
-Applications include estimating the probability that a galaxy lies beyond a redshift threshold or belongs to a specified galaxy population. In the plot below, we compare the quiescent/star-forming classification by [Toni et al. (2026)](https://ui.adsabs.harvard.edu/abs/2026A&A...707A..87T) (left) with that obtained using `PointProbability` (right).
+Applications include estimating the probability that a galaxy lies beyond a redshift threshold or belongs to a specified galaxy population. In the plot below, we show the quiescent/star-forming classification obtained with `PointProbability`, using COSMOS15 as the reference sample and COSMOS-Web as the test sample.
 
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/39f23c4c-9e79-4f56-ac37-3ef52704d880" alt="Comparison of quiescent and star-forming classifications" width="450">
-</p>
+![quiescence](https://github.com/user-attachments/assets/b6cc73bc-328e-4ddb-bba8-c75d088cc4cb)
 
 ### `ProbabilityFunction`
 
