@@ -43,7 +43,7 @@ For each test object, it identifies reference objects with compatible colors and
 Applications include estimating the probability that a galaxy lies beyond a redshift threshold or belongs to a specified galaxy population. In the plot below, we compare the quiescent/star-forming classification by [Toni et al. (2026)](https://ui.adsabs.harvard.edu/abs/2026A&A...707A..87T) (left) with that obtained using `PointProbability` (right).
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/39f23c4c-9e79-4f56-ac37-3ef52704d880" alt="Comparison of quiescent and star-forming classifications" width="300">
+  <img src="https://github.com/user-attachments/assets/39f23c4c-9e79-4f56-ac37-3ef52704d880" alt="Comparison of quiescent and star-forming classifications" width="450">
 </p>
 
 ### `ProbabilityFunction`
