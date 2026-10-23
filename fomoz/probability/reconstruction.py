@@ -363,9 +363,7 @@ class Reconstruction:
                 f"Reference: {ref_mask.sum()}/{len(ref_mask)}; "
                 f"test: {test_mask.sum()}/{len(test_mask)}.\n"
                 "Feature selection uses the full reference. Matching uses selected "
-                "subsets. Analogue contributions are normalized by reference "
-                "weights and aggregated using test weights; no membership "
-                "probability is multiplied into the result."
+                "subsets.\n"
             )
 
     def _selection_reference(self, ds):
@@ -736,10 +734,7 @@ class Reconstruction:
         self.reference_weights[self.reference_indices] = total
         self._processed_colors = list(self.colors)
         if self.verbose:
-            print(
-                f"Matching complete. Test-weight coverage: "
-                f"{supported_weight/selected_weight:.6f}."
-            )
+            print(f"Matching complete.")
 
     def get_distribution(self, variable, bin_edges, normalize=True, use_pdzs=None):
         r"""
