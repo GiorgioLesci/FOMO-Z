@@ -12,9 +12,9 @@ date-released: 2026-10-23
 repository-code: "https://github.com/GiorgioLesci/FOMO-Z"
 license: MIT
 keywords:
-  - Galaxies: photometry
-  - Galaxies: statistics
-  - Cosmology: observations
+  - "Galaxies: photometry"
+  - "Galaxies: statistics"
+  - "Cosmology: observations"
 preferred-citation:
   type: article
   title: "FOMO-Z. Optimal galaxy classification, photometric redshifts, and reconstruction of population distributions"
