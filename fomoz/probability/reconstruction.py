@@ -1,6 +1,4 @@
-"""
-Transfer property distributions from a reference to a selected test sample.
-"""
+"""Transfer property distributions from a reference to a selected test sample."""
 
 from copy import copy
 from concurrent.futures import ThreadPoolExecutor
