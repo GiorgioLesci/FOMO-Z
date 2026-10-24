@@ -196,9 +196,7 @@ class LinearClassification:
         more general shapes in color--color space.
         """
         if k != 1:
-            raise ValueError(
-                "Only k=1 (linear interpolation) is currently supported."
-            )
+            raise ValueError("Only k=1 (linear interpolation) is currently supported.")
 
         self.verbose = verbose
         self.dataset = dataset.dataset
@@ -1099,4 +1097,3 @@ class LinearClassification:
             mask |= ne.evaluate(key, local_dict=local_dict)
 
         return mask
-
