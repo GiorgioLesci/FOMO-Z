@@ -128,10 +128,7 @@ class SelectionDefinition:
         A selection based only on additional properties requires a Dataset
         with ``z_gal_string=None`` and no PDZs, together with the default
         redshift parameters. Non-default redshift parameters without redshift
-        information raise an error when the selection is evaluated. Default
-        parameters do not disable redshift selection when redshift information
-        is available: point estimates must satisfy ``0 < z < 1000``, while
-        PDZ membership is the probability above zero.
+        information raise an error when the selection is evaluated.
 
         Required properties are validated across all input rows before any
         rule is evaluated, including rows with zero prior weight or rows that
@@ -141,10 +138,7 @@ class SelectionDefinition:
         required columns before initializing calibration or probability
         objects. Unused photometric bands may still contain missing values.
 
-        Target properties need not be known for an independent test sample
-        when predicting membership. Population reconstruction instead uses an
-        observed selection applied to both samples; those observed properties
-        must therefore be available wherever that selection is evaluated.
+        Target properties need not be known for an independent test sample.
 
         Examples
         --------

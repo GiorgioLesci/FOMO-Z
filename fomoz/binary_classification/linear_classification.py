@@ -1,8 +1,8 @@
 """
-Derive optimal color selections based on linear cuts.
+Calibrate linear color selections and measure their reference performance.
 
-This module selects the optimal color conditions and the corresponding
-optimal parameters, given any limit on redshift and on other galaxy properties.
+Support prior-weighted and PDZ-based targets, iterative cut optimization,
+bootstrap metric scatter, parameter interpolation, and calibration export.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
@@ -42,7 +42,30 @@ yaml.add_representer(list, inline_list_representer, Dumper=yaml.SafeDumper)
 
 
 class LinearClassification:
-    """Calibrate linear color selections."""
+    """
+    Calibrate OR combinations of linear color cuts on a reference sample.
+
+    Attributes
+    ----------
+    dict : dict
+        After process, color-cut expressions and metadata, including
+        interpolation knots, coefficients, and stored optimal parameters.
+        Metrics are stored separately in the attributes below.
+    C, P, F : numpy.ndarray
+        Global completeness, purity, and false positive rate at each
+        calibration threshold, in SelectionDefinition.z_lim order.
+    C_std, P_std, F_std : numpy.ndarray
+        Bootstrap standard deviations, or NaN if not estimated.
+    attained_threshold : numpy.ndarray
+        Single-cut purity threshold at termination for each redshift.
+        This is not the attained global purity and may describe a
+        rejected trial rather than the retained cut combination.
+    dict_steps : dict
+        Per-threshold accepted iteration states when requested.
+    target_mask : numpy.ndarray
+        Reference target memberships including prior weights, with shape
+        (n_thresholds, n_reference); boolean for unweighted point targets.
+    """
 
     def __init__(
         self,
@@ -59,154 +82,124 @@ class LinearClassification:
         n_bootstraps=1000,
         verbose=True,
     ):
-        r"""
-        Calibrate optimal linear color selections.
+        """
+        Configure an iterative calibration of linear color cuts.
 
-        This class selects objects occupying the outskirts of color-color
-        distributions, as is often the case for background galaxy populations.
-        For more general binary selections, see
-        :class:`~fomoz.binary_classification.grid_classification.GridClassification`.
-        For even more general (i.e. probabilistic) classifications, see the
-        :mod:`~fomoz.probability` subpackage.
-
-        For each pair of colors :math:`(x, y)`, the following conditions
-        are considered:
-
-        .. math::
-
-            \begin{aligned}
-                x &> c_1, & x &< c_2, \\
-                y &> c_3, & y &< c_4, \\
-                x &> s_1 y + c_5, & x &> s_2 y + c_6, \\
-                x &< s_3 y + c_7, & x &< s_4 y + c_8.
-            \end{aligned}
-
-        Here, :math:`c_1,\ldots,c_8` are real-valued parameters,
-        :math:`s_1,s_3>0`, and :math:`s_2,s_4<0`.
-        All conditions, both within and across color-color spaces,
-        are combined through the logical OR operator, :math:`\lor`.
-
-        The algorithm progressively relaxes the purity threshold applied
-        to individual cuts to increase global completeness while maintaining
-        the required global purity. Bootstrap uncertainties on the resulting
-        metrics can also be estimated.
-
-        For each limiting redshift specified in ``selection_definition``,
-        let :math:`\delta\mathcal{P}_{\rm step}` denote ``step``,
-        :math:`\mathcal{C}_{\rm min}` denote ``completeness_min``, and
-        :math:`\mathcal{P}_{\rm min}^{\rm glob}` denote ``purity_min``.
-        The optimization proceeds as follows:
-
-        1. Progressively lower the single-cut purity threshold from unity
-           in increments of :math:`\delta\mathcal{P}_{\rm step}`.
-           After :math:`n` decrements, where :math:`n>0`, the threshold is
-
-           .. math::
-
-               \mathcal{P}_{\rm iter}^{n}
-               = 1 - n\,\delta\mathcal{P}_{\rm step}.
-
-        2. For each color pair, retain a candidate color condition if at least
-           one parameter combination satisfies both
-           :math:`\mathcal{P}^{j}>\mathcal{P}_{\rm iter}^{n}` and
-           :math:`\mathcal{C}^{j}>\mathcal{C}_{\rm min}`.
-           Here, :math:`j` indexes the candidate conditions, while
-           :math:`\mathcal{P}^{j}` and :math:`\mathcal{C}^{j}` are their
-           individual purity and completeness.
-
-        3. For each retained condition, choose the admissible parameter
-           combination that maximizes :math:`\mathcal{C}^{j}`.
-
-        4. Combine the resulting cuts across all color-color spaces using
-           :math:`\lor`, and evaluate the global purity :math:`\mathcal{P}^{\rm glob}`
-           and completeness :math:`\mathcal{C}^{\rm glob}`.
-
-        5. Continue relaxing the single-cut threshold while the combined
-           selection satisfies :math:`\mathcal{P}^{\rm glob}>\mathcal{P}_{\rm min}^{\rm glob}`,
-           retaining the optimal admissible cuts.
-
-        The calibrated cuts are stored in an expression-based dictionary,
-        together with global purity, completeness, and failure rate metrics.
-        Cut parameters are interpolated across limiting redshifts to
-        provide continuous selections.
-
-        Individual conditions with a failure rate equal to one are
-        always excluded.
+        For each pair of colors ``(x, y)``, candidates include ``x > c``,
+        ``x < c``, ``y > c``, ``y < c``, and the four inclined cuts
+        ``x > s*y + c``, ``x > -s*y + c``, ``x < s*y + c``, and
+        ``x < -s*y + c``, with positive slope magnitudes ``s``. Single-color
+        cuts are evaluated once per color. All retained cuts are combined
+        through logical OR, both within and across color--color spaces.
+        This approach is suited to targets occupying the outskirts of color
+        distributions, such as background galaxies for weak lensing.
 
         Parameters
         ----------
         dataset : Dataset
-            Reference dataset containing photometry, target properties,
-            and band information.
+            Reference sample providing magnitudes, target properties, optional
+            PDZs, and prior weights. The internal DataFrame is referenced,
+            not copied. Clean required target properties with
+            ``Dataset.drop_missing`` before constructing the calibration,
+            and avoid modifying the sample during calibration. Magnitude
+            uncertainties are not propagated by this binary method.
         selection_definition : SelectionDefinition
-            Target selection criteria, such as redshift thresholds.
-        purity_min : float or array-like
-            Required minimum global purity at each limiting redshift.
-            If a scalar, the same threshold is applied at every limiting
-            redshift. If array-like, provide one threshold per limiting
-            redshift.
+            Target criteria and threshold grid. Required properties are
+            validated and target membership is evaluated during construction.
+            For interpolation across multiple thresholds, supply distinct
+            thresholds in increasing order.
+        purity_min : float or one-dimensional array-like
+            Required global purity in [0, 1). Supply a Python float to use
+            the same value at every threshold, or one value per entry in
+            ``selection_definition.z_lim``. The combined selection is accepted
+            when its purity is greater than or equal to this value.
         completeness_min : float, default=0.05
-            Minimum completeness required for an individual color cut.
-            This constraint applies to single cuts, not to the combined
-            selection. It helps exclude cuts supported by very few target
-            objects and reduces sensitivity to statistical fluctuations.
+            Strict lower bound on each candidate cut's completeness, in
+            [0, 1]. This is a single-cut constraint, not a threshold imposed
+            directly on the combined selection. Candidates with zero purity
+            or completeness, or a failure rate of one, are also discarded.
         threshold_buffer : float, default=0.05
-            Buffer subtracted from ``purity_min`` when retaining candidate
-            color cuts. Conditions not satisfying
-            ``purity_min - threshold_buffer`` are discarded before
-            optimization to reduce memory usage.
-            The default corresponds to five percentage points.
-            An error is raised if the buffer is too small for the
-            optimization to proceed.
-        s_samples : array-like, default=np.linspace(0.3, 2.5, 50)
-            Strictly positive slope magnitudes used to generate inclined
-            cuts. Both positive and negative slopes are considered.
-            The default provides 50 equally spaced values between
-            0.3 and 2.5, including both endpoints.
+            Candidate-search margin below the requested global purity.
+            Only candidates with purity strictly above
+            ``purity_min - threshold_buffer`` are retained for optimization.
+            Use a non-negative margin no larger than the smallest requested
+            purity; equality is accepted by the implementation.
+            If relaxation reaches this buffered boundary, process raises
+            ValueError. Increasing the margin retains more candidates and
+            may allow the search to proceed, at greater memory cost.
+        s_samples : numpy.ndarray, default=np.linspace(0.3, 2.5, 50)
+            One-dimensional array of strictly positive slope magnitudes.
+            Both signs are tested. The default has 50 equally spaced values
+            from 0.3 to 2.5. Values are stored as float32. Supply a NumPy
+            array rather than a Python list.
         c_precision : float, default=0.05
-            Sampling step for the parameters :math:`c_i`.
-            Smaller values provide finer sampling at greater computational
-            cost. Halving this step approximately doubles the number of
-            intercept samples per slope, with a corresponding increase
-            in runtime and memory usage.
+            Positive nominal spacing of the intercept grid, in magnitude
+            units. For a data-driven range of width ``width``, the helper
+            uses ``int(width / c_precision) + 1`` evenly spaced samples;
+            the actual spacing need not equal this value exactly.
+            Smaller values increase computational and memory requirements.
         k : int, default=1
-            Requested spline degree for interpolating cut parameters.
-            The default gives linear interpolation. If fewer than
-            ``k + 1`` points are available, the degree is reduced to
-            ``n_points - 1``. Interpolation is skipped when only one
-            point is available.
+            Requested interpolating-spline degree, from 1 to 5. The default
+            is linear interpolation. For each cut, the effective degree is
+            ``min(k, n_points - 1)``; interpolation is skipped if the cut
+            is retained at only one threshold. Interpolation does not
+            impose a purity constraint between calibration thresholds.
         step : float, default=0.0001
-            Decrement of the single-cut purity threshold at each
-            optimization iteration,
-            :math:`\delta\mathcal{P}_{\rm step}`.
+            Positive decrement of the iterative single-cut purity threshold,
+            starting at unity. Smaller values sample the relaxation more
+            finely and increase the number of iterations.
         do_bootstrap : bool, default=True
-            If True, estimate uncertainties on completeness, purity,
-            and failure rate through bootstrap resampling.
+            Estimate metric uncertainties by resampling reference rows and
+            applying the already calibrated cuts to each resample.
         n_bootstraps : int, default=1000
-            Number of bootstrap resamples used to estimate uncertainties.
+            Positive number of bootstrap realizations when enabled.
         verbose : bool, default=True
-            If True, print progress messages and computation times.
+            Display calibration progress messages and progress bars.
 
-        Attributes
-        ----------
-        dict : dict
-            Calibrated linear color cuts and associated results.
-        P : numpy.ndarray
-            Global purity at each limiting redshift.
-        C : numpy.ndarray
-            Global completeness at each limiting redshift.
-        F : numpy.ndarray
-            Global failure rate at each limiting redshift.
-        P_std : numpy.ndarray
-            Bootstrap uncertainty on global purity.
-        C_std : numpy.ndarray
-            Bootstrap uncertainty on global completeness.
-        F_std : numpy.ndarray
-            Bootstrap uncertainty on global failure rate.
-        attained_threshold : numpy.ndarray
-            Single-cut purity threshold attained during optimization
-            at each limiting redshift.
+        Raises
+        ------
+        ValueError
+            If purity thresholds have incompatible length or lie outside
+            [0, 1), completeness_min lies outside [0, 1], threshold_buffer
+            exceeds a purity threshold, or a slope is non-positive.
+        TypeError
+            If completeness_min is not a supported numerical scalar.
+
+        Notes
+        -----
+        The current implementation maximizes completeness with a purity
+        constraint. This objective is fixed by this class, not chosen by
+        SelectionDefinition. Candidate parameters are sampled on finite
+        grids; the procedure is an iterative search, not a guarantee of
+        the global optimum over all possible combinations of cuts.
+
+        At each iteration, candidates must meet the current single-cut
+        purity threshold (inclusive). For each condition, the admissible
+        parameters with greatest completeness are chosen. Their OR union
+        is evaluated, and accepted if its global purity meets purity_min
+        (inclusive). The threshold is then lowered by step. On the first
+        combined selection below the global purity requirement, the last
+        accepted selection is retained. Iterations without candidates
+        simply lower the threshold. Candidate prefiltering enforces the
+        strict completeness and buffered-purity bounds described above.
+
+        With prior weights and/or reference PDZs, metrics are ratios of
+        weighted counts. Completeness is ``TP / (TP + FN)``, purity is
+        ``TP / (TP + FP)``, and failure rate is ``FP / (FP + TN)``.
+        Failure rate measures the fraction of non-targets selected, not
+        the contamination fraction ``1 - purity``. Undefined global ratios
+        with zero denominator are stored as zero by the metric helper.
+
+        Call process before querying masks, distributions, or writing files.
+        Use the exported calibration with Classifier to select objects in
+        an independent sample. Use GridClassification for selections with
+        more general shapes in color--color space.
         """
+        if k != 1:
+            raise ValueError(
+                "Only k=1 (linear interpolation) is currently supported."
+            )
+
         self.verbose = verbose
         self.dataset = dataset.dataset
         self.bands = dataset.bands
@@ -292,31 +285,42 @@ class LinearClassification:
         )
 
     def _process_for_one_z(self, args):
-        r"""
-        Calibrate the linear color cut selection for a single redshift threshold `z_l`.
-
-        See the documentation of the class constructor for a detailed description of the
-        iterative process implemented in this function.
+        """
+        Calibrate one threshold using the cached reference colors.
 
         Parameters
         ----------
         args : tuple
-            A 3-element tuple containing:
-            - i_z : float
-                The index of the redshift threshold being processed.
-            - store_iterations : bool
-                If True, store the iteration steps in self.dict_steps.
-            - cpu_number : int
-                Number of CPU cores to use for parallel processing.
+            ``(i_z, store_iterations, cpu_number)``: integer index into
+            ``self.td.z_lim``, whether to retain accepted iteration states,
+            and the worker count passed to MeasureLinear.
 
         Returns
         -------
-        - float
-             redshift threshold
-        - dict
-             A dictionary containing the optimal cuts and their associated
-             performance metrics (purity, completeness, failure rate)
-             for the given redshift threshold.
+        z_l : numpy scalar
+            Threshold being calibrated.
+        best_by_key : dict
+            Last accepted cuts keyed by base color, comparison color, and
+            condition index. Entries contain cut parameters and individual
+            completeness values.
+        dict_steps : dict
+            Accepted nested cut dictionaries indexed from zero, or an empty
+            dictionary if iteration storage is disabled. The index counts
+            accepted states, not all purity-threshold decrements.
+
+        Notes
+        -----
+        This internal method requires the color cache prepared by process.
+        It updates attained_threshold with the stopping single-cut threshold,
+        which may belong to the first rejected trial rather than the retained
+        selection. Candidate evaluation is delegated to MeasureLinear.
+
+        Raises
+        ------
+        ValueError
+            If the maximum candidate purity does not exceed the global
+            requirement, the buffered boundary is reached, or relaxation
+            exhausts the allowed threshold range.
         """
         i_z, store_iterations, cpu_number = args
         z_l = self.td.z_lim[i_z]
@@ -567,19 +571,31 @@ class LinearClassification:
 
     def _estimate_errors(self):
         """
-        Estimate bootstrap errors.
+        Estimate metric scatter by bootstrapping the reference rows.
 
-        This method computes mean and standard deviation of completeness, purity,
-        and failure rate, based on bootstrap resampling. Results are
-        stored as instance attributes:
-        - C_std: Standard deviation of completeness
-        - P_std: Standard deviation of purity
-        - F_std: Standard deviation of failure rate
+        Each realization draws as many rows as the reference sample, with
+        replacement. Object weights and cumulative PDZs follow the sampled
+        indices. Target rules are reevaluated and the fixed optimized cuts
+        are applied without repeating calibration.
+
+        Returns
+        -------
+        None
+            Store population standard deviations (ddof=0) across bootstrap
+            realizations in C_std, P_std, and F_std. Original-sample metrics
+            C, P, and F are retained; bootstrap means are not stored.
 
         Raises
         ------
         ValueError
-            If calibration has not been run prior to error estimation.
+            If the sum of calibrated completeness values is zero.
+
+        Notes
+        -----
+        Called internally before the cut dictionary is restructured for
+        interpolation. Uses NumPy's global random state. This estimates
+        sampling scatter conditional on the fitted cuts; it does not include
+        calibration uncertainty or sample variance between independent fields.
         """
         if np.sum(self.C) == 0.0:
             raise ValueError("No calibration is available! Run process() first.")
@@ -652,40 +668,47 @@ class LinearClassification:
         cpu_number=None,
         store_iterations=False,
     ):
-        r"""
-        Perform the iterative search for optimal linear color conditions.
+        """
+        Calibrate linear cuts and prepare their parameter interpolants.
 
-        Here, either completeness or purity are maximized, depending on what was
-        set in the `SelectionDefinition` instance given in input to the constructor of this class.
+        Evaluate candidate cuts, iteratively maximize completeness under the
+        global purity requirement, compute reference-sample metrics, optionally
+        estimate bootstrap scatter, and restructure the calibration dictionary
+        for export.
 
         Parameters
         ----------
-        cpu_number : int or None, optional
-            Number of CPU cores to use for parallel processing. If None,
-            defaults to using all available cores minus two.
-        store_iterations : bool, optional
-            If True, store the iteration steps in self.dict_steps.
-            Default is False. For advanced users.
+        cpu_number : int or None, default=None
+            Requested number of multiprocessing workers for candidate-cut
+            evaluation. None uses ``max(multiprocessing.cpu_count() - 2, 1)``.
+            Positive requests are capped at the available core count minus
+            two, with at least one worker. Thresholds are processed
+            sequentially; bootstrap realizations are also sequential.
+        store_iterations : bool, default=False
+            Retain accepted optimization states in ``dict_steps[z_lim]``.
+            Each state is a nested cut dictionary indexed by the accepted
+            iteration number. Skipped or rejected trials are not stored.
 
         Returns
         -------
         None
-            Updates the following instance attributes in place:
-            - ``self.dict`` : dict
-                Nested dictionary of optimal iterative cuts for each
-                redshift bin, restructured and interpolated.
-            - ``self.P`` : numpy.ndarray
-                Total purity across all bins.
-            - ``self.C`` : numpy.ndarray
-                Total completeness across all bins.
-            - ``self.F`` : numpy.ndarray
-                Total failure rate across all bins.
-            - ``self.P_std`` : numpy.ndarray
-                Total purity error across all bins.
-            - ``self.C_std`` : numpy.ndarray
-                Total completeness error across all bins.
-            - ``self.F_std`` : numpy.ndarray
-                Total failure rate error across all bins.
+            Populate dict, C, P, F, attained_threshold, and dict_steps.
+            Populate C_std, P_std, and F_std when bootstrap is enabled;
+            otherwise their initial NaN values remain.
+
+        Raises
+        ------
+        ValueError
+            If candidate cuts cannot meet the search requirements or the
+            iterative search reaches its buffered boundary.
+
+        Notes
+        -----
+        Metrics are measured at the supplied calibration thresholds before
+        parameter interpolation. Each expression is interpolated only using
+        thresholds where it was retained. Bootstrap keeps the calibrated cuts
+        fixed. For scripts using multiprocessing, call process under an
+        ``if __name__ == "__main__":`` guard where required by the platform.
         """
         if self.verbose:
             print("\nRunning the linear color cut calibration...")
@@ -793,6 +816,16 @@ class LinearClassification:
         by its prior weights. It does not transfer a distribution to an
         independent test sample. Normalization is conditional on the
         supplied bin range.
+
+        Only color selection and prior weights enter the histogram: it is
+        not restricted again to objects satisfying the target definition.
+        In PDZ mode, probability is distributed among bins using linearly
+        interpolated cumulative distributions. In point-value mode, bins
+        are left-inclusive and right-exclusive, except for the last bin,
+        which includes its upper edge. Contributing objects must have valid
+        property values; zero-weight objects may have missing values.
+        Weight outside the supplied bins is excluded and reported through
+        a warning. Normalization requires positive weight within the bins.
         """
         if not isinstance(variable, str) or not variable:
             raise TypeError("variable must be a non-empty string.")
@@ -853,16 +886,16 @@ class LinearClassification:
         file_name : str
             Base name of the output file (without extension).
             All file names start with "FOMO-Z_".
-        reference_sample_name : str, optional
+        reference_sample_name : str, default=""
             Name of the reference sample, stored in the
             ``reference_sample`` entry of the dictionary.
-        notes : str, optional
+        notes : str, default=""
             Additional notes entering the metadata.
-        write_metrics : bool, optional
+        write_metrics : bool, default=True
             If True, write the `FOMO-Z_{file_name}_metrics.csv` file containing
             purity, completeness, and failure rate
             as a function of limiting redshift, and their errors.
-        write_redshift_distributions : bool, optional
+        write_redshift_distributions : bool, default=False
             If True, write the
             `FOMO-Z_{file_name}_redshift_distributions.csv` file,
             containing the redshift distributions of color-selected
@@ -883,18 +916,31 @@ class LinearClassification:
             to unit integral over [min_redshift, max_redshift].
             An error is raised if a histogram has zero total weight
             within this interval.
-        n_bins_redshift : int, optional
+        n_bins_redshift : int, default=200
             Number of redshift histogram bins. Used only if `write_redshift_distributions`
             is True.
-        min_redshift : float, optional
+        min_redshift : float, default=0.0
             Minimum redshift. Used only if `write_redshift_distributions` is True.
-        max_redshift : float, optional
+        max_redshift : float, default=4.0
             Maximum redshift. Used only if `write_redshift_distributions` is True.
 
         Raises
         ------
         ValueError
             If calibration has not been run.
+
+        Notes
+        -----
+        The output directory is created if needed. Existing files with the
+        same names are overwritten. The YAML stores metadata and spline
+        parameters for use by Classifier; per-threshold c_optimal and
+        s_optimal arrays are omitted from the exported copy. The in-memory
+        dictionary is unchanged. Iteration histories are not exported.
+
+        Metrics columns are z_lim, C, P, F, C_std, P_std, and F_std.
+        Uncertainties are NaN when bootstrap was disabled. The YAML and
+        metrics are written before optional redshift distributions, so a
+        later distribution error can leave these earlier files in place.
         """
         if np.sum(self.C) == 0.0:
             raise ValueError("No calibration is available! Run process() first.")
@@ -963,19 +1009,19 @@ class LinearClassification:
 
     def get_keys(self):
         """
-        Get the optimal color condition keys.
-
-        Returns the list of optimal color condition keys contained in `self.dict`.
+        Return the calibrated color-cut expressions.
 
         Returns
-        ------
-        keys : list of str
-            List of optimal color condition keys.
+        -------
+        list of str
+            Expression keys in dict, excluding ``"metadata"``. Each key
+            can be passed to get_mask as color_condition.
 
         Raises
         ------
         ValueError
-            If calibration has not been run.
+            If the sum of calibrated completeness values is zero; normally
+            indicates that no successful calibration is available.
         """
         if np.sum(self.C) == 0.0:
             raise ValueError("No calibration is available! Run process() first.")
@@ -984,22 +1030,41 @@ class LinearClassification:
 
     def get_mask(self, zl_index, color_condition="all"):
         """
-        Get the calibration mask.
-
-        Returns the calibration mask relative to the input limiting redshift.
+        Evaluate calibrated color cuts on the reference sample.
 
         Parameters
-        ------
+        ----------
         zl_index : int
-            Index of the redshift threshold in SelectionDefinition.z_lim.
-        color_condition : str, optional
-            It can be either "all" (all optimal color conditions) or one of
-            the optimal color conditions. The latter can be obtained from `self.get_keys()`.
+            Index into ``SelectionDefinition.z_lim``; this is an index, not
+            a redshift value. This method uses stored optimal parameters,
+            rather than evaluating the parameter splines at arbitrary redshift.
+        color_condition : str, default="all"
+            ``"all"`` combines the expressions with logical OR. Otherwise,
+            supply one expression returned by get_keys.
 
         Returns
         -------
-        mask : numpy.array
-            Array of booleans.
+        numpy.ndarray of bool, shape (n_reference,)
+            Objects passing at least one requested color cut. This is a
+            photometric selection mask, not the target-membership mask:
+            contaminants can be selected. No object weights are included.
+
+        Raises
+        ------
+        AssertionError
+            If color_condition is not a string (when assertions are enabled).
+        ValueError
+            If calibration is unavailable or the expression is unknown.
+        IndexError
+            If zl_index is outside the threshold array.
+
+        Notes
+        -----
+        A cut is evaluated only when the requested threshold appears among
+        its unique stored spline knots. The corresponding entry in c_optimal
+        and, where present, s_optimal is used. Comparisons involving NaN
+        colors do not pass; another cut using available bands can still
+        select the object. Use Classifier for independent test samples.
         """
         assert isinstance(
             color_condition, str
@@ -1034,3 +1099,4 @@ class LinearClassification:
             mask |= ne.evaluate(key, local_dict=local_dict)
 
         return mask
+

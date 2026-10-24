@@ -171,8 +171,7 @@ class Dataset:
         is ``N_band * (N_band - 1) / 2``. The number of available color--color
         spaces is ``N_color * (N_color - 1) / 2``. These spaces support binary
         selection calibration; probabilistic methods compare individual
-        colors. Numerical color values are computed by the consuming methods,
-        not stored as additional columns by this constructor.
+        colors.
 
         The probability helpers compute a color uncertainty by adding the
         corresponding magnitude uncertainties in quadrature, assuming
@@ -183,7 +182,7 @@ class Dataset:
         For reference samples, cumulative PDZ differences provide probability
         mass in redshift-selection intervals or reconstructed redshift bins.
         Prior object weights and these redshift probabilities have distinct
-        roles; PDZ normalization does not incorporate the prior weights.
+        roles.
 
         Examples
         --------

@@ -113,7 +113,7 @@ python -m pip install -e ".[dev]"
 
 ## Documentation
 
-Full documentation, including the API reference and tutorials, is available at **[giorgiolesci.github.io/FOMO-Z](https://giorgiolesci.github.io/FOMO-Z/)**.
+Full documentation, including the API reference, is available at **[giorgiolesci.github.io/FOMO-Z](https://giorgiolesci.github.io/FOMO-Z/)**.
 
 ## License
 
