@@ -29,9 +29,7 @@ from .grid_classification import GridClassification
 
 
 class Classifier:
-    """
-    Apply precomputed photometric selections to a test sample.
-    """
+    """Apply precomputed photometric selections to a test sample."""
 
     def __init__(self):
         """
