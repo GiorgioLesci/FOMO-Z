@@ -533,4 +533,3 @@ class SelectionDefinition:
                 target_mask[i] *= additional_mask
 
         return target_mask
-
