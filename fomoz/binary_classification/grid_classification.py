@@ -32,7 +32,7 @@ from ..auxiliary.distributions import get_distribution as compute_distribution
 
 class GridClassification:
     """
-    Calibrate selections using probability-thresholded color--color grids.
+    Calibrate selections using color--color grids.
 
     Attributes
     ----------
@@ -81,8 +81,7 @@ class GridClassification:
         ----------
         dataset : Dataset
             Reference magnitudes, target properties, prior weights, and
-            optional cumulative PDZs. The internal DataFrame is referenced,
-            not copied. Clean required target properties before constructing
+            optional cumulative PDZs. Clean required target properties before constructing
             this object and avoid modifying the sample afterward.
             Magnitude uncertainties are not propagated by this binary method.
         selection_definition : SelectionDefinition
@@ -91,16 +90,13 @@ class GridClassification:
             properties are validated during construction.
         purity_min : float or one-dimensional array-like
             Requested global purity in [0, 1). A Python float is broadcast
-            to all thresholds; otherwise supply one value per threshold.
-            The iterative comparison is inclusive. This requirement applies
-            before significance filtering; final metrics are recomputed and
-            a warning reports an empty selection or a purity below the target.
+            to all redshift thresholds (when provided); otherwise supply one value
+            per redshift threshold.
         grid_precision : float, default=0.15
             Positive nominal grid spacing in magnitude units, shared by all
             colors. The helper constructs ``int(width / grid_precision) + 1``
             evenly spaced edges over each color range. Actual spacing can
-            differ from grid_precision. Choose a value small enough to give
-            at least two edges for every color.
+            differ from grid_precision.
         alpha : float, default=1
             Threshold in [0, 1] for the posterior lower-tail probability
             used to filter bins after the iterative search.
@@ -150,12 +146,9 @@ class GridClassification:
 
         The search lowers a common bin-probability threshold, accepting bins
         with ``p_sel >= threshold``. Completeness cannot decrease as this
-        unfiltered region expands. This is not an exhaustive optimization
-        of arbitrary bin subsets, and global purity across overlapping spaces
-        need not be monotonic with the threshold.
+        unfiltered region expands.
 
-        The search skips trials selecting no positive reference weight. Once
-        non-empty selections are reached, it stops at the first trial below
+        Once non-empty selections are reached, it stops at the first trial below
         the required global purity and retains the last accepted masks and
         threshold. If no trial was accepted, it raises ValueError. Reaching
         a non-positive threshold without crossing the purity requirement
@@ -163,11 +156,7 @@ class GridClassification:
         These search errors expose their diagnostic calibration_purity value.
 
         Significance filtering is applied only after this search. It can
-        change the global purity of the OR union in either direction; a
-        warning reports an empty final selection or failure to meet the
-        requested purity. The filtered masks and recomputed metrics are
-        retained rather than silently recalibrated. PDZ-only reference
-        samples are supported: point redshifts are not additionally required.
+        change the global purity of the OR union in either direction.
 
         The global metrics use weighted counts: completeness is
         ``TP / (TP + FN)``, purity is ``TP / (TP + FP)``, and failure rate
@@ -519,9 +508,8 @@ class GridClassification:
         Calibrate each threshold, filter bins, and compute global metrics.
 
         Thresholds are processed sequentially. The objective is fixed to
-        expanding the color selection subject to a requested global purity;
-        it is not selected through SelectionDefinition. No interpolation
-        between threshold masks is performed.
+        expanding the color selection subject to a requested global purity.
+        No interpolation between threshold masks is performed.
 
         Returns
         -------
@@ -563,7 +551,13 @@ class GridClassification:
         if self.verbose:
             print("Grid calibration complete.")
 
-    def get_distribution(self, zl_index, variable, bin_edges, normalize=True):
+    def get_distribution(
+        self,
+        zl_index=0,
+        variable="redshift",
+        bin_edges=np.linspace(0.0, 1.0, 10),
+        normalize=True,
+    ):
         """
         Compute a property distribution of color-selected reference objects.
 
@@ -574,7 +568,8 @@ class GridClassification:
         Parameters
         ----------
         zl_index : int
-            Index of the threshold in SelectionDefinition.z_lim.
+            Index of the threshold in SelectionDefinition.z_lim. If no
+            redshift criteria were defined, set it to default (i.e. zero).
         variable : str
             Name of the reference property to histogram.
             Use "redshift" or the original Dataset.z_gal_string alias
@@ -669,14 +664,8 @@ class GridClassification:
         """
         Save the optimal color-color grid calibration to a FITS file.
 
-        The primary HDU stores the band names, threshold direction, nominal
-        grid precision, and reference-sample metadata. The ZL_VALUES table
-        stores the calibration thresholds. Each color--color space has one
-        ImageHDU containing its masks as uint8 values with shape
-        (n_thresholds, n_color1bins, n_color2bins), plus band identifiers.
-        Each mask header also stores C1MIN, C1MAX, C2MIN, and C2MAX: the
-        reference color limits used with GRIDPREC to reconstruct the original
-        evenly spaced bin edges. No per-object indices are exported.
+        This FITS file is supposed to be read by the Classifier class.
+        Other files can also be written by this method (see below).
 
         Parameters
         ----------
@@ -729,18 +718,9 @@ class GridClassification:
 
         Notes
         -----
-        The output directory is created if needed; existing files with these
-        names are overwritten. Notes are prefixed with the package label and
-        truncated to 70 characters. Metrics columns are z_lim, C, P, F,
+        The output directory is created if needed. Existing files with these
+        names are overwritten. Metrics columns are z_lim, C, P, F,
         C_std, P_std, and F_std; disabled bootstrap gives NaN uncertainties.
-        FITS and metrics are written before optional redshift distributions.
-
-
-        The saved reference limits and nominal precision reproduce the same
-        grid edges used at calibration. Classifier preserves these grids
-        when applying the masks to a different sample. Older files lacking
-        the limits must be re-exported from the original calibration object
-        or regenerated by recalibration.
         """
         if np.sum(self.C) == 0.0:
             raise ValueError("No calibration is available! Run process() first.")

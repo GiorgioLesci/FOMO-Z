@@ -247,23 +247,24 @@ class Classifier:
 
         Notes
         -----
-        Linear parameters are interpolated within each cut's calibrated
-        range. For grid selections, a request between adjacent thresholds
+        In the case of redshift selections, linear parameters are interpolated
+        as a function of redshift within each cut's calibrated redshift range.
+        For grid-based redshift selections, a request between adjacent thresholds
         uses the higher threshold for lower-limit calibrations and the lower
         threshold for upper-limit calibrations. Grid comparisons use a
         redshift tolerance of 1e-6.
 
-        Below the calibrated range, lower-limit selections use the lowest
+        Below the calibrated redshift range, lower-limit selections use the lowest
         available threshold; above the range they select no objects. For
         upper-limit selections, requests above the range use the highest
         available threshold; below the range they select no objects. Linear
         boundary handling is applied separately to each expression.
 
-        Grid limits always remain those of the reference calibration. Only
-        object-bin assignments are recomputed for the test sample. Objects
-        outside a grid, on its final upper edge, or missing either color
-        are excluded from that space; another space can still select them.
-        Neither target properties nor magnitude errors are used here.
+        No magnitude errors are used here.
+
+        Remind that classifications are not tied to redshift: other variables
+        can be involved. Redshift is not a required quantity for the definition
+        of a classification.
         """
         # First checks
         self.z_lim = set_input_variable_precision(z_lim)
@@ -427,16 +428,6 @@ class Classifier:
             color limits or masks, saved limits are invalid or inconsistent,
             or mask shapes disagree with thresholds or grid dimensions.
             File-reading and missing-metadata errors also propagate.
-
-        Notes
-        -----
-        Grid FITS files require ZL_VALUES, BANDS, ZLISLOW, GRIDPREC, and
-        MASK_ image extensions with band identifiers and C1MIN, C1MAX,
-        C2MIN, C2MAX headers. The saved limits and GRIDPREC reconstruct
-        the original grids; limits are never estimated from test photometry.
-        Legacy FITS files without these limits are rejected. Re-export the
-        original calibration object using the updated writer or recalibrate.
-        A failed grid load leaves the previous grid dictionary unchanged.
         """
         file_path = os.path.join(input_dir, file_name)
         _, ext = os.path.splitext(file_name)

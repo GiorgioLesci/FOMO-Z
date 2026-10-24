@@ -98,23 +98,18 @@ class LinearClassification:
         ----------
         dataset : Dataset
             Reference sample providing magnitudes, target properties, optional
-            PDZs, and prior weights. The internal DataFrame is referenced,
-            not copied. Clean required target properties with
-            ``Dataset.drop_missing`` before constructing the calibration,
-            and avoid modifying the sample during calibration. Magnitude
-            uncertainties are not propagated by this binary method.
+            PDZs, and prior weights. Clean required target properties with
+            ``Dataset.drop_missing`` before constructing the calibration.
+            Magnitude uncertainties are not propagated by this binary method.
         selection_definition : SelectionDefinition
-            Target criteria and threshold grid. Required properties are
-            validated and target membership is evaluated during construction.
-            For interpolation across multiple thresholds, supply distinct
-            thresholds in increasing order.
+            Target criteria and threshold grid. For interpolation across multiple
+            redshift thresholds, supply distinct redshift thresholds in increasing order.
         purity_min : float or one-dimensional array-like
-            Required global purity in [0, 1). Supply a Python float to use
-            the same value at every threshold, or one value per entry in
-            ``selection_definition.z_lim``. The combined selection is accepted
-            when its purity is greater than or equal to this value.
+            Required GLOBAL purity in [0, 1). In the case of redshift classification,
+            supply a Python float to use the same value at every redshift threshold,
+            or one value per entry in ``selection_definition.z_lim``.
         completeness_min : float, default=0.05
-            Strict lower bound on each candidate cut's completeness, in
+            Strict lower bound on each candidate color cut's completeness, in
             [0, 1]. This is a single-cut constraint, not a threshold imposed
             directly on the combined selection. Candidates with zero purity
             or completeness, or a failure rate of one, are also discarded.
@@ -123,20 +118,18 @@ class LinearClassification:
             Only candidates with purity strictly above
             ``purity_min - threshold_buffer`` are retained for optimization.
             Use a non-negative margin no larger than the smallest requested
-            purity; equality is accepted by the implementation.
-            If relaxation reaches this buffered boundary, process raises
+            purity. If relaxation reaches this buffered boundary, process raises
             ValueError. Increasing the margin retains more candidates and
             may allow the search to proceed, at greater memory cost.
         s_samples : numpy.ndarray, default=np.linspace(0.3, 2.5, 50)
-            One-dimensional array of strictly positive slope magnitudes.
+            One-dimensional array of strictly positive slope values.
             Both signs are tested. The default has 50 equally spaced values
             from 0.3 to 2.5. Values are stored as float32. Supply a NumPy
             array rather than a Python list.
         c_precision : float, default=0.05
             Positive nominal spacing of the intercept grid, in magnitude
             units. For a data-driven range of width ``width``, the helper
-            uses ``int(width / c_precision) + 1`` evenly spaced samples;
-            the actual spacing need not equal this value exactly.
+            uses ``int(width / c_precision) + 1`` evenly spaced samples.
             Smaller values increase computational and memory requirements.
         k : int, default=1
             Requested interpolating-spline degree, from 1 to 5. The default
@@ -149,7 +142,8 @@ class LinearClassification:
             starting at unity. Smaller values sample the relaxation more
             finely and increase the number of iterations.
         do_bootstrap : bool, default=True
-            Estimate metric uncertainties by resampling reference rows and
+            Estimate uncertainties on global purity, completeness, and failure
+            rate, by resampling reference rows and
             applying the already calibrated cuts to each resample.
         n_bootstraps : int, default=1000
             Positive number of bootstrap realizations when enabled.
@@ -168,27 +162,22 @@ class LinearClassification:
         Notes
         -----
         The current implementation maximizes completeness with a purity
-        constraint. This objective is fixed by this class, not chosen by
-        SelectionDefinition. Candidate parameters are sampled on finite
-        grids; the procedure is an iterative search, not a guarantee of
-        the global optimum over all possible combinations of cuts.
+        constraint. Candidate parameters are sampled on finite
+        grids.
 
         At each iteration, candidates must meet the current single-cut
-        purity threshold (inclusive). For each condition, the admissible
+        purity threshold. For each condition, the admissible
         parameters with greatest completeness are chosen. Their OR union
-        is evaluated, and accepted if its global purity meets purity_min
-        (inclusive). The threshold is then lowered by step. On the first
+        is evaluated, and accepted if its global purity meets purity_min.
+        The threshold is then lowered by step. On the first
         combined selection below the global purity requirement, the last
-        accepted selection is retained. Iterations without candidates
-        simply lower the threshold. Candidate prefiltering enforces the
-        strict completeness and buffered-purity bounds described above.
+        accepted selection is retained.
 
         With prior weights and/or reference PDZs, metrics are ratios of
         weighted counts. Completeness is ``TP / (TP + FN)``, purity is
         ``TP / (TP + FP)``, and failure rate is ``FP / (FP + TN)``.
-        Failure rate measures the fraction of non-targets selected, not
-        the contamination fraction ``1 - purity``. Undefined global ratios
-        with zero denominator are stored as zero by the metric helper.
+        Undefined global ratios with zero denominator are stored as zero
+        by the metric helper.
 
         Call process before querying masks, distributions, or writing files.
         Use the exported calibration with Classifier to select objects in
@@ -680,12 +669,12 @@ class LinearClassification:
             Requested number of multiprocessing workers for candidate-cut
             evaluation. None uses ``max(multiprocessing.cpu_count() - 2, 1)``.
             Positive requests are capped at the available core count minus
-            two, with at least one worker. Thresholds are processed
-            sequentially; bootstrap realizations are also sequential.
+            two, with at least one worker.
         store_iterations : bool, default=False
             Retain accepted optimization states in ``dict_steps[z_lim]``.
             Each state is a nested cut dictionary indexed by the accepted
             iteration number. Skipped or rejected trials are not stored.
+            For advanced users.
 
         Returns
         -------
@@ -703,10 +692,8 @@ class LinearClassification:
         Notes
         -----
         Metrics are measured at the supplied calibration thresholds before
-        parameter interpolation. Each expression is interpolated only using
-        thresholds where it was retained. Bootstrap keeps the calibrated cuts
-        fixed. For scripts using multiprocessing, call process under an
-        ``if __name__ == "__main__":`` guard where required by the platform.
+        parameter interpolation. Each expression is interpolated only as a
+        function of redshift limits.
         """
         if self.verbose:
             print("\nRunning the linear color cut calibration...")
@@ -764,7 +751,13 @@ class LinearClassification:
         if self.verbose:
             print("Linear cut calibration complete.")
 
-    def get_distribution(self, zl_index, variable, bin_edges, normalize=True):
+    def get_distribution(
+        self,
+        zl_index=0,
+        variable="redshift",
+        bin_edges=np.linspace(0.0, 1.0, 10),
+        normalize=True,
+    ):
         """
         Compute a property distribution of color-selected reference objects.
 
@@ -775,7 +768,8 @@ class LinearClassification:
         Parameters
         ----------
         zl_index : int
-            Index of the threshold in SelectionDefinition.z_lim.
+            Index of the threshold in SelectionDefinition.z_lim. If no
+            redshift criteria were defined, set it to default (i.e. zero).
         variable : str
             Name of the reference property to histogram.
             Use "redshift" or the original Dataset.z_gal_string alias
@@ -817,13 +811,10 @@ class LinearClassification:
 
         Only color selection and prior weights enter the histogram: it is
         not restricted again to objects satisfying the target definition.
-        In PDZ mode, probability is distributed among bins using linearly
+        In PDZ mode, redshift probability is distributed among bins using linearly
         interpolated cumulative distributions. In point-value mode, bins
         are left-inclusive and right-exclusive, except for the last bin,
-        which includes its upper edge. Contributing objects must have valid
-        property values; zero-weight objects may have missing values.
-        Weight outside the supplied bins is excluded and reported through
-        a warning. Normalization requires positive weight within the bins.
+        which includes its upper edge.
         """
         if not isinstance(variable, str) or not variable:
             raise TypeError("variable must be a non-empty string.")
@@ -874,7 +865,8 @@ class LinearClassification:
         """
         Save the optimal color selection.
 
-        The dictionary of optimal cuts is saved to a YAML file.
+        The dictionary of optimal cuts is saved to a YAML file,
+        read by the Classifier class.
         Metrics and redshift distributions are saved to CSV files.
 
         Parameters
@@ -931,9 +923,7 @@ class LinearClassification:
         -----
         The output directory is created if needed. Existing files with the
         same names are overwritten. The YAML stores metadata and spline
-        parameters for use by Classifier; per-threshold c_optimal and
-        s_optimal arrays are omitted from the exported copy. The in-memory
-        dictionary is unchanged. Iteration histories are not exported.
+        parameters for use by Classifier. Iteration histories are not exported.
 
         Metrics columns are z_lim, C, P, F, C_std, P_std, and F_std.
         Uncertainties are NaN when bootstrap was disabled. The YAML and
