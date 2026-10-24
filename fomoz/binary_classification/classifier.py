@@ -1,8 +1,8 @@
 """
-Object selection class.
+Apply calibrated linear cuts and color--color grid masks to photometry.
 
-This class selects objects in an input photometric sample,
-applying a calibrated color selection for any redshift threshold.
+Load calibration objects or exported files and select objects at requested
+redshift thresholds while preserving reference-grid boundaries.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
@@ -21,7 +21,6 @@ from scipy.interpolate import BSpline
 from ..auxiliary import (
     set_input_variable_precision,
     get_color_color_mask,
-    update_dict_color_limits,
     update_dict_metadata,
     update_dict,
 )
@@ -30,27 +29,29 @@ from .grid_classification import GridClassification
 
 
 class Classifier:
-    """Apply precomputed optimal color selections to datasets."""
+    """
+    Apply precomputed photometric selections to a test sample.
+    """
 
     def __init__(self):
         """
-        Class to apply precomputed optimal color selections to datasets.
-
-        This class manages dictionaries of optimal cut parameters (either loaded
-        directly or from file), reconstructs their interpolators,
-        and applies the cuts to input datasets across a redshift thresholds.
-        The output is a set of boolean masks marking which objects satisfy the cuts
-        at each redshift threshold.
+        Initialize an empty classifier.
 
         Attributes
         ----------
-        dict : dict
-            Dictionary containing the optimal cut parameters and their associated
-            interpolators. Keys are expressions (strings) to be evaluated via
-            `numexpr`. The ``"metadata"`` key stores the metadata.
+        dict_linear : dict
+            Loaded linear-cut expressions, metadata, and reconstructed
+            parameter interpolators. Empty until a linear calibration is loaded.
+        dict_grid : dict
+            Loaded grid masks, metadata including reference color limits,
+            and object-bin mappings updated on each process call.
         mask : list of numpy.ndarray
-            Boolean masks for each redshift in the grid, computed after calling
-            ``process``.
+            Boolean masks, one per requested threshold, after process.
+        bands : list of str
+            Magnitude columns required by the applied calibrations.
+        z_lim : numpy.ndarray
+            Requested thresholds, set by process as float32 rounded to
+            six decimal places.
         """
         self.dict_linear = {}
         self.dict_grid = {}
@@ -59,22 +60,21 @@ class Classifier:
 
     def _reconstruct_interpolators(self):
         """
-        Reconstruct interpolator objects for linear color selections.
-
-        This method reconstructs the
-        interpolator functions for each cut expression.
-
-        After reconstruction, the `self.dict_linear` entries will also include:
-          - ``c_interp`` : `scipy.interpolate.BSpline`
-              The interpolator object for the intercept parameter.
-          - ``s_interp`` : `scipy.interpolate.BSpline`, optional
-              The interpolator object for the slope parameter (if present).
+        Reconstruct BSpline objects for the loaded linear cuts.
 
         Returns
         -------
         None
-            Updates ``self.dict_linear`` in place with the loaded dictionary and
-            reconstructed interpolator objects.
+            Add c_interp and, for inclined cuts, s_interp to dict_linear
+            entries containing a spline order. Single-point entries retain
+            scalar coefficients. Extrapolation is disabled in BSpline.
+
+        Raises
+        ------
+        ValueError
+            If bands equal reserved parameter names or required knot or
+            coefficient fields are missing. Spline-construction errors
+            also propagate.
         """
         bands = self.dict_linear["metadata"]["bands"]
         if "c" in bands or "s" in bands:
@@ -116,41 +116,33 @@ class Classifier:
 
     def _linear_selection(self, z_lim, mags, color_condition="all"):
         """
-        Select based a linear calibration derived with `LinearClassification`.
-
-        Select objects at a given redshift threshold.
-        - If calibrated limiting redshifts are lower limits:
-          - if `z_lim` is lower than the minimum limiting redshift, `z_min`,
-            the selection is applied as if `z_lim` equals `z_min`;
-          - if `z_lim` is larger than the maximum limiting redshift, `z_max`,
-            no selection is applied.
-        - If calibrated limiting redshifts are upper limits:
-          - if `z_lim` > `z_max`, then `z_lim` = `z_max` is imposed;
-          - if `z_lim` < `z_min`, then no selection is applied.
-
-        For each cut expression in ``self.dict_linear``, this method:
-        1. Interpolates (or uses fixed) cut parameters ``c`` and ``s``
-           at the given redshift.
-        2. Evaluates the corresponding logical expression with the
-           magnitudes in ``mags`` using `numexpr`.
-        3. Combines results across all expressions with a logical OR.
+        Evaluate requested linear-cut expressions at one threshold.
 
         Parameters
         ----------
         z_lim : float
-            Redshift threshold at which the cuts should be evaluated.
+            Requested threshold. Boundary behavior is applied separately
+            to each expression's calibrated range.
         mags : dict
-            Dictionary mapping magnitude names
-            to numpy arrays of magnitudes for all objects.
-        color_condition : str, optional
-            It can be either "all" (all optimal color conditions) or one of
-            the optimal color conditions.
+            Band names mapped to aligned arrays of object magnitudes.
+        color_condition : str, default="all"
+            Combine all expressions through OR, or evaluate one loaded key.
 
         Returns
         -------
         numpy.ndarray of bool
-            Boolean mask array of shape (n_objects,), where True indicates
-            that the object satisfies at least one of the color conditions.
+            Objects satisfying at least one evaluated expression.
+
+        Notes
+        -----
+        For lower-limit calibrations, requests below a cut's calibrated
+        range use its minimum threshold; requests above its range receive
+        no contribution from that cut. For upper-limit calibrations, requests
+        above the range use its maximum threshold; requests below it receive
+        no contribution. Thus, an unsupported cut contributes False, not
+        an unrestricted selection. Parameters within the supported range
+        are interpolated, or taken from fixed coefficients for a single
+        calibration point. Comparisons with NaN colors do not pass.
         """
         all_conditions = [k for k in self.dict_linear if k != "metadata"]
         if color_condition == "all":
@@ -225,47 +217,55 @@ class Classifier:
         ],
     ):
         """
-        Apply optimal color selections to a dataset.
-
-        For each redshift in ``z_lim``, this method evaluates the stored
-        color conditions based on the magnitudes in ``dataset`` and produces
-        a boolean mask. All results are stored in ``self.mask``.
-        It is possible to load both a `LinearClassification` and a `GridClassification`
-        selection. In this case, they'll be related through a OR operator.
-
-        - If calibrated limiting redshifts are lower limits:
-          - if `z_lim` is lower than the minimum limiting redshift, `z_min`,
-            the selection is applied as if `z_lim` equals `z_min`;
-          - if `z_lim` is larger than the maximum limiting redshift, `z_max`,
-            no selection is applied.
-        - If calibrated limiting redshifts are upper limits:
-          - if `z_lim` > `z_max`, then `z_lim` = `z_max` is imposed;
-          - if `z_lim` < `z_min`, then no selection is applied.
-
-        `LinearClassification` selections handle `z_lim` values falling between
-        the limiting redshifts used in the calibration through interpolations.
-        For `GridClassification`, instead, if `z_1 < z_lim < z_2`, we impose:
-        - `z_lim = z_2` if the limiting redshifts are lower limits.
-        - `z_lim = z_1` if the limiting redshifts are upper limits.
+        Apply loaded photometric selections to a DataFrame.
 
         Parameters
         ----------
-        z_lim : array-like or float
-            Redshift threshold(s) at which the cuts are applied.
+        z_lim : float or one-dimensional array-like
+            Requested thresholds, converted to float32 and rounded to six
+            decimal places. Grid calibration thresholds must be ordered
+            increasingly in the loaded metadata.
         dataset : pandas.DataFrame
-            The photometric dataset. Must have columns
-            corresponding to the magnitude names stored in e.g.
-            ``self.dict_linear['metadata']['bands']``.
-        missing_data : int, float, or list, optional
-            Value(s) used in the dataset to denote missing entries. These are replaced
-            with NaN for consistency (if missing data in your data set are NaN,
-            you don't need to specify it).
+            Test photometry with a column for every required magnitude band.
+            Missing bands may be supplied as columns filled with NaN or a
+            declared sentinel. The input DataFrame is copied, not modified.
+        missing_data : scalar or list, optional
+            Missing-value sentinels replaced with NaN in required bands.
+            Defaults to [99, -99, 999, -999, 99.9, -99.9, 999.9, -999.9].
 
         Returns
         -------
         None
-            Updates ``self.mask`` with a list of boolean arrays, one for each
-            redshift in ``z_lim``.
+            Replace mask with one boolean array per requested threshold,
+            preserving the input row order. If both calibration types are
+            loaded, their selections are combined through logical OR.
+
+        Raises
+        ------
+        ValueError
+            If no calibration is loaded, required bands are absent, loaded
+            linear and grid band lists differ, or reference grid limits
+            are missing.
+
+        Notes
+        -----
+        Linear parameters are interpolated within each cut's calibrated
+        range. For grid selections, a request between adjacent thresholds
+        uses the higher threshold for lower-limit calibrations and the lower
+        threshold for upper-limit calibrations. Grid comparisons use a
+        redshift tolerance of 1e-6.
+
+        Below the calibrated range, lower-limit selections use the lowest
+        available threshold; above the range they select no objects. For
+        upper-limit selections, requests above the range use the highest
+        available threshold; below the range they select no objects. Linear
+        boundary handling is applied separately to each expression.
+
+        Grid limits always remain those of the reference calibration. Only
+        object-bin assignments are recomputed for the test sample. Objects
+        outside a grid, on its final upper edge, or missing either color
+        are excluded from that space; another space can still select them.
+        Neither target properties nor magnitude errors are used here.
         """
         # First checks
         self.z_lim = set_input_variable_precision(z_lim)
@@ -309,7 +309,12 @@ class Classifier:
 
         # In case of grid selections, update the dictionary
         if self.dict_grid:
-            self.dict_grid = update_dict_color_limits(self.dict_grid, dataset)
+            if "color_limits" not in self.dict_grid["metadata"]:
+                raise ValueError(
+                    "Grid calibration lacks reference color limits. "
+                    "Reload a calibration exported with grid limits; "
+                    "the limits cannot be inferred from the test sample."
+                )
             self.dict_grid = update_dict(
                 self.dict_grid,
                 dataset,
@@ -363,21 +368,27 @@ class Classifier:
 
     def load_parameters(self, calibration):
         """
-        Load selection parameters from a ``LinearClassification`` or ``GridClassification`` instance.
-
-        Load precomputed optimal color cut parameters and reconstruct interpolator objects
-        in case of linear color selection.
+        Load a calibration object into the classifier.
 
         Parameters
         ----------
-        calibration : LinearClassification
-            `LinearClassification` or `GridClassification` object.
+        calibration : LinearClassification or GridClassification
+            Successfully processed calibration. Its dictionary is deep-copied,
+            so subsequent classifier operations do not modify the source.
 
         Returns
         -------
         None
-            Updates ``self.dict_linear`` or ``self.dict_grid`` in place
-            with the loaded dictionary and reconstructed interpolator objects (if linear).
+            Replace the dictionary for the supplied calibration type.
+            A previously loaded calibration of the other type is retained.
+            Linear interpolators are reconstructed; grid reference limits
+            are preserved as part of the copied metadata.
+
+        Raises
+        ------
+        ValueError
+            If calibration is not a supported class. Errors reconstructing
+            incomplete linear parameters also propagate.
         """
         dictionary = calibration.dict
 
@@ -393,28 +404,41 @@ class Classifier:
 
     def load_parameters_from_file(self, input_dir, file_name):
         """
-        Load selection parameters from file.
-
-        This function acts depending on the format of the input file.
-          - If .yaml, the selection is interpreted as a `LinearClassification` selection.
-            In this case, this function loads precomputed optimal color cut parameters
-            from the YAML file and reconstruct interpolator objects.
-          - If .fits, the selection is interpreted as a `GridClassification` selection.
-            In this case, this function loads precomputed optimal color-color masks
-            defined on grids.
+        Load an exported linear or grid calibration.
 
         Parameters
         ----------
-        input_dir : str
-            Directory where the input file is stored.
+        input_dir : str or path-like
+            Directory containing the calibration file.
         file_name : str
-            Name of the file to load (must include extension).
+            Filename including extension. Supported extensions are .yaml
+            for linear cuts and .fits for grid masks, case-insensitively.
 
         Returns
         -------
         None
-            Updates ``self.dict_linear`` or ``self.dict_grid`` in place
-            with the loaded dictionary and reconstructed interpolator objects (if linear).
+            Replace the corresponding calibration dictionary, retaining any
+            loaded calibration of the other type. Linear interpolators are
+            reconstructed. Grid masks and reference limits are restored;
+            object-bin assignments are built by process on the test sample.
+
+        Raises
+        ------
+        ValueError
+            If the file extension is unsupported, a grid file lacks reference
+            color limits or masks, saved limits are invalid or inconsistent,
+            or mask shapes disagree with thresholds or grid dimensions.
+            File-reading and missing-metadata errors also propagate.
+
+        Notes
+        -----
+        Grid FITS files require ZL_VALUES, BANDS, ZLISLOW, GRIDPREC, and
+        MASK_ image extensions with band identifiers and C1MIN, C1MAX,
+        C2MIN, C2MAX headers. The saved limits and GRIDPREC reconstruct
+        the original grids; limits are never estimated from test photometry.
+        Legacy FITS files without these limits are rejected. Re-export the
+        original calibration object using the updated writer or recalibrate.
+        A failed grid load leaves the previous grid dictionary unchanged.
         """
         file_path = os.path.join(input_dir, file_name)
         _, ext = os.path.splitext(file_name)
@@ -437,6 +461,8 @@ class Classifier:
                 grid_precision = primary_header["GRIDPREC"]
 
                 color_spaces = []
+                color_limits = {}
+                dictionary = {}
 
                 for hdu in hdul:
                     if not hdu.name.startswith("MASK_"):
@@ -456,10 +482,42 @@ class Classifier:
                         ),
                     )
 
+                    for axis, color in enumerate(cs_key, start=1):
+                        names = (f"C{axis}MIN", f"C{axis}MAX")
+                        if any(name not in mask_hdu.header for name in names):
+                            raise ValueError(
+                                "This grid FITS file lacks reference color limits. "
+                                "Re-export the original GridClassification object "
+                                "with the updated writer, or recalibrate."
+                            )
+                        bounds = tuple(float(mask_hdu.header[name]) for name in names)
+                        if not np.all(np.isfinite(bounds)) or bounds[0] >= bounds[1]:
+                            raise ValueError(f"Invalid grid limits for color {color}.")
+                        if color in color_limits and color_limits[color] != bounds:
+                            raise ValueError(
+                                f"Inconsistent grid limits for color {color}."
+                            )
+                        color_limits[color] = bounds
+
                     mask_3d = np.asarray(mask_hdu.data, dtype=bool)
+                    if mask_3d.ndim != 3 or mask_3d.shape[0] != len(z_l):
+                        raise ValueError(
+                            "Grid mask shape does not match calibration thresholds."
+                        )
+                    expected_shape = tuple(
+                        int(
+                            (color_limits[color][1] - color_limits[color][0])
+                            / grid_precision
+                        )
+                        for color in cs_key
+                    )
+                    if mask_3d.shape[1:] != expected_shape:
+                        raise ValueError(
+                            "Grid mask shape does not match its saved color limits."
+                        )
                     mask_dict = {i: mask_3d[i] for i in range(mask_3d.shape[0])}
 
-                    self.dict_grid[cs_key] = {
+                    dictionary[cs_key] = {
                         "mask": mask_dict,
                     }
 
@@ -469,8 +527,10 @@ class Classifier:
                     {cs[0] for cs in color_spaces} | {cs[1] for cs in color_spaces}
                 )
 
-                self.dict_grid = update_dict_metadata(
-                    self.dict_grid,
+                if not color_spaces:
+                    raise ValueError("The FITS file contains no grid masks.")
+                dictionary = update_dict_metadata(
+                    dictionary,
                     bands,
                     colors,
                     color_spaces,
@@ -478,6 +538,8 @@ class Classifier:
                     z_l,
                     z_l_is_lower_limit,
                 )
+                dictionary["metadata"]["color_limits"] = color_limits
+                self.dict_grid = dictionary
 
             print("GridClassification parameters successfully loaded from file.")
 

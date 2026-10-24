@@ -127,7 +127,7 @@ def reference_calibration_linear_instance(
         s_samples=np.linspace(0.3, 1.7, 30),
         completeness_min=0,
         step=0.0001,
-        k=3,
+        k=1,
     )
 
     return calibration
@@ -146,7 +146,7 @@ def reference_calibration_linear_instance_weights(
         s_samples=np.linspace(0.3, 1.7, 30),
         completeness_min=0,
         step=0.0001,
-        k=3,
+        k=1,
     )
 
     return calibration

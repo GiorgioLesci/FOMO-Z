@@ -1,8 +1,8 @@
 """
-Derive optimal color selections based on color-color grids.
+Calibrate color--color grid selections on a reference sample.
 
-This module selects the optimal color-color grids,
-given any condition on redshift or any other galaxy properties.
+Compute weighted bin probabilities, apply threshold and significance filters,
+and provide reference-sample metrics, bootstrap scatter, and file export.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
@@ -31,7 +31,30 @@ from ..auxiliary.distributions import get_distribution as compute_distribution
 
 
 class GridClassification:
-    """Calibrate grid color selections."""
+    """
+    Calibrate selections using probability-thresholded color--color grids.
+
+    Attributes
+    ----------
+    dict : dict
+        Grid metadata, per-space object-bin mappings, and calibrated masks.
+        ``dict[space]["mask"][i]`` is the grid mask for threshold index i.
+    C, P, F : numpy.ndarray
+        Global completeness, purity, and false positive rate after final
+        filtering, in SelectionDefinition.z_lim order.
+    C_std, P_std, F_std : numpy.ndarray
+        Bootstrap standard deviations, or NaN when not estimated.
+    target_mask : numpy.ndarray
+        Prior-weighted target memberships, with shape
+        (n_thresholds, n_reference). Boolean for unit-weight point targets.
+    bin_probability_min : numpy.ndarray
+        Last accepted bin-probability threshold for each calibration,
+        also used by the significance filter. NaN before calibration.
+    color_spaces : list
+        Pairs of colors defining the available grids.
+    dict_steps : dict
+        Empty placeholder; iteration storage is not implemented.
+    """
 
     def __init__(
         self,
@@ -45,114 +68,112 @@ class GridClassification:
         n_bootstraps=1000,
         verbose=True,
     ):
-        r"""
-        Calibrate optimal grid-based color selections.
+        """
+        Initialize color grids and reference target memberships.
 
-        This class identifies selection regions in color-color spaces by
-        exploring discretized grids. In each color-color bin, the probability
-        of finding a target object is estimated as
-
-        .. math::
-
-            P_{\rm T} = \frac{N_{\rm T}}{N_{\rm S}},
-
-        where :math:`N_{\rm T}` is the number of target objects in the bin
-        and :math:`N_{\rm S}` is the total number of reference objects in
-        the same bin.
-
-        For each limiting redshift specified in ``selection_definition``,
-        let :math:`\delta\mathcal{P}_{\rm step}` denote ``step`` and
-        :math:`\mathcal{P}_{\rm min}` denote ``purity_min``.
-        The optimization proceeds as follows:
-
-        1. Progressively lower the bin purity threshold from unity
-           in increments of :math:`\delta\mathcal{P}_{\rm step}`.
-           After :math:`n` decrements, the threshold is
-
-           .. math::
-
-               \mathcal{P}_{\rm iter}^{n}
-               = 1 - n\,\delta\mathcal{P}_{\rm step}.
-
-        2. Retain bins satisfying
-           :math:`P_{\rm T}\geq\mathcal{P}_{\rm iter}^{n}`.
-
-        3. Evaluate the global purity :math:`\mathcal{P}` without applying
-           statistical filtering to individual bins. Continue relaxing
-           the threshold while the combined selection satisfies
-           :math:`\mathcal{P}>\mathcal{P}_{\rm min}`.
-
-        4. Apply the statistical filtering controlled by ``alpha`` to the
-           retained bins, then recompute the selection metrics.
-
-        Bootstrap uncertainties on the resulting metrics can also be estimated.
+        A bin's target probability is the sum of target-selection weights
+        within that bin divided by the sum of reference prior weights.
+        Target-selection weights already include the prior weights and the
+        redshift membership (from point estimates or PDZs). Empty bins and
+        bins with zero total prior weight receive probability zero.
 
         Parameters
         ----------
         dataset : Dataset
-            Reference dataset containing photometry, target properties,
-            and band information.
+            Reference magnitudes, target properties, prior weights, and
+            optional cumulative PDZs. The internal DataFrame is referenced,
+            not copied. Clean required target properties before constructing
+            this object and avoid modifying the sample afterward.
+            Magnitude uncertainties are not propagated by this binary method.
         selection_definition : SelectionDefinition
-            Target selection criteria, such as redshift thresholds.
-        purity_min : float or array-like
-            Required minimum global purity at each limiting redshift.
-            If a scalar, the same threshold is applied at every limiting
-            redshift. If array-like, provide one threshold per limiting
-            redshift.
+            Criteria defining reference targets at each supplied threshold.
+            Additional rules are shared across thresholds. Their required
+            properties are validated during construction.
+        purity_min : float or one-dimensional array-like
+            Requested global purity in [0, 1). A Python float is broadcast
+            to all thresholds; otherwise supply one value per threshold.
+            The iterative comparison is inclusive. This requirement applies
+            before significance filtering; final metrics are recomputed and
+            a warning reports an empty selection or a purity below the target.
         grid_precision : float, default=0.15
-            Bin width of the color-color grids. Smaller values provide finer
-            sampling at greater computational cost, memory usage, and
-            storage requirements.
+            Positive nominal grid spacing in magnitude units, shared by all
+            colors. The helper constructs ``int(width / grid_precision) + 1``
+            evenly spaced edges over each color range. Actual spacing can
+            differ from grid_precision. Choose a value small enough to give
+            at least two edges for every color.
         alpha : float, default=1
-            Maximum tolerated posterior probability that a bin's true
-            purity lies below the minimum acceptable purity.
+            Threshold in [0, 1] for the posterior lower-tail probability
+            used to filter bins after the iterative search.
 
-            For a bin containing :math:`k` target objects out of
-            :math:`n` total objects, assume a binomial likelihood and a
-            uniform prior on the true purity :math:`p` over :math:`[0,1]`.
-            The posterior distribution is then
+            For each bin, the helper computes an effective trial count
+            ``n_eff = sum(w)**2 / sum(w**2)`` and effective successes
+            ``k_eff = p_sel * n_eff``. The filter uses a Beta distribution
+            with parameters ``k_eff + 1`` and
+            ``max(n_eff - k_eff, 0) + 1``. A populated bin is retained only
+            if its posterior CDF at the last accepted bin-probability threshold
+            is strictly less than alpha. For unweighted binary targets,
+            these effective counts reduce to ordinary counts. With weights
+            or probabilistic targets, this is an effective-count approximation
+            to the binomial/uniform-prior construction.
 
-            .. math::
-
-                p \mid k,n \sim \operatorname{Beta}(k+1,n-k+1).
-
-            A bin is retained only if
-
-            .. math::
-
-                \Pr(p < p_{\rm min} \mid k,n) < \alpha,
-
-            where :math:`p_{\rm min}` is the minimum acceptable bin purity.
-            For example, ``alpha=0.1`` requires the posterior probability
-            of falling below this threshold to be less than 10%.
-            Set ``alpha=1`` to disable statistical filtering.
+            Smaller alpha applies a stricter filter. Zero rejects all bins.
+            One disables the significance filter entirely, without evaluating
+            the Beta CDF. For alpha below one, filtering uses the last accepted
+            bin-probability threshold.
         step : float, default=0.001
-            Decrement of the bin purity threshold at each optimization
-            iteration, :math:`\delta\mathcal{P}_{\rm step}`.
+            Positive decrement of the bin-probability threshold, initially
+            one. Smaller values sample the relaxation more finely.
+            Nonfinite or non-positive values raise ValueError.
         do_bootstrap : bool, default=True
-            If True, estimate uncertainties on completeness, purity,
-            and failure rate through bootstrap resampling.
+            Estimate metric scatter by resampling reference rows while
+            keeping the final calibrated masks and grid boundaries fixed.
         n_bootstraps : int, default=1000
-            Number of bootstrap resamples used to estimate uncertainties.
+            Positive number of bootstrap realizations when enabled.
         verbose : bool, default=True
-            If True, print progress messages and computation times.
+            Display progress messages and progress bars.
 
-        Attributes
-        ----------
-        dict : dict
-            Calibrated grid-based color selections and associated results.
-        P : numpy.ndarray
-            Global purity at each limiting redshift.
-        C : numpy.ndarray
-            Global completeness at each limiting redshift.
-        F : numpy.ndarray
-            Global failure rate at each limiting redshift.
-        P_std : numpy.ndarray
-            Bootstrap uncertainty on global purity.
-        C_std : numpy.ndarray
-            Bootstrap uncertainty on global completeness.
-        F_std : numpy.ndarray
-            Bootstrap uncertainty on global failure rate.
+        Raises
+        ------
+        ValueError
+            If purity thresholds have incompatible length or lie outside
+            [0, 1), alpha is nonfinite or outside [0, 1], step or
+            grid_precision is nonfinite or non-positive, or required target
+            properties are invalid. Grid and target-evaluation errors propagate.
+
+        Notes
+        -----
+        Color limits are the 0.0001 and 0.9999 quantiles of finite reference
+        color values. Grids and object-bin indices are built at initialization.
+        Objects outside a grid or with missing colors cannot be selected
+        through that space, but may be selected through another space.
+        All color--color selections are combined through logical OR.
+
+        The search lowers a common bin-probability threshold, accepting bins
+        with ``p_sel >= threshold``. Completeness cannot decrease as this
+        unfiltered region expands. This is not an exhaustive optimization
+        of arbitrary bin subsets, and global purity across overlapping spaces
+        need not be monotonic with the threshold.
+
+        The search skips trials selecting no positive reference weight. Once
+        non-empty selections are reached, it stops at the first trial below
+        the required global purity and retains the last accepted masks and
+        threshold. If no trial was accepted, it raises ValueError. Reaching
+        a non-positive threshold without crossing the purity requirement
+        also raises ValueError, preserving the existing exhaustion behavior.
+        These search errors expose their diagnostic calibration_purity value.
+
+        Significance filtering is applied only after this search. It can
+        change the global purity of the OR union in either direction; a
+        warning reports an empty final selection or failure to meet the
+        requested purity. The filtered masks and recomputed metrics are
+        retained rather than silently recalibrated. PDZ-only reference
+        samples are supported: point redshifts are not additionally required.
+
+        The global metrics use weighted counts: completeness is
+        ``TP / (TP + FN)``, purity is ``TP / (TP + FP)``, and failure rate
+        is ``FP / (FP + TN)``. Failure rate is the fraction of non-targets
+        selected, not the contaminant fraction among selected objects.
+        A metric with zero denominator is stored as zero.
         """
         self.verbose = verbose
         self.dataset = dataset.dataset
@@ -192,14 +213,18 @@ class GridClassification:
             self.thresholded_quantity = "completeness"
 
         self.grid_precision = float(grid_precision)
+        if not np.isfinite(self.grid_precision) or self.grid_precision <= 0:
+            raise ValueError("grid_precision must be finite and strictly positive.")
 
-        if alpha < 0 or alpha > 1:
+        if not np.isfinite(alpha) or alpha < 0 or alpha > 1:
             raise ValueError(
                 f"alpha must range between 0 and 1. The current value is {alpha}."
             )
         self.alpha = alpha
 
-        self.step = step
+        if not np.isfinite(step) or step <= 0:
+            raise ValueError("step must be finite and strictly positive.")
+        self.step = float(step)
         self.do_bootstrap = do_bootstrap
         self.n_bootstraps = n_bootstraps
 
@@ -211,6 +236,7 @@ class GridClassification:
         self.C_std = np.full(len(self.td.z_lim), np.nan)
         self.P_std = np.full(len(self.td.z_lim), np.nan)
         self.F_std = np.full(len(self.td.z_lim), np.nan)
+        self.bin_probability_min = np.full(len(self.td.z_lim), np.nan)
 
         self.dict = {}
 
@@ -244,34 +270,39 @@ class GridClassification:
             self.missing_data,
         )
 
-        dataset_unweighted = self.dataset.copy()
-        dataset_unweighted["weights"] = np.ones(len(self.dataset))
-        self.target_mask_unweighted = self.td._get_target_mask(
-            dataset_unweighted,
-            self.td.z_lim,
-            None,
-            None,
-            self.z_gal_string,
-            self.missing_data,
-        )
-
     def _process_for_one_z(self, args):
-        r"""
-        Calibrate the color cut selection on grids for a single redshift threshold `z_l`.
-
-        See the documentation of the class constructor for a detailed description of the
-        iterative process implemented in this function.
+        """
+        Calibrate and filter the grids for one target threshold.
 
         Parameters
         ----------
         args : tuple
-            A 3-element tuple containing:
-            - i_z : float
-                The index of the redshift threshold being processed.
-            - store_iterations : bool
-                If True, store the iteration steps in self.dict_steps.
-            - cpu_number : int
-                Number of CPU cores to use for parallel processing.
+            ``(i_z, store_iterations, cpu_number)``. Only i_z is used;
+            iteration storage and multiprocessing remain unimplemented.
+
+        Returns
+        -------
+        None
+            Update per-space masks, bin_probability_min, and C, P, F.
+
+        Raises
+        ------
+        ValueError
+            If no non-empty trial is accepted or the search reaches zero
+            without crossing the requested purity. These errors expose
+            a calibration_purity attribute for callers.
+
+        Notes
+        -----
+        Empty or zero-weight trials are skipped. The first non-empty trial
+        below the required purity stops the search. The last accepted masks
+        and threshold are retained together. With alpha below one, populated
+        bins are filtered using the Beta CDF at that accepted threshold.
+        With alpha equal to one, significance filtering is bypassed.
+
+        Final metrics are recomputed. A UserWarning is emitted if significance
+        filtering produces an empty selection or lowers purity below the
+        requirement; no second calibration is performed.
         """
         i_z, store_iterations, cpu_number = args
 
@@ -301,110 +332,117 @@ class GridClassification:
             dict_stats[cs]["k"] = N_good
             dict_stats[cs]["n"] = N_total
 
-        # Remove bins with prob below a fixed threshold iteratively
-        prob_min_bin = 1.0  # starting bin-level probability
-        thresholded_quantity, P, C, F = 0.0, 0.0, 0.0, 0.0
+        # Keep the last accepted masks and their bin threshold together.
+        prob_min_bin = 1.0
+        accepted_threshold = None
+        last_purity = 0.0
 
         while prob_min_bin > 0.0:
-
-            # Mask definition
             for cs in self.color_spaces:
-                mask = dict_stats[cs]["prob"] >= prob_min_bin
-                dict_stats[cs]["mask"][i_z] = mask
+                dict_stats[cs]["mask"][i_z] = (
+                    dict_stats[cs]["prob"] >= prob_min_bin
+                ) & (dict_stats[cs]["n"] > 0)
 
             mask = self.get_mask(i_z, dictionary=dict_stats)
-
-            # Total completeness and purity
             TP, FP, FN, TN = compute_metrics(mask, self.target_mask[i_z], self.weights)
+
+            # Empty (or zero-weight) initial selections do not constrain purity.
+            if TP + FP <= 0:
+                prob_min_bin -= self.step
+                continue
+
+            P = TP / (TP + FP)
             C = TP / (TP + FN) if TP + FN > 0 else 0.0
-            P = TP / (TP + FP) if TP + FP > 0 else 0.0
-
-            # Check convergence
-            if self.thresholded_quantity == "purity":
-                thresholded_quantity = P
-            elif self.thresholded_quantity == "completeness":
-                thresholded_quantity = C
-            else:
-                raise ValueError(
-                    f"Not allowed value for thresholded_quantity ({self.thresholded_quantity})."
-                )
-
-            if thresholded_quantity >= self.thresholded_quantity_min[i_z]:
-                self.P[i_z] = P
-                self.C[i_z] = C
-                self.F[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0
-                for cs in self.color_spaces:
-                    self.dict[cs]["mask"][i_z] = dict_stats[cs]["mask"][i_z]
-            else:
+            last_purity = P
+            if P < self.thresholded_quantity_min[i_z]:
                 break
 
-            # Increase the bin-level threshold
+            accepted_threshold = prob_min_bin
+            self.P[i_z] = P
+            self.C[i_z] = C
+            self.F[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0
+            for cs in self.color_spaces:
+                self.dict[cs]["mask"][i_z] = dict_stats[cs]["mask"][i_z].copy()
             prob_min_bin -= self.step
 
+        if accepted_threshold is None:
+            error = ValueError(
+                f"No non-empty selection meets purity_min="
+                f"{self.thresholded_quantity_min[i_z]} at z_lim={self.td.z_lim[i_z]}."
+            )
+            error.calibration_purity = float(last_purity)
+            raise error
+
+        # Preserve the existing exhaustion error used by calibration callers.
         if prob_min_bin <= 0:
-            errMsg = f"The convergence is attained for a value larger than the user-defined thresholded_quantity_min."
-            errMsg += f" The current global P, C, and F are {self.P[i_z]}, {self.C[i_z]}, and {self.F[i_z]}, respectively."
-            error = ValueError(errMsg)
+            error = ValueError(
+                "The bin-probability search reached zero without crossing "
+                "the requested global purity. "
+                f"Current P, C, F: {self.P[i_z]}, {self.C[i_z]}, {self.F[i_z]}."
+            )
             error.calibration_purity = float(self.P[i_z])
             raise error
 
-        # Remove not robust bins, namely those with probability to have per-bin purity
-        # p < prob_min_bin larger than alpha. Following the Bayes' theorem, we have
-        # P(p | k, n) = P(k | p, n) P(p | n) / P(k | n),
-        # where p is the per-bin purity, k is the number of successes, and n is the
-        # number of trials. We assume that P(k | p, n) is a Binomial distribution and
-        # P(p | n) = [0, 1] is a uniform prior.
-        # Our selection criterion is P(p < p_min | k, n) < alpha.
-        dict_significant = {}
+        self.bin_probability_min[i_z] = accepted_threshold
 
-        for cs in self.color_spaces:
-
-            dict_significant[cs] = {}
-            dict_significant[cs]["mask"] = {}
-            shape = dict_stats[cs]["prob"].shape
-            dict_significant[cs]["mask"] = np.zeros(shape, dtype=bool)
-
-            for i in range(shape[0]):
-                for j in range(shape[1]):
-                    k = dict_stats[cs]["k"][i][j]
-                    n = dict_stats[cs]["n"][i][j]
-                    if n == 0:
-                        continue
-                    # Given the observed data (k successes out of n), compute the posterior
-                    # probability that (true purity < prob_min_bin) is smaller than alpha.
-                    significant = (
-                        beta.cdf(prob_min_bin, k + 1, np.maximum(n - k, 0) + 1)
-                        < self.alpha
+        # alpha=1 explicitly disables significance filtering.
+        if self.alpha < 1:
+            for cs in self.color_spaces:
+                k_eff = dict_stats[cs]["k"]
+                n_eff = dict_stats[cs]["n"]
+                significant = (n_eff > 0) & (
+                    beta.cdf(
+                        accepted_threshold,
+                        k_eff + 1,
+                        np.maximum(n_eff - k_eff, 0) + 1,
                     )
-                    dict_significant[cs]["mask"][i, j] = significant
-
-        # Re-define the masks and re-evaluate the metrics
-        for cs in self.color_spaces:
-            self.dict[cs]["mask"][i_z] = (
-                dict_stats[cs]["mask"][i_z] & dict_significant[cs]["mask"]
-            )
+                    < self.alpha
+                )
+                self.dict[cs]["mask"][i_z] &= significant
 
         mask = self.get_mask(i_z)
         TP, FP, FN, TN = compute_metrics(mask, self.target_mask[i_z], self.weights)
         self.P[i_z] = TP / (TP + FP) if TP + FP > 0 else 0.0
         self.C[i_z] = TP / (TP + FN) if TP + FN > 0 else 0.0
         self.F[i_z] = FP / (FP + TN) if FP + TN > 0 else 0.0
+        if self.alpha < 1 and (
+            TP + FP <= 0 or self.P[i_z] < self.thresholded_quantity_min[i_z]
+        ):
+            warnings.warn(
+                f"After significance filtering at z_lim={self.td.z_lim[i_z]}, "
+                f"the selection is empty or its purity ({self.P[i_z]:.6g}) "
+                f"is below purity_min ({self.thresholded_quantity_min[i_z]:.6g}). "
+                "The filtered masks are retained and metrics have been recomputed.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     def _estimate_errors(self):
         """
-        Estimate bootstrap errors.
+        Estimate metric scatter with fixed-grid bootstrap resampling.
 
-        This method computes mean and standard deviation of completeness, purity,
-        and failure rate, based on bootstrap resampling. Results are
-        stored as instance attributes:
-        - C_std: Standard deviation of completeness
-        - P_std: Standard deviation of purity
-        - F_std: Standard deviation of failure rate
+        Draw reference rows with replacement, preserving the sample size.
+        Weights and cumulative PDZs follow the sampled rows, and target rules
+        are reevaluated. Grid boundaries and calibrated masks remain fixed;
+        bin probabilities and the selection calibration are not refitted.
+
+        Returns
+        -------
+        None
+            Set C_std, P_std, and F_std to the population standard deviations
+            (ddof=0) over realizations. Original-sample C, P, and F remain
+            unchanged; bootstrap means are not stored.
 
         Raises
         ------
         ValueError
-            If calibration has not been run prior to error estimation.
+            If the sum of calibrated completeness values is zero.
+
+        Notes
+        -----
+        Uses NumPy's global random state. The resulting scatter is conditional
+        on the calibrated masks. It does not include calibration uncertainty
+        or sample variance between independent fields.
         """
         if np.sum(self.C) == 0.0:
             raise ValueError("No calibration is available! Run process() first.")
@@ -477,31 +515,34 @@ class GridClassification:
         self.F_std = np.sqrt((F_stats[1] / self.n_bootstraps) - F_mean**2)
 
     def process(self):
-        r"""
-        Perform the iterative search for optimal color selection grids.
+        """
+        Calibrate each threshold, filter bins, and compute global metrics.
 
-        Here, either completeness or purity are maximized, depending on what was
-        set in the `SelectionDefinition` instance given in input to the constructor of this class.
+        Thresholds are processed sequentially. The objective is fixed to
+        expanding the color selection subject to a requested global purity;
+        it is not selected through SelectionDefinition. No interpolation
+        between threshold masks is performed.
 
         Returns
         -------
         None
-            Updates the following instance attributes in place:
-            - ``self.dict`` : dict
-                Nested dictionary of optimal iterative cuts for each
-                redshift bin, restructured and interpolated.
-            - ``self.P`` : numpy.ndarray
-                Total purity across all bins.
-            - ``self.C`` : numpy.ndarray
-                Total completeness across all bins.
-            - ``self.F`` : numpy.ndarray
-                Total failure rate across all bins.
-            - ``self.P_std`` : numpy.ndarray
-                Total purity error across all bins.
-            - ``self.C_std`` : numpy.ndarray
-                Total completeness error across all bins.
-            - ``self.F_std`` : numpy.ndarray
-                Total failure rate error across all bins.
+            Update the per-space masks in dict and global metrics C, P,
+            and F. If do_bootstrap is True, also update C_std, P_std, and
+            F_std; otherwise their initial NaN values remain.
+
+        Raises
+        ------
+        ValueError
+            If no non-empty trial is accepted, the threshold search is
+            exhausted, or bootstrap is requested without any nonzero
+            calibrated completeness.
+
+        Notes
+        -----
+        Multiprocessing and iteration-history storage are not implemented.
+        The purity requirement applies before significance filtering. If
+        filtering produces an empty selection or a lower purity, a warning
+        is emitted and the final metrics describe the filtered masks.
         """
         if self.verbose:
             print("\nRunning the grid color selection calibration...")
@@ -572,6 +613,12 @@ class GridClassification:
         by its prior weights. It does not transfer a distribution to an
         independent test sample. Normalization is conditional on the
         supplied bin range.
+
+        The histogram includes all color-selected objects, including
+        contaminants, weighted by their prior weights. It does not additionally
+        apply the target-membership mask. Weight outside the requested bins
+        is excluded and reported with a warning. Normalization requires
+        positive weight within the range.
         """
         if not isinstance(variable, str) or not variable:
             raise TypeError("variable must be a non-empty string.")
@@ -600,7 +647,7 @@ class GridClassification:
             values=values,
             bin_edges=bin_edges,
             prior_weights=self.weights,
-            classification_weights=self.get_mask(zl_index, color_condition="all"),
+            classification_weights=self.get_mask(zl_index, color_space="all"),
             normalize=normalize,
             missing_data=self.missing_data,
             CDZs=self.CDZs if pdz_mode else None,
@@ -622,13 +669,14 @@ class GridClassification:
         """
         Save the optimal color-color grid calibration to a FITS file.
 
-        The file contains one extension group per color-color space:
-        - An ImageHDU with the 3D boolean mask (shape: n_zlim x n_color1bins x n_color2bins).
-        - A BinTableHDU with per-object arrays (valid, color1_index, color2_index)
-          and bin edges (color1_edges, color2_edges).
-
-        Global metadata (z_l, z_l_is_lower_limit, etc.) are stored in the
-        primary HDU header.
+        The primary HDU stores the band names, threshold direction, nominal
+        grid precision, and reference-sample metadata. The ZL_VALUES table
+        stores the calibration thresholds. Each color--color space has one
+        ImageHDU containing its masks as uint8 values with shape
+        (n_thresholds, n_color1bins, n_color2bins), plus band identifiers.
+        Each mask header also stores C1MIN, C1MAX, C2MIN, and C2MAX: the
+        reference color limits used with GRIDPREC to reconstruct the original
+        evenly spaced bin edges. No per-object indices are exported.
 
         Parameters
         ----------
@@ -636,16 +684,16 @@ class GridClassification:
             Path to the directory where the file will be saved.
         file_name : str
             Base name of the output file (without extension).
-            The output file is named ``FOMO-Z_{file_name}_grid.fits``.
-        reference_sample_name : str, optional
+            The output file is named ``FOMO-Z_{file_name}.fits``.
+        reference_sample_name : str, default=""
             Name of the reference sample, stored in the FITS header.
-        notes : str, optional
+        notes : str, default=""
             Additional notes stored in the FITS header.
-        write_metrics : bool, optional
+        write_metrics : bool, default=True
             If True, write the `FOMO-Z_{file_name}_metrics.csv` file containing
             purity, completeness, and failure rate
             as a function of limiting redshift, and their errors.
-        write_redshift_distributions : bool, optional
+        write_redshift_distributions : bool, default=False
             If True, write the
             `FOMO-Z_{file_name}_redshift_distributions.csv` file,
             containing the redshift distributions of color-selected
@@ -666,18 +714,33 @@ class GridClassification:
             to unit integral over [min_redshift, max_redshift].
             An error is raised if a histogram has zero total weight
             within this interval.
-        n_bins_redshift : int, optional
+        n_bins_redshift : int, default=200
             Number of redshift histogram bins. Used only if `write_redshift_distributions`
             is True.
-        min_redshift : float, optional
+        min_redshift : float, default=0.0
             Minimum redshift. Used only if `write_redshift_distributions` is True.
-        max_redshift : float, optional
+        max_redshift : float, default=4.0
             Maximum redshift. Used only if `write_redshift_distributions` is True.
 
         Raises
         ------
         ValueError
             If calibration has not been run.
+
+        Notes
+        -----
+        The output directory is created if needed; existing files with these
+        names are overwritten. Notes are prefixed with the package label and
+        truncated to 70 characters. Metrics columns are z_lim, C, P, F,
+        C_std, P_std, and F_std; disabled bootstrap gives NaN uncertainties.
+        FITS and metrics are written before optional redshift distributions.
+
+
+        The saved reference limits and nominal precision reproduce the same
+        grid edges used at calibration. Classifier preserves these grids
+        when applying the masks to a different sample. Older files lacking
+        the limits must be re-exported from the original calibration object
+        or regenerated by recalibration.
         """
         if np.sum(self.C) == 0.0:
             raise ValueError("No calibration is available! Run process() first.")
@@ -736,6 +799,10 @@ class GridClassification:
             mask_hdu.header["C1BAND2"] = (cs[0][1], "Color 1: band 2")
             mask_hdu.header["C2BAND1"] = (cs[1][0], "Color 2: band 1")
             mask_hdu.header["C2BAND2"] = (cs[1][1], "Color 2: band 2")
+            for axis, color in enumerate(cs, start=1):
+                low, high = meta["color_limits"][color]
+                mask_hdu.header[f"C{axis}MIN"] = float(low)
+                mask_hdu.header[f"C{axis}MAX"] = float(high)
             hdul.append(mask_hdu)
 
         # Write
@@ -785,39 +852,57 @@ class GridClassification:
 
     def get_keys(self):
         """
-        Get the color-color space keys.
-
-        Returns the list of color-color space keys contained in `self.dict`.
+        Return the available color--color space definitions.
 
         Returns
-        ------
-        keys : list of str
-            List of color-color space keys.
+        -------
+        list of tuple
+            Keys of the form ``((band1, band2), (band3, band4))``, excluding
+            metadata. Keys are available immediately after initialization;
+            their presence does not imply calibration has been performed.
         """
         return [key for key in list(self.dict.keys()) if key != "metadata"]
 
     def get_mask(self, zl_index, color_space="all", dictionary=None):
         """
-        Get the calibration mask.
-
-        Returns the calibration mask relative to the input limiting redshift.
+        Combine calibrated grid masks into an object-selection mask.
 
         Parameters
-        ------
+        ----------
         zl_index : int
-            Index of the redshift threshold in SelectionDefinition.z_lim.
-        color_space : str or tuple, optional
-            It can be either "all" (all color-color spaces) or one of
-            the available color-color spaces, in the form `((band1, band2), (band3, band4))`.
-            Available color-color spaces can be obtained from `self.get_keys()`.
-        dictionary : dict, optional
-            The color-color space dictionary, containing grid masks. If not provided,
-            the internal dictionary (`self.dict`) is used.
+            Index of the target threshold in SelectionDefinition.z_lim.
+        color_space : str or tuple, default="all"
+            ``"all"`` combines all spaces through logical OR. Alternatively,
+            supply one space key returned by get_keys, such as
+            ``(("g", "r"), ("r", "i"))``.
+        dictionary : dict or None, default=None
+            Grid masks and object-bin mappings. None uses self.dict.
+            An alternative dictionary must contain the requested space keys
+            and aligned valid flags, bin indices, and masks. Internally this
+            permits evaluation on trial grids and bootstrap samples.
 
         Returns
         -------
-        mask : numpy.array
-            Array of booleans.
+        numpy.ndarray of bool
+            One value per object represented by the dictionary's mappings.
+            Objects pass if they occupy a selected bin in any requested
+            space. Objects outside a grid or with unavailable colors are
+            excluded from that space. No prior weights or target memberships
+            are multiplied into this boolean photometric mask.
+
+        Raises
+        ------
+        ValueError
+            If color_space is not an available key or ``"all"``.
+        KeyError
+            If the requested threshold mask or a required dictionary entry
+            is missing, for example before calibration.
+
+        Notes
+        -----
+        This method uses existing bin indices; it does not bin new photometry.
+        For self.dict, results are aligned with the reference sample.
+        No interpolation between redshift thresholds is performed.
         """
         if color_space == "all":
             color_space = self.get_keys()
