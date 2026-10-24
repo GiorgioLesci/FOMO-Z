@@ -1,7 +1,8 @@
 """
-Dataset settings.
+Input data handling for reference and test galaxy samples.
 
-This module handles dataset properties.
+Store photometry, optional physical properties, object weights, and cumulative
+redshift distributions, and define the colors available to FOMO-Z methods.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
@@ -15,7 +16,41 @@ from scipy.integrate import trapezoid
 
 
 class Dataset:
-    """Set the data model for the derivation of color selections."""
+    """
+    Represent a reference or test sample for classification and reconstruction.
+
+    The input table is copied, missing photometry is standardized, and color
+    and color--color definitions are constructed from the supplied bands.
+    Optional object weights and redshift probability density functions (PDZs)
+    support weighted analyses and the propagation of reference redshift
+    uncertainties.
+
+    Attributes
+    ----------
+    dataset : pandas.DataFrame
+        Internal table with a zero-based index. Contains the input columns,
+        standardized ``"redshift"`` values, and a ``"weights"`` column.
+    bands : list or tuple of str
+        Photometric magnitude column names, in the supplied order.
+    colors : list
+        Ordered band pairs defining magnitude differences. For example,
+        ``('g', 'r')`` denotes ``g - r``. These are definitions, not arrays
+        of measured color values.
+    color_spaces : list
+        All distinct pairs of entries in ``colors``, defining the available
+        two-dimensional color--color spaces.
+    z_gal_string : str or None
+        Input column designated for point-redshift selections, if any.
+    missing_data : scalar or list
+        Missing-value sentinels supplied to the constructor.
+    CDZs : numpy.ndarray or None
+        Normalized cumulative redshift distributions, with shape
+        ``(n_objects, n_samples)`` and rows aligned with ``dataset``.
+        Set to None when no PDZs are supplied.
+    PDZ_x : numpy.ndarray or None
+        Redshift grid of ``CDZs``, with shape ``(n_samples,)``.
+        Set to None when no PDZs are supplied.
+    """
 
     def __init__(
         self,
@@ -38,73 +73,140 @@ class Dataset:
         custom_colors=None,
     ):
         """
-        Set the data model for color selections.
-
-        Class defining the color selection dataset.
-
-        This class standardizes input photometric data and handles missing values.
-        If `custom_colors` is not provided, all possible colors based on the input
-        set of bands are considered. In the calibrations, objects can be weighted
-        based on prior weights and/or photo-z probability density functions.
-        These weighting schemes increase the execution time.
+        Initialize a sample from a photometric catalog.
 
         Parameters
         ----------
         dataset : pandas.DataFrame
-            Input photometric dataset containing magnitude measurements and,
-            optionally, estimates of redshift and other physical properties.
-        bands : list of str
-            Names of the photometric bands to include in the analysis.
+            One row per object, with a magnitude column for every entry in
+            ``bands``. Additional properties used for classification or
+            reconstruction are retained. The input table is not modified.
+
+            Magnitude uncertainties, when used by probabilistic methods,
+            must be stored in columns named ``<band>_error`` (for example,
+            ``g_error``), in magnitude units. This constructor does not
+            require, create, or validate these uncertainty columns.
+        bands : list or tuple of str
+            Names of the magnitude columns. Use distinct names starting with
+            an ASCII letter or underscore and containing only ASCII letters,
+            digits, or underscores. The lowercase characters ``c`` and ``s``
+            are forbidden anywhere in a band name because they are reserved
+            for color-cut parameters. Rename catalog columns if necessary.
         z_gal_string : str or None, default=None
-            Column containing reference point-estimate redshifts. Its values are
-            copied to the standardized ``"redshift"`` column; the original column
-            is retained.
+            Column containing the point-estimate redshifts to use for redshift
+            selections. Its values are copied to ``"redshift"``; the original
+            column is retained. It must exist and cannot be a band name.
+            If the input already contains ``"redshift"``, use that name or
+            rename the existing column before designating another one.
 
-            If None, no point-redshift column is designated for redshift selections.
-            Existing columns are preserved, but are not automatically used for
-            those selections. Reference PDZs, when supplied, remain available
+            With None, no point-redshift column is designated for selections.
+            An existing ``"redshift"`` column is preserved; otherwise one is
+            added and filled with NaN. Reference PDZs remain available
             independently of this setting.
-        PDZs : array-like of array-like, default=None
-            Redshift probability functions (normalization is not required).
-            If not provided, point-estimates are used (whose key is defined by `z_gal_string`).
-            Must have shape `(len(dataset), len(PDZ_x))`.
-        PDZ_x : array-like, default=None
-            Redshift values where `PDZs[i]` is computed.
-        weights : array-like, default=None
-            Prior per-object weights.
+        PDZs : array-like of shape (n_objects, n_samples), optional
+            Redshift probability densities sampled on the common ``PDZ_x``
+            grid, in the same row order as ``dataset``. Values must be finite
+            and non-negative, and each row must have a finite, strictly
+            positive trapezoidal integral over the grid.
+
+            Input normalization is not required: each PDZ is normalized over
+            the supplied grid and cumulatively integrated using the
+            trapezoidal rule. Only the resulting ``CDZs`` are stored; no
+            ``PDZs`` attribute is created. Probability outside the supplied
+            grid is not recovered by this normalization.
+        PDZ_x : array-like of shape (n_samples,), optional
+            Finite, strictly increasing redshift grid with at least two
+            samples. Required when ``PDZs`` is supplied. Ignored otherwise.
+        weights : array-like of shape (n_objects,), optional
+            Finite, non-negative object weights, aligned with the input rows
+            by position, not by pandas index labels. Reference weights set
+            objects' relative contributions to calibration, probability
+            estimation, or reconstruction. Test weights set their relative
+            contributions to the reconstructed target population.
+
+            Weights are stored without normalization in ``dataset["weights"]``.
+            If omitted, all objects receive unit weight. Any existing
+            ``"weights"`` column is overwritten; pass it explicitly to use it.
         missing_data : int, float, or list, optional
-            Value(s) used in the dataset to denote missing entries. These are replaced
-            with NaN for consistency (if missing data in your data set are NaN,
-            you don't need to specify it). This constructor replaces with NaN only
-            the missing values of the photometric bands. To remove (not replace)
-            missing data in other columns of the `dataset` `DataFrame` use
-            `Dataset.drop_missing()`. Default includes a non-exhaustive list of
-            missing-value representations that your average astronomer might come up with.
-            If you encounter a new one, e.g. 9999 or -9.9, please contact the author of this package.
-        custom_colors : list of tuple(str, str), optional
-            List of colors to use instead of all pairwise combinations of the input `bands`.
-            Each color must be specified as a 2-element tuple of band names,
-            representing the difference between the first and second band
-            (e.g., ('g', 'r') for the color g−r).
-            If provided, `custom_colors` must satisfy the following conditions:
+            Missing-value sentinels to replace with NaN in the selected band
+            columns and in every column whose name contains ``"_error"``.
+            Defaults to ``[99, -99, 999, -999, 99.9, -99.9, 999.9, -999.9]``.
+            Existing NaNs do not need to be listed. Use an empty list if no
+            additional sentinels are needed.
 
-            - All band names must be drawn from the `bands` parameter.
-            - Each band listed in `bands` must appear in at least one color.
-            - Each color must consist of two distinct bands.
-            - Duplicate colors are not allowed (e.g., ('g', 'r') and ('r', 'g')).
+            No rows are removed during initialization. Sentinel values in
+            other columns and numerical infinities are not automatically
+            replaced. Use :meth:`drop_missing` to remove objects with invalid
+            entries in explicitly chosen columns.
+        custom_colors : list or tuple of band pairs, optional
+            Colors to use instead of all pairwise combinations of ``bands``.
+            Each pair is a two-element tuple or list of distinct band names,
+            representing the first magnitude minus the second. All names
+            must belong to ``bands``, and every supplied band must occur in
+            at least one color. Repeated pairs, including reversed pairs
+            such as ``('g', 'r')`` and ``('r', 'g')``, are rejected.
+            The supplied color order and orientation are preserved.
 
-            If `custom_colors` is None (default), the full set of unique
-            pairwise band combinations is used.
+            At least two colors are required, including when this object is
+            used by a probabilistic method. With None, colors follow the
+            order of ``bands`` and include each distinct band pair once.
 
-            Notes
-            -----
-            The choice of `custom_colors` directly determines the set of
-            color–color spaces (`self.color_spaces`), which are constructed
-            as all pairwise combinations of the selected colors.
+        Raises
+        ------
+        TypeError
+            If ``dataset`` is not a pandas DataFrame, ``bands`` is not a
+            list or tuple of strings, or ``custom_colors`` is not a list
+            or tuple.
+        KeyError
+            If a required magnitude column or the designated redshift
+            column is absent.
+        ValueError
+            If band names, redshift-column settings, PDZs, weights, or
+            custom colors fail validation, or fewer than two colors
+            are defined.
 
-            The `z_gal_string` key is always used to derive the redshift distributions
-            by the `write` methods of the calibration classes (`LinearClassification`
-            and `GridClassification`), which write redshift distributions to file.
+        Notes
+        -----
+        For distinct input bands and no custom colors, the number of colors
+        is ``N_band * (N_band - 1) / 2``. The number of available color--color
+        spaces is ``N_color * (N_color - 1) / 2``. These spaces support binary
+        selection calibration; probabilistic methods compare individual
+        colors. Numerical color values are computed by the consuming methods,
+        not stored as additional columns by this constructor.
+
+        The probability helpers compute a color uncertainty by adding the
+        corresponding magnitude uncertainties in quadrature, assuming
+        uncorrelated errors between bands. The choice of whether reference
+        uncertainties also enter the matching tolerance is made by the
+        probabilistic method, not by ``Dataset``.
+
+        For reference samples, cumulative PDZ differences provide probability
+        mass in redshift-selection intervals or reconstructed redshift bins.
+        Prior object weights and these redshift probabilities have distinct
+        roles; PDZ normalization does not incorporate the prior weights.
+
+        Examples
+        --------
+        Build a sample with three magnitude bands and point redshifts:
+
+        >>> catalog = pd.DataFrame({
+        ...     "g": [23.1, 24.0], "r": [22.7, 23.4], "i": [22.5, 23.0],
+        ...     "g_error": [0.05, 0.10], "r_error": [0.04, 0.08],
+        ...     "i_error": [0.04, 0.07], "z_spec": [0.4, 0.9],
+        ... })
+        >>> sample = Dataset(catalog, bands=["g", "r", "i"],
+        ...                  z_gal_string="z_spec")
+        >>> sample.colors
+        [('g', 'r'), ('g', 'i'), ('r', 'i')]
+        >>> len(sample.color_spaces)
+        3
+
+        Restrict the available colors while retaining all three bands:
+
+        >>> sample = Dataset(catalog, bands=["g", "r", "i"],
+        ...                  custom_colors=[("g", "r"), ("r", "i")])
+        >>> sample.color_spaces
+        [(('g', 'r'), ('r', 'i'))]
         """
         if not isinstance(dataset, pd.DataFrame):
             raise TypeError("dataset must be a pandas.DataFrame")
@@ -281,21 +383,32 @@ class Dataset:
 
     def _validate_custom_colors(self, custom_colors):
         """
-        Validate and standardize a user-defined list of photometric colors.
-
-        Ensures that each color is a tuple of two distinct band names drawn
-        from `self.bands`, that all bands appear in at least one color, and
-        that no duplicate or invalid colors are provided.
+        Validate user-defined photometric color pairs.
 
         Parameters
         ----------
-        custom_colors : list of tuple(str, str)
-            User-defined photometric colors.
+        custom_colors : list or tuple of band pairs
+            Each pair must contain two distinct string names from ``bands``.
+            Every band must appear in at least one pair. Duplicate pairs
+            are rejected regardless of orientation.
 
         Returns
         -------
-        list of tuple(str, str)
-            Validated list of user-defined colors (custom_colors).
+        list
+            Validated pairs in their supplied order and orientation.
+            Individual pairs retain their original list or tuple type.
+
+        Raises
+        ------
+        TypeError
+            If the outer container is not a list or tuple.
+        ValueError
+            If a pair is malformed, contains an unknown or repeated band,
+            duplicates another pair, or leaves a supplied band unused.
+
+        Notes
+        -----
+        The constructor separately checks that at least two colors remain.
         """
         if not isinstance(custom_colors, (list, tuple)):
             raise TypeError("custom_colors must be a list of (band1, band2) tuples.")
@@ -345,25 +458,51 @@ class Dataset:
 
     def drop_missing(self, columns):
         """
-        Remove objects with missing or infinite values in selected columns.
+        Remove objects with invalid values in the specified columns in place.
 
-        Invalid entries include NaN, None, pandas missing values,
-        sentinels declared in ``self.missing_data``, and positive or
-        negative numerical infinity. An object is removed if any of
-        the specified columns contains an invalid entry.
+        An object is removed if any selected column contains NaN, None,
+        a pandas missing value, a sentinel in ``missing_data``, or positive
+        or negative numerical infinity. Only the named columns determine
+        which rows are retained.
 
         Parameters
         ----------
-        columns : str or sequence of str
-            DataFrame column names to check. Only these columns
-            determine which objects are removed.
+        columns : str or list or tuple of str
+            Existing DataFrame columns to check. At least one non-empty
+            column name is required. Repeated names are checked once.
+
+        Returns
+        -------
+        None
+            The internal table and any stored cumulative PDZs are updated
+            in place. The number of removed objects is printed when nonzero.
+
+        Raises
+        ------
+        TypeError
+            If ``columns`` is not a string, list, or tuple, or contains
+            entries other than non-empty strings.
+        KeyError
+            If a requested column does not exist.
+        ValueError
+            If no columns are specified, no valid objects would remain,
+            or stored cumulative PDZs are not aligned with the table.
+            The instance is not modified in these cases.
 
         Notes
         -----
-        This method modifies the Dataset in place and resets its
-        DataFrame index.
-        The same row mask is applied to the stored cumulative redshift
-        distributions, while their sampling grid remains unchanged.
+        The retained rows keep their relative order and receive a new
+        zero-based index. The same row mask is applied to ``CDZs``;
+        ``PDZ_x`` is unchanged. Weights are retained without renormalization.
+        The original input DataFrame is not modified.
+
+        Examples
+        --------
+        >>> catalog = pd.DataFrame({"g": [23.1], "r": [22.7],
+        ...                         "i": [22.5], "z_spec": [0.4]})
+        >>> sample = Dataset(catalog, ["g", "r", "i"],
+        ...                  z_gal_string="z_spec")
+        >>> sample.drop_missing(["g", "r", "i", "redshift"])
         """
         if isinstance(columns, str):
             columns = [columns]
@@ -429,3 +568,4 @@ class Dataset:
         self.CDZs = filtered_cdzs
 
         print(f"The Dataset.drop_missing() method removed {n_removed} objects.")
+

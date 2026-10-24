@@ -64,8 +64,10 @@ class LinearClassification:
 
         This class selects objects occupying the outskirts of color-color
         distributions, as is often the case for background galaxy populations.
-        For more general selections, see
+        For more general binary selections, see
         :class:`~fomoz.binary_classification.grid_classification.GridClassification`.
+        For even more general (i.e. probabilistic) classifications, see the
+        :mod:`~fomoz.probability` subpackage.
 
         For each pair of colors :math:`(x, y)`, the following conditions
         are considered:
@@ -120,7 +122,7 @@ class LinearClassification:
            and completeness :math:`\mathcal{C}^{\rm glob}`.
 
         5. Continue relaxing the single-cut threshold while the combined
-           selection satisfies :math:`\mathcal{P}>\mathcal{P}_{\rm min}^{\rm glob}`,
+           selection satisfies :math:`\mathcal{P}^{\rm glob}>\mathcal{P}_{\rm min}^{\rm glob}`,
            retaining the optimal admissible cuts.
 
         The calibrated cuts are stored in an expression-based dictionary,

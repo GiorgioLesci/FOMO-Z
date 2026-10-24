@@ -1,8 +1,8 @@
 """
-Data model settings.
+Define target-sample criteria for classification and reconstruction.
 
-This module sets the target definitions for color selections,
-handling any condition on galaxy properties.
+Combine an optional redshift selection with rules on numerical or categorical
+properties, and evaluate the corresponding prior-weighted target memberships.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
@@ -17,7 +17,38 @@ from ..auxiliary import set_input_variable_precision
 
 
 class SelectionDefinition:
-    """Set the target selections for the derivation of color selections."""
+    """
+    Define redshift constraints and additional target-selection rules.
+
+    Additional rules are combined through logical AND and applied at every
+    redshift threshold. For reference samples, redshift membership is evaluated
+    from point estimates or cumulative PDZs and multiplied by the object prior
+    weights. This class specifies the target criteria; it does not fit color
+    cuts or estimate probabilities from photometry.
+
+    Attributes
+    ----------
+    z_lim : numpy.ndarray
+        Redshift thresholds converted to float32 and rounded to six decimal
+        places by ``set_input_variable_precision``.
+    is_zlim_lower : bool
+        Whether the thresholds are lower rather than upper bounds.
+    z_lim_opposite : float or None
+        Explicit opposite boundary shared by all thresholds, if supplied.
+    z_up : float
+        Upper boundary for point estimates when ``is_zlim_lower=True``.
+        Defaults to 1000.0. Only defined in this mode.
+    z_low : float
+        Lower boundary for point estimates when ``is_zlim_lower=False``.
+        Defaults to 0.0. Only defined in this mode.
+    additional_rules : list or None
+        Validated ``(columns, function)`` pairs, with each ``columns`` entry
+        normalized to a tuple. None if no rules were supplied.
+    required_columns : tuple of str
+        Unique columns declared by additional rules, in first-appearance
+        order. Does not include the automatically required point-redshift
+        column.
+    """
 
     def __init__(
         self,
@@ -27,76 +58,115 @@ class SelectionDefinition:
         additional_rules=None,
     ):
         """
-        Set the rules defining the target sample for color selections.
-
-        Class defining the color selection target sample.
+        Initialize the criteria defining the target sample.
 
         Parameters
         ----------
-        z_lim : float or array-like, default = 0.0
-            Float or array/list of redshift limits.
-            It can represent either lower of higher limit values, depending on
-            the value of `is_zlim_lower`. To calibrate a selection of objects
-            in a definite redshift range, use the input parameter `z_lim_opposite`.
-            This defines the second edge of the redshift bin.
-            If `z_gal_string=None` and no `PDZs` are provided to the `Dataset` object
-            passed to the classification classes, only the default redshift-selection
-            parameters are accepted. In this case, selection depends solely on additional_rules.
-            Non-default redshift-selection parameters raise a ValueError.
-        is_zlim_lower : bool, default = True
-            If True, `z_lim` is a set of lower redshift limits. Otherwise, `z_lim`
-            is a set of higher limits.
-        z_lim_opposite : float, default = None
-            Upper (lower) redshift limit if `is_zlim_lower=True` (`is_zlim_lower=False`).
-            This redshift limit is the same for all values of `z_lim`.
-            If `z_lim=0.5`, `is_zlim_lower=True`, and `z_lim_opposite=1.0`,
-            the targeted sample lies in the redshift range `(0.5, 1.0)`.
-            The same result is obtained with
-            `z_lim=1.0`, `is_zlim_lower=False`, and `z_lim_opposite=0.5`.
-        additional_rules : list of tuples, default = None
-            Additional selection rules beyond those on redshift.
-            Each rule is a pair ``(columns, function)``, where ``columns``
-            is a column name or a non-empty sequence of column names.
+        z_lim : float or one-dimensional array-like, default=0.0
+            Non-negative redshift thresholds. Each threshold defines a separate
+            selection using the same additional rules and opposite boundary.
+            Values are converted to float32 and rounded to six decimal places.
+            Supply a non-empty array when specifying multiple thresholds.
+        is_zlim_lower : bool, default=True
+            If True, each threshold is a lower redshift bound; otherwise it
+            is an upper bound. For point estimates, comparisons are strict:
+            objects exactly on either boundary are excluded.
+        z_lim_opposite : float or None, default=None
+            Common upper bound when ``is_zlim_lower=True``, or common lower
+            bound otherwise. It must be strictly above or below, respectively,
+            every processed threshold. Supply a float, such as ``1.0``;
+            integer values are not accepted for this parameter.
 
-            The function receives the corresponding pandas Series as
-            positional arguments, in the declared order. It must return
-            one boolean value per input row, preserving row order.
-            All row-dependent inputs must come from the supplied Series.
+            If omitted, point-estimate selections use an upper bound of
+            1000.0 or a lower bound of 0.0, respectively. PDZ selections
+            instead use the full probability above or below the threshold,
+            without applying these implicit point-estimate bounds.
+        additional_rules : list of tuples or None, default=None
+            Additional criteria, each specified as ``(columns, function)``.
+            ``columns`` must be a non-empty column name or a non-empty list
+            or tuple of distinct column names. Numerical and categorical
+            columns are supported.
 
-            Examples:
-            ``[("logM", lambda log_mass: log_mass > 10.0)]``
-            or
-            ``[(("logM", "sfr"), lambda log_mass, sfr: sfr / 10**log_mass < 1e-11)]``.
+            The callable receives the corresponding pandas Series as
+            positional arguments, in the declared order. It must return a
+            one-dimensional boolean mask with one value per input row and
+            no missing entries. A returned Series must preserve the input
+            index and row order; array-like results are interpreted by
+            position. Scalars and numerical masks containing 0 and 1 are
+            not accepted. All row-dependent inputs should come from the
+            supplied Series, so the rule remains valid after row filtering.
 
-            Rules are combined with each other and with the redshift
-            selection through logical AND. The same additional rules
-            apply to every value of `z_lim`.
+            All rules are combined with each other and the redshift criterion
+            through logical AND. None or an empty list imposes no additional
+            restriction. The same rules apply to every redshift threshold.
 
-            Redshift conditions must be specified through the dedicated
-            redshift parameters, not through additional rules.
-            Column existence and returned boolean masks are checked
-            when the rules are applied to a dataset.
+            Use the dedicated redshift parameters for redshift constraints.
+            The standardized column name ``"redshift"`` is explicitly
+            forbidden in additional rules. Callable signatures are checked
+            at initialization; column contents and output masks are checked
+            when the rules are evaluated.
+
+        Raises
+        ------
+        TypeError
+            If ``is_zlim_lower`` is not a Python bool, the rule containers
+            have invalid types, or a rule function is not callable, cannot
+            be inspected, or cannot accept the declared positional inputs.
+        ValueError
+            If a threshold is negative, the opposite bound has an invalid
+            type or ordering, or rule column declarations are empty,
+            duplicated, invalid, or include ``"redshift"``.
 
         Notes
         -----
-        - If `z_lim_opposite` is defined and redshift PDFs
-          were provided to the `Dataset` class, the resulting mask
-          accounts for this by integrating the redshift PDFs accordingly.
+        The selection weight is the prior object weight multiplied by the
+        redshift membership and by the boolean conjunction of additional
+        rules. PDZ membership uses differences of the normalized cumulative
+        redshift distributions stored by ``Dataset``. PDZs take precedence
+        over point redshifts when both are supplied.
 
-        Warnings
+        A selection based only on additional properties requires a Dataset
+        with ``z_gal_string=None`` and no PDZs, together with the default
+        redshift parameters. Non-default redshift parameters without redshift
+        information raise an error when the selection is evaluated. Default
+        parameters do not disable redshift selection when redshift information
+        is available: point estimates must satisfy ``0 < z < 1000``, while
+        PDZ membership is the probability above zero.
+
+        Required properties are validated across all input rows before any
+        rule is evaluated, including rows with zero prior weight or rows that
+        would fail another rule. Missing entries, declared missing-value
+        sentinels, and numerical infinities raise ValueError; they are not
+        interpreted as failed membership. Use ``Dataset.drop_missing`` on the
+        required columns before initializing calibration or probability
+        objects. Unused photometric bands may still contain missing values.
+
+        Target properties need not be known for an independent test sample
+        when predicting membership. Population reconstruction instead uses an
+        observed selection applied to both samples; those observed properties
+        must therefore be available wherever that selection is evaluated.
+
+        Examples
         --------
-        Reference properties required by the selection must not contain
-        NaN, missing-value sentinels declared in `Dataset.missing_data`,
-        or infinite numerical values. These entries represent unknown
-        properties, not objects that fail the selection criteria.
+        Define an open point-redshift interval, ``0.5 < z < 1.0``:
 
-        Invalid entries raise a `ValueError` identifying the affected columns.
-        Use `Dataset.drop_missing()` to remove them before initializing
-        calibration or probability objects.
+        >>> selection = SelectionDefinition(z_lim=0.5, z_lim_opposite=1.0)
 
-        Missing photometry is handled separately and does not require
-        removing an object solely because some bands are unavailable.
-        Target properties need not be known for an independent test sample.
+        Combine multiple lower thresholds with a stellar-mass requirement:
+
+        >>> selection = SelectionDefinition(
+        ...     z_lim=[0.2, 0.4, 0.6],
+        ...     additional_rules=[("logM", lambda mass: mass > 10.0)],
+        ... )
+
+        Combine numerical and categorical rules. To omit the redshift
+        constraint, use this definition with a Dataset that has neither
+        designated point redshifts nor PDZs:
+
+        >>> selection = SelectionDefinition(additional_rules=[
+        ...     (("logM", "sfr"), lambda mass, sfr: sfr / 10**mass < 1e-11),
+        ...     ("object_type", lambda kind: kind == "galaxy"),
+        ... ])
         """
         self.z_lim = set_input_variable_precision(z_lim)
         for z_l in self.z_lim:
@@ -217,56 +287,80 @@ class SelectionDefinition:
 
     def _get_target_mask(self, dataset, z_lim, CDZs, PDZ_x, z_gal_string, missing_data):
         """
-        Create a mask identifying galaxies that satisfy a set of conditions.
-
-        This function generates a 2D mask array where each row corresponds
-        to a different redshift limit and each column corresponds to a galaxy in the
-        dataset. A value of `True` indicates that a galaxy meets all selection criteria
-        for that particular redshift limit.
+        Evaluate prior-weighted target membership for each redshift threshold.
 
         Parameters
         ----------
         dataset : pandas.DataFrame
-            Input dataset containing galaxy properties. Must include
-            any additional properties referenced in `self.additional_rules`.
-        z_lim : numpy.array of float
-            Limiting redshift points.
-        CDZs : array-like of array-like
-            Cumulative redshift distributions (normalization IS REQUIRED) used
-            in the metrics computation. If None, point-estimates are used
-            (whose key is defined by the "redshift" key in the data set).
-        PDZ_x : array-like
-            Redshift values where CDZs[i] is computed.
+            Internal table from a Dataset, including ``"weights"`` and all
+            columns declared by additional rules. Point-redshift selections
+            use the standardized ``"redshift"`` column.
+        z_lim : one-dimensional array-like
+            Non-empty sequence of thresholds to evaluate. These normally
+            come from ``self.z_lim``. This method does not round thresholds
+            or repeat the constructor's boundary-ordering checks.
+        CDZs : array-like of shape (n_objects, n_samples) or None
+            Normalized cumulative redshift distributions aligned with the
+            table rows. Use the ``CDZs`` produced by Dataset. When supplied,
+            these take precedence over point-redshift values.
+        PDZ_x : array-like of shape (n_samples,) or None
+            Common redshift grid for ``CDZs``. Required in PDZ mode and
+            ignored otherwise. Use the grid validated by Dataset.
         z_gal_string : str or None
-            Original redshift-column setting of the reference Dataset.
-            The DataFrame column is already standardized to "redshift".
-            If None and CDZs is None, no redshift condition is applied.
-        missing_data : scalar or sequence
-            Missing-value sentinels declared by the reference Dataset.
-            Required selection properties are checked for these values,
-            missing entries, and numerical infinities before evaluation.
+            Original Dataset setting identifying a point-redshift column.
+            A non-None value enables point-redshift selection when CDZs
+            are absent; the values are read from ``"redshift"``, not from
+            this original column name. None together with absent CDZs
+            disables redshift selection only for default redshift settings.
+        missing_data : scalar, sequence, or None
+            Missing-value sentinels declared by Dataset. None means no
+            additional sentinels. Missing entries and numerical infinities
+            are always rejected in required selection properties.
 
         Returns
         -------
-        target_mask : numpy.ndarray
-            2D mask with shape (len(z_lim), len(dataset)). If no prior weights
-            or redshift PDFs are provided, the mask is boolean. Otherwise, it
-            contains float values accounting for redshift probabilities and/or
-            prior weights.
-            target_mask[i, j] indicates whether galaxy j satisfies all selection
-            criteria for redshift limit z_lim[i]. For float masks, the value also
-            accounts for the redshift probability and/or prior weight.
+        target_mask : numpy.ndarray of shape (n_thresholds, n_objects)
+            Selection weights, with one row per threshold and one column
+            per object. Each entry is the prior weight times the redshift
+            membership times the conjunction of additional rules.
+
+            The result is boolean when CDZs are absent and all input weights
+            are close to one according to ``numpy.allclose``. In that branch,
+            weights are treated as unity. Otherwise the result is floating
+            point, even if individual entries happen to be zero or one.
+            Weighted entries may exceed one; this is not an array of
+            standalone membership probabilities.
+
+        Raises
+        ------
+        KeyError
+            If a required property column or ``"weights"`` is missing.
+        ValueError
+            If thresholds are not a non-empty one-dimensional array,
+            a redshift constraint has no supporting redshift information,
+            required properties contain missing or infinite values, or
+            a rule returns an invalid shape, index, or missing entries.
+        TypeError
+            If a rule returns a mask with a non-boolean dtype.
 
         Notes
         -----
-        - The function applies all selection criteria with AND logic: a galaxy must
-          satisfy the redshift condition AND all additional rules to be marked as True.
-        - The returned mask can be used directly for calculating completeness, purity,
-          and other selection metrics.
-        - Reference cumulative redshift distributions are linearly interpolated
-          at the requested thresholds. Below and above the supplied ``PDZ_x``
-          grid, cumulative probabilities are set to zero and one, respectively.
-          This convention matches the PDZ integration used by Reconstruction.
+        Additional rules are evaluated once and reused across thresholds.
+        With no redshift information and default redshift settings, redshift
+        membership is one. With no additional rules, their contribution is
+        one. Point-redshift membership uses strict inequalities at both ends.
+
+        In PDZ mode, each cumulative distribution is linearly interpolated
+        at the requested boundaries, with cumulative values of zero and one
+        below and above the grid. Explicit intervals use CDF differences;
+        a single lower or upper bound uses the upper or lower tail,
+        respectively. Probabilities are clipped to [0, 1] before multiplication
+        by prior weights. This follows the cumulative-PDZ convention used
+        by the distribution helpers.
+
+        Input weights and cumulative distributions are assumed to have been
+        validated by Dataset. The returned values already include prior
+        weights: do not multiply them by those weights a second time.
         """
         z_lim = np.asarray(z_lim)
 
@@ -439,3 +533,4 @@ class SelectionDefinition:
                 target_mask[i] *= additional_mask
 
         return target_mask
+
