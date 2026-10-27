@@ -29,8 +29,7 @@ class PointProbability:
     """Estimate target-membership probabilities from color-compatible references.
 
     Unlike binary color selections, this class returns a probability for each
-    test object. See the constructor for the matching and weighting equations,
-    and ``process`` for output arrays and missing-estimate conventions.
+    test object. See the ``process`` for output arrays and missing-estimate conventions.
     """
 
     def __init__(

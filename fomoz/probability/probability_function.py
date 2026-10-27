@@ -254,45 +254,53 @@ class ProbabilityFunction:
         r"""
         Select features concurrently using the less abundant reference class.
 
-        Define the prior-weighted reference distribution as
+        At each sampled threshold t, evaluate the prior-weighted fraction
+        of reference objects satisfying the cumulative criterion
+        :math:`\mathcal R_t:x<t`:
 
         .. math::
 
-            p_{\rm ref}(x) =
-            \frac{\sum_j w_{\rm prior}^j\,p^j(x)}
+            \eta(t)=
+            \frac{\sum_j w_{\rm sel}^j(\mathcal R_t)}
                  {\sum_j w_{\rm prior}^j}.
 
-        For redshift estimation, :math:`p^j(x)` is the normalized reference
-        PDZ of object j, when available. Otherwise, including for all other
-        reconstructed properties, use the point estimate :math:`x_j`:
+        Selection weights follow SelectionDefinition. For redshift estimation,
+        they incorporate integrated reference PDZs when available. Otherwise,
+        including for all other reconstructed properties, they reduce to
 
         .. math::
 
-            p^j(x) = \delta_{\rm D}(x-x_j),
+            w_{\rm sel}^j(\mathcal R_t)
+            =w_{\rm prior}^j\,\delta^j(\mathcal R_t),
 
-        where :math:`\delta_{\rm D}` denotes the Dirac delta distribution.
-
-        At each sampled threshold :math:`x_i`, evaluate the prior-weighted
-        fraction satisfying the original cumulative criterion
-        :math:`x < x_i`. For reference PDZs, this fraction is obtained by
-        integrating their weighted distribution below the threshold:
+        where :math:`\delta^j(\mathcal R_t)` is the Boolean membership
+        indicator: one if :math:`x_j<t`, zero otherwise. It is not a Dirac
+        delta distribution. Feature selection uses the criterion
 
         .. math::
 
-            F_{\rm ref}(x_i) =
-            \int_{-\infty}^{x_i} p_{\rm ref}(x)\,\mathrm{d}x.
+            \mathcal R_t^{\rm FS}:
+            \begin{cases}
+                x<t, & \eta(t)\leq 0.5,\\
+                x\geq t, & \eta(t)>0.5.
+            \end{cases}
 
-        With point estimates, compute the fraction directly using the
-        original criterion's strict inequality. If this fraction exceeds
-        0.5, feature selection targets the complementary class, namely
-        :math:`x \geq x_i`, instead of :math:`x < x_i`. A fraction of exactly
-        0.5 keeps the original criterion. The transition corresponds to the
-        median of the prior-weighted reference distribution, subject to
-        sampling and boundary conventions.
+        Calibration therefore targets the less abundant class; at exactly
+        0.5 the original criterion is retained. The transition corresponds
+        to the median of the prior-weighted reference distribution, accounting
+        for reference PDZs when available and subject to sampled thresholds
+        and point-estimate ties. Complementary selection weights are
 
-        This choice affects only feature selection. The original
-        PointProbability criterion and target memberships are preserved
-        for subsequent cumulative probability estimation.
+        .. math::
+
+            w_{\rm sel}^j(\overline{\mathcal R_t})
+            =w_{\rm prior}^j-w_{\rm sel}^j(\mathcal R_t).
+
+        This applies to both binary memberships from point estimates and
+        fractional memberships from reference PDZs. Only the retained colors
+        :math:`X_{\mathrm{sel}}(t)` change: subsequent cumulative estimates
+        :math:`\widetilde F_i(t)` use the original criterion and memberships,
+        even when colors were selected using the complementary class.
 
         Every threshold starts from the same input purity_min. If the grid
         search ends without crossing the requested purity, retry locally
@@ -334,14 +342,15 @@ class ProbabilityFunction:
         PDFs of other reference properties are not supported.
 
         The implementation complements the original target memberships
-        exactly. For a strict criterion :math:`x < x_i`, this includes
-        objects at :math:`x = x_i` in the complementary class. Any other
+        exactly. For a strict criterion :math:`x<t`, this includes
+        objects at :math:`x=t` in the complementary class. Any other
         boundaries in the original selection criterion are also respected
         when forming its exact complement.
 
         Only selected and discarded color lists are copied back from the
-        temporary feature-selection objects. No additional purity check is
-        made after significance filtering.
+        temporary feature-selection objects. As in PointProbability,
+        feature calibration uses GridClassification's default ``alpha=1``,
+        which disables significance filtering.
 
         .. warning::
             If grid calibration terminates without accepting a non-empty
@@ -1249,3 +1258,4 @@ class ProbabilityFunction:
         output["fomoz_interval_probability"] = interval_probability.copy()
 
         return output
+
