@@ -210,7 +210,8 @@ class ProbabilityFunction:
         Select features concurrently with local retries and shared purity.
 
         Each threshold starts from the shared purity requirement available
-        when its task begins. On calibration failure, retry locally with
+        when its task begins. If the grid search ends without crossing the
+        required purity, retry locally with
         `calibration_purity + 0.001` and raise the shared requirement if needed.
 
         Running tasks retain their own local requirement. Successful
@@ -239,13 +240,26 @@ class ProbabilityFunction:
         -------
         None
             Store selected features in the internal PointProbability objects.
-            Set `features_were_selected` to True only after all tasks succeed.
+            Set `features_were_selected` to True only after all thresholds have
+            selected colors or received colors from a successful threshold.
 
         Notes
         -----
         Shared purity updates are protected by a lock. The requirement
         inherited by each task depends on task scheduling, so results
         are not guaranteed to be independent of concurrency.
+
+        .. warning::
+            If grid calibration fails to find a non-empty selection meeting
+            the required purity at a sampled threshold, its colors are copied
+            from the nearest threshold with successful feature selection.
+            This handles only ``calibration_failure="no_accepted_selection"``,
+            including cases where all trials were empty and diagnostic purity
+            is NaN. Reassignment occurs after all tasks finish. Distance ties
+            use the lower threshold; donors must have succeeded directly.
+            Only colors are transferred, not the original selection criterion.
+            If no threshold succeeds, an error is raised. Other errors propagate.
+            No additional check is made after significance filtering.
         """
         if self.process_was_called:
             raise RuntimeError(
@@ -279,7 +293,7 @@ class ProbabilityFunction:
 
         shared_purity_min = purity_min
         purity_lock = Lock()
-        retry_events = []
+        retry_events, failed_thresholds = [], []
 
         def select_one(s):
             """Process one threshold, with independent local retries."""
@@ -301,8 +315,12 @@ class ProbabilityFunction:
                     return
 
                 except ValueError as error:
-                    # Retry only the known calibration failure.
-                    if not hasattr(error, "calibration_purity"):
+                    failure = getattr(error, "calibration_failure", None)
+                    if failure == "no_accepted_selection":
+                        with purity_lock:
+                            failed_thresholds.append(s)
+                        return
+                    if failure != "purity_not_crossed":
                         raise
 
                     achieved_purity = float(error.calibration_purity)
@@ -361,6 +379,43 @@ class ProbabilityFunction:
                             future.cancel()
                         raise
 
+        failed_set = set(failed_thresholds)
+        valid_thresholds = [s for s in samples if s not in failed_set]
+
+        if failed_thresholds and not valid_thresholds:
+            raise ValueError(
+                "Feature selection failed at every sampled threshold; "
+                "no valid color set is available for reassignment."
+            )
+
+        assignments = []
+
+        for s in sorted(failed_thresholds):
+            # In a distance tie, choose the lower threshold
+            nearest = min(
+                valid_thresholds,
+                key=lambda t: (abs(t - s), t),
+            )
+
+            source = self.dict_point[nearest]
+            destination = self.dict_point[s]
+
+            destination.colors = list(source.colors)
+            destination.discarded_colors = list(source.discarded_colors)
+
+            assignments.append(f"{s:g} -> {nearest:g}")
+
+        if assignments:
+            warnings.warn(
+                "Grid calibration did not provide an acceptable selection at "
+                f"{len(assignments)} sampled threshold(s). "
+                "Their colors were copied from the nearest threshold with "
+                "successful feature selection "
+                "(requested threshold -> donor threshold): "
+                + "; ".join(assignments),
+                stacklevel=2,
+            )
+
         self.features_were_selected = True
 
         if retry_events:
@@ -369,7 +424,7 @@ class ProbabilityFunction:
                 f"{len(set(retry_events))} sampled thresholds. "
                 f"The shared purity requirement increased from "
                 f"{purity_min:.6f} to {shared_purity_min:.6f}. "
-                "All feature selections completed successfully.",
+                "Feature assignment completed for all sampled thresholds.",
                 stacklevel=2,
             )
 
@@ -1041,3 +1096,4 @@ class ProbabilityFunction:
         output["fomoz_interval_probability"] = interval_probability.copy()
 
         return output
+

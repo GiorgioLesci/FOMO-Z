@@ -467,8 +467,11 @@ class Reconstruction:
         retry_calibration : bool, default=True
             Allow the retry procedure of
             :class:`~fomoz.probability.point_probability.PointProbability` for recognized calibration
-            convergence failures. That procedure may increase ``purity_min`` and
-            reports the change through a warning.
+            failures where the grid search ends without crossing the requested
+            purity. That procedure may increase ``purity_min`` and reports the
+            change through a warning. If no non-empty selection was accepted,
+            the original calibration error always propagates; no colors are
+            borrowed from another selection.
 
         Returns
         -------
@@ -1018,3 +1021,4 @@ class Reconstruction:
             raise ValueError("Reference PDZ bin probabilities exceed unit integral.")
 
         return mass * total_weight, max(0.0, 1.0 - retained)
+

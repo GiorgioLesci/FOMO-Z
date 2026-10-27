@@ -153,7 +153,11 @@ class GridClassification:
         threshold. If no trial was accepted, it raises ValueError. Reaching
         a non-positive threshold without crossing the purity requirement
         also raises ValueError, preserving the existing exhaustion behavior.
-        These search errors expose their diagnostic calibration_purity value.
+        These search errors expose ``calibration_failure``: either
+        ``"no_accepted_selection"`` or ``"purity_not_crossed"``. Their
+        ``calibration_purity`` attribute records the last measured purity,
+        or NaN if no non-empty trial was evaluated. This diagnostic does not
+        change the zero-denominator convention for stored metrics.
 
         Significance filtering is applied only after this search. It can
         change the global purity of the OR union in either direction.
@@ -279,7 +283,8 @@ class GridClassification:
         ValueError
             If no non-empty trial is accepted or the search reaches zero
             without crossing the requested purity. These errors expose
-            a calibration_purity attribute for callers.
+            ``calibration_failure`` and ``calibration_purity`` attributes.
+            The latter is NaN when every evaluated selection was empty.
 
         Notes
         -----
@@ -324,7 +329,7 @@ class GridClassification:
         # Keep the last accepted masks and their bin threshold together.
         prob_min_bin = 1.0
         accepted_threshold = None
-        last_purity = 0.0
+        last_purity = np.nan
 
         while prob_min_bin > 0.0:
             for cs in self.color_spaces:
@@ -356,9 +361,10 @@ class GridClassification:
 
         if accepted_threshold is None:
             error = ValueError(
-                f"No non-empty selection meets purity_min="
+                f"Calibration stopped without accepting a non-empty selection at purity_min="
                 f"{self.thresholded_quantity_min[i_z]} at z_lim={self.td.z_lim[i_z]}."
             )
+            error.calibration_failure = "no_accepted_selection"
             error.calibration_purity = float(last_purity)
             raise error
 
@@ -369,6 +375,7 @@ class GridClassification:
                 "the requested global purity. "
                 f"Current P, C, F: {self.P[i_z]}, {self.C[i_z]}, {self.F[i_z]}."
             )
+            error.calibration_failure = "purity_not_crossed"
             error.calibration_purity = float(self.P[i_z])
             raise error
 

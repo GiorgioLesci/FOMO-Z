@@ -450,7 +450,7 @@ class PointProbability:
         Select informative colors through `GridClassification` methods and backward elimination.
 
         Calibrate a selection in all color-color grids with `GridClassification`, then
-        iteratively remove the colorproducing the smallest decrease in global completeness.
+        iteratively remove the color producing the smallest decrease in global completeness.
         Accept a removal only if both purity and completeness remain within
         `tolerance` of their fixed values from the initial calibration.
 
@@ -472,10 +472,12 @@ class PointProbability:
         step : float, default=0.01
             Threshold reduction step used during calibration.
         retry_calibration : bool, default=True
-            If True, retry with a larger purity threshold if `purity_min`
-            is too low (i.e., if the `GridClassification` calibration
-            converges to a larger purity value). If False, the code raises
-            an error if `purity_min` is too low.
+            If True, retry with a larger purity threshold only when the grid
+            search ends without crossing the requested purity
+            (``calibration_failure="purity_not_crossed"``). If False, propagate
+            that error unchanged. Failure to accept any non-empty selection
+            (``calibration_failure="no_accepted_selection"``) always propagates;
+            its diagnostic purity may be NaN if all trials were empty.
 
         Returns
         -------
@@ -513,7 +515,10 @@ class PointProbability:
 
             except ValueError as error:
                 # Retry only the recognized calibration failure.
-                if not retry_calibration or not hasattr(error, "calibration_purity"):
+                if (
+                    not retry_calibration
+                    or getattr(error, "calibration_failure", None) != "purity_not_crossed"
+                ):
                     raise
 
                 achieved_purity = float(error.calibration_purity)
