@@ -1,11 +1,11 @@
 """
-Derive probability point estimates.
+Estimate individual probabilities of satisfying galaxy-selection criteria.
 
-This module derives point-estimate probabilities based on colors,
-given any condition on any galaxy property. 
-For each test object, a probability is estimated from the fraction
-of reference objects that are color-consistent with it within the
-photometric errors.
+For each test object, identify reference objects compatible in every usable
+selected color within the adopted photometric uncertainties. Estimate target
+membership from their prior-weighted selection memberships, using reference
+redshift PDFs for redshift criteria when available. This module estimates an
+event probability, rather than a probability density for a galaxy property.
 
 :Author: Giorgio Francesco Lesci <lesci.giorgio [at] gmail [dot] com>
 """
@@ -26,7 +26,12 @@ from ..binary_classification.grid_classification import GridClassification
 
 
 class PointProbability:
-    """Get point-estimate probabilities."""
+    """Estimate target-membership probabilities from color-compatible references.
+
+    Unlike binary color selections, this class returns a probability for each
+    test object. See the constructor for the matching and weighting equations,
+    and ``process`` for output arrays and missing-estimate conventions.
+    """
 
     def __init__(
         self,
@@ -48,7 +53,8 @@ class PointProbability:
         selection_definition : SelectionDefinition
             Definition of the target population, such as objects above a
             redshift threshold, within a redshift interval, or satisfying
-            additional conditions on other physical properties.
+            additional numerical or categorical conditions. Exactly one
+            ``z_lim`` value is supported per PointProbability instance.
         reference_dataset : Dataset
             Reference sample providing photometry, target information,
             and per-object weights. Its DataFrame must contain magnitude
@@ -72,13 +78,15 @@ class PointProbability:
 
         Notes
         -----
-        Let Phi denote the reference sample and X the full set of colors
-        (i.e. features). Feature selection retains a subset X_sel; if it is
-        not performed, all available features are used. Currently available
-        feature selection methods are: `select_features_grid`.
+        Let :math:`\Phi` denote the reference sample and :math:`X` the full
+        set of colors. Feature selection retains :math:`X_{\mathrm{sel}}`,
+        chosen to distinguish reference objects satisfying the target
+        criteria from those that do not. If feature selection is not
+        performed, :math:`X_{\mathrm{sel}}=X`. See ``select_features_grid``.
 
-        For test object i, chi_i is the subset of X_sel containing the
-        selected colors whose measurements and uncertainties are both non-NaN.
+        For test object i, :math:`\chi_i\subseteq X_{\mathrm{sel}}\subseteq X`
+        contains the selected colors whose measurements and uncertainties
+        are both non-NaN.
         The set of reference objects that are color-compatible with the test
         object i is defined as
 
@@ -92,11 +100,15 @@ class PointProbability:
             \right\},
 
         where c_{i,k} and c_{j,k} are the values of color k for the test
-        and reference objects, respectively. Missing test colors impose
-        no matching constraint.
+        and reference objects, respectively. A selected test color with a
+        NaN value or uncertainty imposes no matching constraint. Conversely,
+        a reference object with a NaN color in any usable test color is
+        rejected. When reference errors are combined, a NaN reference color
+        uncertainty in any such color also rejects that reference object.
 
-        When `test_dataset` is explicitly supplied, the matching
-        tolerance combines test and reference color uncertainties:
+        When ``test_dataset`` is a distinct Dataset instance from
+        ``reference_dataset``, the matching tolerance combines test and
+        reference color uncertainties:
 
         .. math::
 
@@ -116,8 +128,9 @@ class PointProbability:
         to each selected color; covariance between colors sharing
         a band is not modeled.
 
-        If `test_dataset` is None or if it matches exactly `reference_dataset`,
-        the reference sample is also used as the test sample, and
+        If ``test_dataset`` is None or is the same Dataset instance as
+        ``reference_dataset`` (Python object identity), the reference sample
+        is also used as the test sample, and
         matching tolerances use only the test object's color uncertainties.
         Thus, the tolerance differs from the expression above and reads as
 
@@ -130,9 +143,12 @@ class PointProbability:
         convention, not an independent validation or a leave-one-out
         evaluation. We stress that this behavior is obtained both
         when `test_dataset` is None and when the reference
-        `Dataset` is explicitly supplied as `test_dataset`.
+        Dataset instance is explicitly supplied as ``test_dataset``.
+        A distinct Dataset instance containing identical data instead uses
+        the quadrature tolerance. Reference color errors do not constrain
+        matching in self-test mode.
 
-        Once Sigma_i has been identified, `process` estimates the
+        For a nonempty :math:`\Sigma_i`, ``process`` estimates the
         probability that test object i satisfies the selection rules R,
         defined by `selection_definition`:
 
@@ -158,7 +174,10 @@ class PointProbability:
         evaluated using a point estimate. When reference redshift PDFs
         are supplied, membership is instead obtained from their
         cumulative probabilities over the requested redshift range.
-        See `SelectionDefinition`.
+        Reference PDFs are supported only for redshift, not other properties.
+        Additional selection rules remain Boolean and are combined with the
+        redshift membership through ``SelectionDefinition``. Boundary
+        conventions are those of that class.
 
         Thus, p_i is the prior-weighted mean target membership among
         the color-compatible reference objects. Prior weights and
@@ -342,19 +361,19 @@ class PointProbability:
 
     def _build_color_dict(self, dataset, include_errors, include_weights):
         r"""
-        Build a matrix of colors (and optionally their errors and weights) from a Dataset.
+        Build color, uncertainty and weight arrays from a photometry DataFrame.
 
         For each color in `self.colors`, the corresponding color array is computed as the
         difference between the two magnitude columns it refers to, and stored as a row
         in a `(n_colors, n_objects)` matrix. If `include_errors` is True, a matrix of
         the same shape is also built, with the propagated color errors obtained by
-        summing the two color errors in quadrature (missing magnitude errors
+        summing the two magnitude uncertainties in quadrature (missing magnitude errors
         propagate as NaN in the corresponding color error).
 
         Parameters
         ----------
-        dataset : Dataset
-            The `Dataset` object (reference or test) from which colors are computed.
+        dataset : pandas.DataFrame
+            Reference or test photometry table, as stored in ``Dataset.dataset``.
         include_errors : bool
             If True, also compute and store the propagated color errors, using the
             magnitude error columns named `<band>_error`.
@@ -466,7 +485,9 @@ class PointProbability:
             to the fixed initial calibration baseline.
         purity_min : float, default=0.9
             Minimum global purity requested for the initial calibration.
-            May be increased automatically if `retry_calibration=True`.
+            May be increased automatically if ``retry_calibration=True``.
+            This is not a lower bound imposed during backward elimination;
+            accepted removals can lower purity below this input requirement.
         grid_precision : float, default=0.15
             Resolution of the color-color grids.
         step : float, default=0.01
@@ -484,6 +505,17 @@ class PointProbability:
         None
             Store selected colors in `self.colors` and removed colors in
             `self.discarded_colors`.
+
+        Notes
+        -----
+        Grid calibration uses its default ``alpha=1``, disabling significance
+        filtering, and ``do_bootstrap=False``. Backward elimination uses fixed
+        initial purity and completeness baselines; its relative tolerance
+        applies to both increases and decreases. It stops when the chosen
+        removal violates either tolerance or only two colors remain.
+        If no removal is accepted, all reference colors are retained and a
+        warning is emitted. An unsuccessful calibration raises an error;
+        this class does not borrow colors from another selection.
         """
         if not isinstance(purity_min, float):
             raise ValueError("purity_min must be a float.")
@@ -762,7 +794,7 @@ class PointProbability:
 
             ``prob``
                 Weighted membership probability. NaN for skipped
-                objects, objects without matches.
+                objects or objects without matches.
             ``prob_error``
                 Approximate sampling standard error of ``prob``, as
                 defined in the constructor's documentation. NaN if the
@@ -988,6 +1020,10 @@ class PointProbability:
         ------
         RuntimeError
             If probability results are not available.
+        ValueError
+            If a result has the wrong shape or length, or an output column
+            already exists while ``inplace=False``. With ``inplace=True``,
+            existing result columns are overwritten.
 
         Notes
         -----
@@ -1035,3 +1071,4 @@ class PointProbability:
             output[column] = values
 
         return output
+

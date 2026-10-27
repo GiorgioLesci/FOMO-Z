@@ -226,33 +226,68 @@ class ProbabilityFunction:
         r"""
         Select features concurrently using the less abundant reference class.
 
-        At each sampled threshold, compute the prior-weighted fraction of
-        reference objects satisfying the original cumulative criterion. If
-        this fraction exceeds 0.5, calibrate the exact complementary criterion
-        for feature selection only. Reference PDZ memberships are included
-        when available. A fraction of exactly 0.5 keeps the original criterion.
-        The original PointProbability criterion and target memberships are
-        preserved for subsequent cumulative probability estimation.
+        Define the prior-weighted reference distribution as
+
+        .. math::
+
+            p_{\rm ref}(x) =
+            \frac{\sum_j w_{\rm prior}^j\,p^j(x)}
+                 {\sum_j w_{\rm prior}^j}.
+
+        For redshift estimation, :math:`p^j(x)` is the normalized reference
+        PDZ of object j, when available. Otherwise, including for all other
+        reconstructed properties, use the point estimate :math:`x_j`:
+
+        .. math::
+
+            p^j(x) = \delta_{\rm D}(x-x_j),
+
+        where :math:`\delta_{\rm D}` denotes the Dirac delta distribution.
+
+        At each sampled threshold :math:`x_i`, evaluate the prior-weighted
+        fraction satisfying the original cumulative criterion
+        :math:`x < x_i`. For reference PDZs, this fraction is obtained by
+        integrating their weighted distribution below the threshold:
+
+        .. math::
+
+            F_{\rm ref}(x_i) =
+            \int_{-\infty}^{x_i} p_{\rm ref}(x)\,\mathrm{d}x.
+
+        With point estimates, compute the fraction directly using the
+        original criterion's strict inequality. If this fraction exceeds
+        0.5, feature selection targets the complementary class, namely
+        :math:`x \geq x_i`, instead of :math:`x < x_i`. A fraction of exactly
+        0.5 keeps the original criterion. The transition corresponds to the
+        median of the prior-weighted reference distribution, subject to
+        sampling and boundary conventions.
+
+        This choice affects only feature selection. The original
+        PointProbability criterion and target memberships are preserved
+        for subsequent cumulative probability estimation.
 
         Every threshold starts from the same input purity_min. If the grid
-        search ends without crossing the requested purity, retry locally with
-        calibration_purity + 0.001. Updates never affect other thresholds.
+        search ends without crossing the requested purity, retry locally
+        with calibration_purity + 0.001, provided the new requirement
+        increases and remains below 1. Updates never affect other thresholds.
 
         Parameters
         ----------
         tolerance : float, default=0.1
             Maximum relative change in purity and completeness during
-            backward feature elimination.
+            backward feature elimination, measured against their fixed
+            initial calibration values.
         purity_min : float, default=0.9
             Initial minimum calibration purity, applied independently at
             every threshold to the less abundant reference class.
+            This is not a lower bound imposed during backward elimination.
         grid_precision : float, default=0.15
             Resolution of the color-color grids.
         step : float, default=0.01
-            Threshold reduction step used during calibration.
+            Bin-probability threshold reduction step used during calibration.
         cpu_number : int or None, default=4
             Maximum number of concurrent threshold workers. Explicit values
-            are capped at max(cpu_count() - 2, 1). `None` uses that limit.
+            are capped at ``max(cpu_count() - 2, 1)``. None uses that limit.
             Use 1 for sequential processing.
             More workers increase the memory required for simultaneous
             calibrations and may not provide proportional speedups.
@@ -261,30 +296,34 @@ class ProbabilityFunction:
         -------
         None
             Store selected features in the internal PointProbability objects.
-            Set `features_were_selected` to True only after all thresholds have
-            selected colors or received colors from a successful threshold.
+            Set ``features_were_selected`` to True only after all thresholds
+            have selected colors or received colors from a successful threshold.
 
         Notes
         -----
-        Calibration and retries are independent across thresholds. The
-        transition between direct and complementary criteria occurs where
-        the weighted reference cumulative fraction crosses 0.5. For point
-        estimates this corresponds to the weighted median, subject to the
-        original criterion's boundary conventions. The complement includes
-        any boundary values excluded by the original criterion.
+        Calibration and retries are independent across thresholds.
+        Reference PDZs are integrated over their supplied redshift grid.
+        PDFs of other reference properties are not supported.
+
+        The implementation complements the original target memberships
+        exactly. For a strict criterion :math:`x < x_i`, this includes
+        objects at :math:`x = x_i` in the complementary class. Any other
+        boundaries in the original selection criterion are also respected
+        when forming its exact complement.
 
         Only selected and discarded color lists are copied back from the
         temporary feature-selection objects. No additional purity check is
         made after significance filtering.
 
         .. warning::
-            If grid calibration fails to find a non-empty selection meeting
-            the required purity at a sampled threshold, its colors are copied
-            from the nearest threshold with successful feature selection,
-            after all tasks finish. Distance ties use the lower threshold.
-            Donors must have succeeded directly, whether using the original
-            or complementary criterion. If no threshold succeeds, an error
-            is raised. Unrelated errors propagate unchanged.
+            If grid calibration terminates without accepting a non-empty
+            selection meeting the required purity at a sampled threshold,
+            its colors are copied from the nearest threshold with successful
+            feature selection, after all tasks finish.
+            Distance ties use the lower threshold. Donors must have
+            succeeded directly, whether using the original or complementary
+            criterion. If no threshold succeeds, an error is raised.
+            Unrelated errors propagate unchanged.
         """
         if self.process_was_called:
             raise RuntimeError(
