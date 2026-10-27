@@ -27,6 +27,23 @@ from ..data.selection_definition import SelectionDefinition
 from .point_probability import PointProbability
 
 
+class _ComplementSelection(SelectionDefinition):
+    """Complement a selection for temporary feature calibration only."""
+
+    def __init__(self, original):
+        self.__dict__.update(original.__dict__)
+        self._original_selection = original
+
+    def _get_target_mask(self, dataset, z_lim, CDZs, PDZ_x, z_gal_string, missing_data):
+        target = self._original_selection._get_target_mask(
+            dataset, z_lim, CDZs, PDZ_x, z_gal_string, missing_data
+        )
+        if np.issubdtype(target.dtype, np.bool_):
+            return ~target
+        weights = np.asarray(dataset["weights"].values, dtype=float)
+        return np.clip(weights[None, :] - target, 0.0, weights[None, :])
+
+
 class ProbabilityFunction:
     """Get probability density functions."""
 
@@ -207,16 +224,19 @@ class ProbabilityFunction:
         cpu_number=4,
     ):
         r"""
-        Select features concurrently with local retries and shared purity.
+        Select features concurrently using the less abundant reference class.
 
-        Each threshold starts from the shared purity requirement available
-        when its task begins. If the grid search ends without crossing the
-        required purity, retry locally with
-        `calibration_purity + 0.001` and raise the shared requirement if needed.
+        At each sampled threshold, compute the prior-weighted fraction of
+        reference objects satisfying the original cumulative criterion. If
+        this fraction exceeds 0.5, calibrate the exact complementary criterion
+        for feature selection only. Reference PDZ memberships are included
+        when available. A fraction of exactly 0.5 keeps the original criterion.
+        The original PointProbability criterion and target memberships are
+        preserved for subsequent cumulative probability estimation.
 
-        Running tasks retain their own local requirement. Successful
-        selections are never recomputed. Newly started tasks inherit the
-        latest shared requirement.
+        Every threshold starts from the same input purity_min. If the grid
+        search ends without crossing the requested purity, retry locally with
+        calibration_purity + 0.001. Updates never affect other thresholds.
 
         Parameters
         ----------
@@ -224,7 +244,8 @@ class ProbabilityFunction:
             Maximum relative change in purity and completeness during
             backward feature elimination.
         purity_min : float, default=0.9
-            Initial minimum calibration purity.
+            Initial minimum calibration purity, applied independently at
+            every threshold to the less abundant reference class.
         grid_precision : float, default=0.15
             Resolution of the color-color grids.
         step : float, default=0.01
@@ -245,21 +266,25 @@ class ProbabilityFunction:
 
         Notes
         -----
-        Shared purity updates are protected by a lock. The requirement
-        inherited by each task depends on task scheduling, so results
-        are not guaranteed to be independent of concurrency.
+        Calibration and retries are independent across thresholds. The
+        transition between direct and complementary criteria occurs where
+        the weighted reference cumulative fraction crosses 0.5. For point
+        estimates this corresponds to the weighted median, subject to the
+        original criterion's boundary conventions. The complement includes
+        any boundary values excluded by the original criterion.
+
+        Only selected and discarded color lists are copied back from the
+        temporary feature-selection objects. No additional purity check is
+        made after significance filtering.
 
         .. warning::
             If grid calibration fails to find a non-empty selection meeting
             the required purity at a sampled threshold, its colors are copied
-            from the nearest threshold with successful feature selection.
-            This handles only ``calibration_failure="no_accepted_selection"``,
-            including cases where all trials were empty and diagnostic purity
-            is NaN. Reassignment occurs after all tasks finish. Distance ties
-            use the lower threshold; donors must have succeeded directly.
-            Only colors are transferred, not the original selection criterion.
-            If no threshold succeeds, an error is raised. Other errors propagate.
-            No additional check is made after significance filtering.
+            from the nearest threshold with successful feature selection,
+            after all tasks finish. Distance ties use the lower threshold.
+            Donors must have succeeded directly, whether using the original
+            or complementary criterion. If no threshold succeeds, an error
+            is raised. Unrelated errors propagate unchanged.
         """
         if self.process_was_called:
             raise RuntimeError(
@@ -291,33 +316,54 @@ class ProbabilityFunction:
 
         self.features_were_selected = False
 
-        shared_purity_min = purity_min
-        purity_lock = Lock()
+        event_lock = Lock()
         retry_events, failed_thresholds = [], []
 
         def select_one(s):
             """Process one threshold, with independent local retries."""
-            nonlocal shared_purity_min
+            local_purity_min = purity_min
+            point = self.dict_point[s]
+            weights = np.asarray(
+                point.reference_dataset.dataset["weights"].values, dtype=float
+            )
+            target = np.asarray(point.target_mask)
+            target_weight = (
+                np.sum(weights[target])
+                if np.issubdtype(target.dtype, np.bool_)
+                else np.sum(target)
+            )
 
-            # Read when the task actually starts, not when submitted.
-            with purity_lock:
-                local_purity_min = shared_purity_min
+            # Temporary objects protect the original cumulative criterion,
+            # target memberships and color lists, including on failure.
+            feature_point = copy(point)
+            feature_point.colors = None
+            feature_point.discarded_colors = []
+            if target_weight > 0.5 * np.sum(weights):
+                feature_point.selection_definition = _ComplementSelection(
+                    point.selection_definition
+                )
+                feature_point.target_mask = (
+                    ~target if np.issubdtype(target.dtype, np.bool_)
+                    else np.clip(weights - target, 0.0, weights)
+                )
 
             while True:
                 try:
-                    self.dict_point[s].select_features_grid(
+                    feature_point.select_features_grid(
                         tolerance=tolerance,
                         purity_min=local_purity_min,
                         grid_precision=grid_precision,
                         step=step,
                         retry_calibration=False,
                     )
+                    point.colors = list(feature_point.colors)
+                    point.discarded_colors = list(feature_point.discarded_colors)
                     return
 
                 except ValueError as error:
                     failure = getattr(error, "calibration_failure", None)
                     if failure == "no_accepted_selection":
-                        with purity_lock:
+                        with event_lock:
                             failed_thresholds.append(s)
                         return
                     if failure != "purity_not_crossed":
@@ -339,12 +385,7 @@ class ProbabilityFunction:
                             "The new threshold must increase and remain below 1."
                         ) from error
 
-                    # Propagate the maximum to tasks not yet started.
-                    with purity_lock:
-                        shared_purity_min = max(
-                            shared_purity_min,
-                            new_purity_min,
-                        )
+                    with event_lock:
                         retry_events.append(s)
 
                     local_purity_min = new_purity_min
@@ -422,8 +463,8 @@ class ProbabilityFunction:
             warnings.warn(
                 f"Calibration required {len(retry_events)} retries across "
                 f"{len(set(retry_events))} sampled thresholds. "
-                f"The shared purity requirement increased from "
-                f"{purity_min:.6f} to {shared_purity_min:.6f}. "
+                "Each threshold started from the input purity requirement; "
+                "all increases were local to the corresponding threshold. "
                 "Feature assignment completed for all sampled thresholds.",
                 stacklevel=2,
             )
@@ -1096,4 +1137,5 @@ class ProbabilityFunction:
         output["fomoz_interval_probability"] = interval_probability.copy()
 
         return output
+
 

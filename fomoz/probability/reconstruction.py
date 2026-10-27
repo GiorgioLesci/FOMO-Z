@@ -469,9 +469,7 @@ class Reconstruction:
             :class:`~fomoz.probability.point_probability.PointProbability` for recognized calibration
             failures where the grid search ends without crossing the requested
             purity. That procedure may increase ``purity_min`` and reports the
-            change through a warning. If no non-empty selection was accepted,
-            the original calibration error always propagates; no colors are
-            borrowed from another selection.
+            change through a warning.
 
         Returns
         -------
