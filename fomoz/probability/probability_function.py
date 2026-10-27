@@ -382,7 +382,8 @@ class ProbabilityFunction:
                     point.selection_definition
                 )
                 feature_point.target_mask = (
-                    ~target if np.issubdtype(target.dtype, np.bool_)
+                    ~target
+                    if np.issubdtype(target.dtype, np.bool_)
                     else np.clip(weights - target, 0.0, weights)
                 )
 
@@ -491,8 +492,7 @@ class ProbabilityFunction:
                 f"{len(assignments)} sampled threshold(s). "
                 "Their colors were copied from the nearest threshold with "
                 "successful feature selection "
-                "(requested threshold -> donor threshold): "
-                + "; ".join(assignments),
+                "(requested threshold -> donor threshold): " + "; ".join(assignments),
                 stacklevel=2,
             )
 
@@ -1176,5 +1176,3 @@ class ProbabilityFunction:
         output["fomoz_interval_probability"] = interval_probability.copy()
 
         return output
-
-

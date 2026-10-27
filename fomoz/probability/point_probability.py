@@ -549,7 +549,8 @@ class PointProbability:
                 # Retry only the recognized calibration failure.
                 if (
                     not retry_calibration
-                    or getattr(error, "calibration_failure", None) != "purity_not_crossed"
+                    or getattr(error, "calibration_failure", None)
+                    != "purity_not_crossed"
                 ):
                     raise
 
@@ -1071,4 +1072,3 @@ class PointProbability:
             output[column] = values
 
         return output
-

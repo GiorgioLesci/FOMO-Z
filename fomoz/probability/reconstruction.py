@@ -1019,4 +1019,3 @@ class Reconstruction:
             raise ValueError("Reference PDZ bin probabilities exceed unit integral.")
 
         return mass * total_weight, max(0.0, 1.0 - retained)
-
