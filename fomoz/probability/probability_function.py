@@ -45,7 +45,13 @@ class _ComplementSelection(SelectionDefinition):
 
 
 class ProbabilityFunction:
-    """Get probability density functions."""
+    """Reconstruct property PDFs from threshold-dependent membership probabilities.
+
+    Sample cumulative probabilities using PointProbability, then fit bounded,
+    monotone cubic B-splines and differentiate them. Returned density samples
+    are normalized within the sampled interval. See ``update_fit`` for the
+    mathematical model, numerical normalization and invalid-fit conventions.
+    """
 
     def __init__(
         self,
@@ -64,8 +70,9 @@ class ProbabilityFunction:
         Monotone cubic B-splines are fitted to the resulting cumulative
         estimates to obtain nonnegative probability densities.
 
-        The output of the `process` method is a probability density function
-        (whose integral equals 1) for each object in `test_dataset`.
+        For each valid fit, ``process`` returns density samples with unit
+        trapezoidal integral over the sampled interval. Invalid fits yield
+        NaN density rows and ``fit_success=False``.
         A selection of the most informative features is recommended before the `process`
         call. In the current version of the code, the following function implements
         such a selection: `select_features_grid`.
@@ -76,7 +83,27 @@ class ProbabilityFunction:
         Raw cumulative estimates are retained in `cumulative_matrix`. Use
         `update_fit` to change the spline knot spacing without repeating
         the point-probability calculations. Valid densities are normalized
-        over the sampled interval; numpy.arange excludes max_variable.
+        over the sampled interval; ``numpy.arange`` excludes max_variable.
+        The fitting domain ends at ``variable_samples[-1]``, not at the
+        input max_variable. At least four sampled thresholds are required
+        for fitting, although construction permits as few as two.
+
+        For test object i and a threshold t, the cumulative criterion is
+        :math:`\mathcal{R}_t:x<t`, with the boundary conventions of
+        SelectionDefinition. Its sampled probability is
+
+        .. math::
+
+            \widetilde{F}_i(t)=p_i(\mathcal{R}_t)
+            =\frac{\sum_{j\in\Sigma_i(t)}w_{\rm sel}^j(\mathcal{R}_t)}
+                   {\sum_{j\in\Sigma_i(t)}w_{\rm prior}^j}.
+
+        Feature selection may retain different colors at different thresholds,
+        so the compatible reference set :math:`\Sigma_i(t)` can also change.
+        Consequently, the sampled estimates need not be non-decreasing.
+        The constrained spline fit enforces monotonicity over the full domain.
+        Complementary criteria are used only for feature selection; the
+        cumulative estimates always use the original criteria.
 
         Parameters
         ----------
@@ -87,7 +114,8 @@ class ProbabilityFunction:
             and finite, strictly positive weights in ``weights``.
 
             Target memberships are obtained from the reference properties
-            or, when available, from the integrated redshift PDFs.
+            or, for redshift criteria only, from integrated reference PDZs
+            when available. Other reconstructed properties use point estimates.
         test_dataset : Dataset, optional
             Sample for which probabilities are estimated. Its ordered
             color list must match that of `reference_dataset`, and its
@@ -518,8 +546,9 @@ class ProbabilityFunction:
         r"""
         Compute and retain cumulative estimates, then fit probability densities.
 
-        Call `_process_multiple_points` at each sampled threshold, preserving
-        threshold-specific feature selections. Save the raw estimates in
+        Use ``_process_multiple_points`` to evaluate all sampled thresholds,
+        preserving their individual feature selections and sharing color
+        comparisons across thresholds. Save the raw estimates in
         `cumulative_matrix`, then call `update_fit` for monotone cubic spline
         fitting and analytic differentiation.
 
@@ -529,7 +558,8 @@ class ProbabilityFunction:
             Minimum number of usable test colors (see `PointProbability.process`
             for details).
         cpu_number : int or None, optional
-            Number of worker threads. If None, use the number of logical CPUs
+            Number of worker threads over blocks of test objects, rather
+            than thresholds. If None, use the number of logical CPUs
             minus two, with a minimum of one. Explicit values are capped at that
             limit. Spline fits are performed sequentially.
         block_size : int, default=256
@@ -742,26 +772,43 @@ class ProbabilityFunction:
 
         Notes
         -----
-        The fitted cumulative has the form
+        Let :math:`t_{\min}` and :math:`t_{\max}` be the first and last
+        sampled thresholds, and let :math:`h` be knot_spacing. The dimensions
+        of the cubic spline basis are
 
         .. math::
-            F(x) = \sum_m c_m B_m(x),
-            \qquad 0 \leq c_0 \leq \cdots \leq c_{M-1} \leq 1.
 
-        These coefficient constraints are sufficient to guarantee
-        monotonicity throughout the sampled interval, not only at the
-        sampling points.
+            N_{\rm int}=\max\left(1,
+                \left\lceil\frac{t_{\max}-t_{\min}}{h}\right\rceil\right),
+            \qquad N_{\rm knots}=N_{\rm int}-1,
+            \qquad M=N_{\rm knots}+4=N_{\rm int}+3.
 
-        The spline coefficients are estimated independently for each object
-        by minimizing the equally weighted least-squares objective
+        Internal knots divide the sampled domain into equal subintervals.
+        Each boundary is repeated four times in the full knot vector. The
+        resulting clamped cubic B-spline represents the fitted cumulative as
 
         .. math::
-            \frac{1}{2}\sum_{k \in V}
-            \left[F(x_k) - \widehat{F}(x_k)\right]^2,
 
-        where V contains the sampling points with finite cumulative estimates
-        and \widehat{F}(x_k) denotes the probabilities returned by
-        PointProbability.
+            \widehat{F}_i(t)=\sum_{m=0}^{M-1}a_{i,m}B_{m,3}(t),
+            \qquad 0\leq a_{i,0}\leq\cdots\leq a_{i,M-1}\leq1.
+
+        Nonnegative basis functions sum to unity on the fitted domain, so
+        coefficient bounds keep the cumulative in [0, 1]. Non-decreasing
+        coefficients are a sufficient condition for a nonnegative derivative
+        throughout the interval, not only at the sampled thresholds.
+
+        Coefficients are estimated independently for each object by minimizing
+        the equally weighted least-squares objective
+
+        .. math::
+
+            \frac12\sum_{\ell\in V_i}
+            \left[\widehat{F}_i(t_\ell)-\widetilde{F}_i(t_\ell)\right]^2,
+
+        where :math:`V_i` contains the thresholds with finite raw cumulative
+        estimates from PointProbability. At least M finite estimates are
+        required, including both endpoints. This is a sample-count check,
+        not an explicit design-matrix rank test.
 
         Optimization uses `scipy.optimize.minimize` with the SLSQP method,
         an analytic objective gradient, coefficient bounds [0, 1], and
@@ -773,15 +820,39 @@ class ProbabilityFunction:
         Missing interior estimates are omitted. No covariance model or
         uncertainty propagation is applied.
 
-        Endpoint probabilities are fitted rather than fixed to zero and
-        one. The output density is normalized over the sampled interval,
-        so it represents the distribution conditional on that interval.
-        Trapezoidal normalization of the sampled derivative introduces
-        a grid-dependent numerical approximation.
+        Endpoint probabilities remain free: the clamped basis gives
+        :math:`\widehat{F}_i(t_{\min})=a_{i,0}` and
+        :math:`\widehat{F}_i(t_{\max})=a_{i,M-1}`. The fitted interval mass is
 
-        Objects with insufficient valid estimates, missing endpoint
-        estimates, failed optimization, or fitted interval probability
-        below the numerical tolerance receive NaN densities.
+        .. math::
+
+            A_i=\widehat{F}_i(t_{\max})-\widehat{F}_i(t_{\min}).
+
+        The analytically normalized density would be
+        :math:`\widehat{f}_i(x)=\widehat{F}'_i(x)/A_i`. The implementation
+        evaluates the analytic derivative on variable_samples, clips residual
+        negative roundoff to zero, and normalizes these samples numerically:
+
+        .. math::
+
+            d_{i,\ell}=\max(0,\widehat{F}'_i(t_\ell)),\qquad
+            Z_i=\sum_{\ell=0}^{N_s-2}
+                \frac{d_{i,\ell}+d_{i,\ell+1}}{2}
+                (t_{\ell+1}-t_\ell),\qquad
+            f^{\rm out}_{i,\ell}=d_{i,\ell}/Z_i.
+
+        Here :math:`N_s` is the number of sampled thresholds. Z_i approximates
+        A_i and generally differs from it at finite grid resolution.
+        ``interval_probability`` stores A_i, whereas ``probability_functions``
+        stores the numerically normalized density samples. They describe the
+        distribution conditional on the sampled interval, not its unmodelled
+        tails. Fitted coefficients and spline objects are not retained.
+
+        Insufficient finite estimates, missing endpoints, cumulative values
+        outside [0, 1] beyond a tolerance of 1e-8, failed optimization,
+        coefficient-constraint violations beyond 1e-8, interval mass
+        A_i <= 1e-10, or invalid numerical normalization produce NaN densities.
+        Smaller numerical violations are corrected before differentiation.
 
         Fits are performed sequentially. This method leaves the raw cumulative
         matrix unchanged. Do not change variable_samples after processing.
@@ -981,7 +1052,9 @@ class ProbabilityFunction:
             If fitted probability densities are not available.
         ValueError
             If the sampling grid, result shapes, or valid PDF rows are
-            inconsistent, or an output column already exists.
+            inconsistent, or an output column already exists while
+            ``inplace=False``. Existing output columns are overwritten when
+            ``inplace=True``.
 
         Notes
         -----
