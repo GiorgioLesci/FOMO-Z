@@ -31,8 +31,9 @@ setup(
     install_requires=requirements,
     extras_require={
         "dev": [
-            "pytest>=6.0",
-            "black>=22.0",
+            "pytest>=6.0.0",
+            "black==24.8.0",
+            "pydocstyle>=6.0.0",
         ],
     },
     keywords="astronomy, photometry, galaxy, color-selection, photometric-redshifts",

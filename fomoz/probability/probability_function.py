@@ -27,6 +27,124 @@ from ..data.selection_definition import SelectionDefinition
 from .point_probability import PointProbability
 
 
+def _fit_worker_count(cpu_number):
+    """Resolve the same logical-CPU limit used by threshold calibration."""
+    if cpu_number is not None and (
+        isinstance(cpu_number, (bool, np.bool_))
+        or not isinstance(cpu_number, (int, np.integer))
+        or cpu_number < 1
+    ):
+        raise ValueError("cpu_number must be a positive integer or None.")
+    limit = max(mp.cpu_count() - 2, 1)
+    return limit if cpu_number is None else min(int(cpu_number), limit)
+
+
+def _validate_fit_block_size(block_size):
+    """Reject invalid block sizes before launching workers."""
+    if (
+        isinstance(block_size, (bool, np.bool_))
+        or not isinstance(block_size, (int, np.integer))
+        or block_size < 1
+    ):
+        raise ValueError("block_size must be a positive integer.")
+
+
+def _fit_cumulative_block(cumulative_matrix, x, design, derivative_design):
+    """Fit one block with the unchanged SLSQP algorithm and one BLAS thread."""
+    from threadpoolctl import threadpool_limits
+
+    with threadpool_limits(limits=1):
+        return _fit_cumulative_block_serial(
+            cumulative_matrix, x, design, derivative_design
+        )
+
+
+def _fit_cumulative_block_serial(cumulative_matrix, x, design, derivative_design):
+    """Return density samples, success flags and interval masses for a block."""
+    n_coefficients = design.shape[1]
+    difference_matrix = np.diff(np.eye(n_coefficients), axis=0)
+    constraints = {
+        "type": "ineq",
+        "fun": lambda coefficients: difference_matrix @ coefficients,
+        "jac": lambda coefficients: difference_matrix,
+    }
+    bounds = [(0.0, 1.0)] * n_coefficients
+    n_objects = cumulative_matrix.shape[1]
+    probability_functions = np.full((n_objects, x.size), np.nan)
+    fit_success = np.zeros(n_objects, dtype=bool)
+    interval_probability = np.full(n_objects, np.nan)
+
+    for i in range(n_objects):
+        y = cumulative_matrix[:, i]
+        finite = np.isfinite(y)
+
+        # Require enough observations and avoid extrapolating endpoints
+        if np.count_nonzero(finite) < n_coefficients or not finite[0] or not finite[-1]:
+            continue
+
+        observed = y[finite]
+        if np.any(observed < -1e-8) or np.any(observed > 1.0 + 1e-8):
+            continue
+
+        observed = np.clip(observed, 0.0, 1.0)
+        matrix = design[finite]
+
+        # Feasible initial coefficients, including for nonmonotone data
+        initial = np.linspace(observed.min(), observed.max(), n_coefficients)
+
+        def objective(coefficients):
+            residuals = matrix @ coefficients - observed
+            loss = 0.5 * np.sum(residuals * residuals)
+            gradient = matrix.T @ residuals
+            return loss, gradient
+
+        result = minimize(
+            objective,
+            initial,
+            method="SLSQP",
+            jac=True,
+            bounds=bounds,
+            constraints=constraints,
+            options={"ftol": 1e-10, "maxiter": 200},
+        )
+
+        if not result.success or not np.all(np.isfinite(result.x)):
+            continue
+
+        coefficients = result.x
+
+        # Reject constraint violations larger than numerical tolerance
+        if (
+            np.any(coefficients < -1e-8)
+            or np.any(coefficients > 1.0 + 1e-8)
+            or np.any(np.diff(coefficients) < -1e-8)
+        ):
+            continue
+
+        # Remove only residual numerical violations in fitted coefficients
+        coefficients = np.maximum.accumulate(np.clip(coefficients, 0.0, 1.0))
+
+        # Clamped endpoint values equal the first and last coefficients
+        interval_mass = coefficients[-1] - coefficients[0]
+        if interval_mass <= 1e-10:
+            continue
+
+        density = derivative_design @ coefficients
+
+        # The model derivative is nonnegative; clip numerical roundoff
+        density = np.maximum(density, 0.0)
+        normalization = trapezoid(density, x)
+
+        if not np.isfinite(normalization) or normalization <= 0:
+            continue
+
+        probability_functions[i] = density / normalization
+        interval_probability[i] = interval_mass
+        fit_success[i] = True
+
+    return probability_functions, fit_success, interval_probability
+
+
 class _ComplementSelection(SelectionDefinition):
     """Complement a selection for temporary feature calibration only."""
 
@@ -567,12 +685,14 @@ class ProbabilityFunction:
             Minimum number of usable test colors (see `PointProbability.process`
             for details).
         cpu_number : int or None, optional
-            Number of worker threads over blocks of test objects, rather
-            than thresholds. If None, use the number of logical CPUs
-            minus two, with a minimum of one. Explicit values are capped at that
-            limit. Spline fits are performed sequentially.
+            Maximum workers over blocks of test objects. Cumulative estimation
+            uses threads; subsequent spline fitting uses separate processes.
+            If None, use the number of logical CPUs minus two, with a minimum
+            of one. Explicit values are capped at that limit. Use 1 for
+            sequential execution. Each fit uses one numerical-library thread.
         block_size : int, default=256
-            Number of test objects per task.
+            Number of test objects per task, for both cumulative estimation
+            and spline fitting. Fitting uses no more workers than blocks.
         knot_spacing : float, default=0.05
             Requested maximum spacing between consecutive spline knots,
             including the domain endpoints, in the units of the reconstructed
@@ -615,6 +735,8 @@ class ProbabilityFunction:
 
         # Validate before consuming or releasing any PointProbability instance.
         self._validate_fit_grid(knot_spacing)
+        _fit_worker_count(cpu_number)
+        _validate_fit_block_size(block_size)
 
         if not self.features_were_selected:
             warnings.warn(
@@ -636,7 +758,9 @@ class ProbabilityFunction:
             self.dict_point[s] = None
 
         self.cumulative_matrix = cumulative_matrix
-        self.update_fit(knot_spacing=knot_spacing)
+        self.update_fit(
+            knot_spacing=knot_spacing, cpu_number=cpu_number, block_size=block_size
+        )
 
     def _validate_fit_grid(self, knot_spacing):
         """Validate the requested spacing and derive the spline dimensions.
@@ -709,7 +833,7 @@ class ProbabilityFunction:
 
         return x, n_coefficients
 
-    def update_fit(self, knot_spacing):
+    def update_fit(self, knot_spacing, cpu_number=None, block_size=256):
         r"""
         Refit saved cumulative estimates with monotone cubic B-splines.
 
@@ -748,6 +872,17 @@ class ProbabilityFunction:
             three. Each object requires at least this many finite cumulative
             estimates, including estimates at both domain endpoints.
 
+        cpu_number : int or None, default=None
+            Maximum number of fitting processes. None uses the number of
+            logical CPUs minus two, with a minimum of one. Explicit values
+            are capped at that limit and at the number of non-empty blocks.
+            Use 1 to fit sequentially without launching worker processes.
+            Numerical libraries are limited to one thread per fit in both
+            modes; previous thread limits are restored afterwards.
+        block_size : int, default=256
+            Number of test objects per fitting task. Larger blocks reduce
+            scheduling overhead but can limit concurrency for small samples.
+
         Returns
         -------
         None
@@ -776,8 +911,9 @@ class ProbabilityFunction:
         RuntimeError
             If complete cumulative estimates have not been saved by process.
         ValueError
-            If the knot spacing, sampling grid, or cumulative matrix shape is
-            invalid. Previously stored fits are preserved in this case.
+            If the knot spacing, sampling grid, cumulative matrix shape,
+            cpu_number, or block_size is invalid. Previously stored fits are
+            preserved in this case.
 
         Notes
         -----
@@ -863,8 +999,19 @@ class ProbabilityFunction:
         A_i <= 1e-10, or invalid numerical normalization produce NaN densities.
         Smaller numerical violations are corrected before differentiation.
 
-        Fits are performed sequentially. This method leaves the raw cumulative
-        matrix unchanged. Do not change variable_samples after processing.
+        Basis functions and their derivatives are evaluated once per call,
+        before dispatching blocks. Each object uses the same SLSQP objective,
+        initialization, constraints, tolerances and normalization in serial
+        and parallel modes. Results retain the original object order.
+        Parallel execution uses joblib's loky process backend, bounded task
+        dispatch and read-only memory mapping for large input arrays. Worker
+        workspaces and output blocks still require additional memory.
+
+        Requires threadpoolctl; parallel fits additionally require joblib >= 1.3.
+        The number of numerical threads is controlled, but bitwise equality
+        across different numerical-library versions or hardware is not promised.
+        This method leaves the raw cumulative matrix unchanged. Do not change
+        variable_samples after processing.
         """
         if self.cumulative_matrix is None:
             raise RuntimeError(
@@ -872,6 +1019,8 @@ class ProbabilityFunction:
                 "Run process successfully through cumulative estimation first."
             )
 
+        n_jobs = _fit_worker_count(cpu_number)
+        _validate_fit_block_size(block_size)
         x, n_coefficients = self._validate_fit_grid(knot_spacing)
         n_internal_knots = n_coefficients - 4
         actual_knot_spacing = (x[-1] - x[0]) / (n_internal_knots + 1)
@@ -904,94 +1053,63 @@ class ProbabilityFunction:
         design = basis(x)  # evaluate basis functions at each threshold
         derivative_design = basis.derivative()(x)
 
-        # Enforce c[m + 1] - c[m] >= 0
-        difference_matrix = np.diff(np.eye(n_coefficients), axis=0)
-        constraints = {
-            "type": "ineq",
-            "fun": lambda coefficients: difference_matrix @ coefficients,
-            "jac": lambda coefficients: difference_matrix,
-        }
-        bounds = [(0.0, 1.0)] * n_coefficients
-
         probability_functions = np.full((self.N_test_objects, x.size), np.nan)
         fit_success = np.zeros(self.N_test_objects, dtype=bool)
         interval_probability = np.full(self.N_test_objects, np.nan)
 
-        for i in tqdm(
-            range(self.N_test_objects),
+        # Only the inputs needed for each block are sent to workers. Large
+        # arrays are automatically memory-mapped read-only by joblib.
+        starts = range(0, self.N_test_objects, block_size)
+        n_jobs = min(n_jobs, max(len(starts), 1))
+
+        def store_block(start, result):
+            density, success, mass = result
+            stop = start + success.size
+            probability_functions[start:stop] = density
+            fit_success[start:stop] = success
+            interval_probability[start:stop] = mass
+
+        with tqdm(
+            total=self.N_test_objects,
             desc="Fitting monotone cumulative distributions",
             disable=not self.verbose,
-        ):
-            y = cumulative_matrix[:, i]
-            finite = np.isfinite(y)
+        ) as progress:
+            if n_jobs == 1:
+                for start in starts:
+                    result = _fit_cumulative_block(
+                        cumulative_matrix[:, start : start + block_size],
+                        x,
+                        design,
+                        derivative_design,
+                    )
+                    store_block(start, result)
+                    progress.update(result[1].size)
+            else:
+                from joblib import Parallel, delayed, parallel_backend
 
-            # Require enough observations and avoid extrapolating endpoints
-            if (
-                np.count_nonzero(finite) < n_coefficients
-                or not finite[0]
-                or not finite[-1]
-            ):
-                continue
-
-            observed = y[finite]
-            if np.any(observed < -1e-8) or np.any(observed > 1.0 + 1e-8):
-                continue
-
-            observed = np.clip(observed, 0.0, 1.0)
-            matrix = design[finite]
-
-            # Feasible initial coefficients, including for nonmonotone data
-            initial = np.linspace(observed.min(), observed.max(), n_coefficients)
-
-            def objective(coefficients):
-                residuals = matrix @ coefficients - observed
-                loss = 0.5 * np.sum(residuals * residuals)
-                gradient = matrix.T @ residuals
-                return loss, gradient
-
-            result = minimize(
-                objective,
-                initial,
-                method="SLSQP",
-                jac=True,
-                bounds=bounds,
-                constraints=constraints,
-                options={"ftol": 1e-10, "maxiter": 200},
-            )
-
-            if not result.success or not np.all(np.isfinite(result.x)):
-                continue
-
-            coefficients = result.x
-
-            # Reject constraint violations larger than numerical tolerance
-            if (
-                np.any(coefficients < -1e-8)
-                or np.any(coefficients > 1.0 + 1e-8)
-                or np.any(np.diff(coefficients) < -1e-8)
-            ):
-                continue
-
-            # Remove only residual numerical violations in fitted coefficients
-            coefficients = np.maximum.accumulate(np.clip(coefficients, 0.0, 1.0))
-
-            # Clamped endpoint values equal the first and last coefficients
-            interval_mass = coefficients[-1] - coefficients[0]
-            if interval_mass <= 1e-10:
-                continue
-
-            density = derivative_design @ coefficients
-
-            # The model derivative is nonnegative; clip numerical roundoff
-            density = np.maximum(density, 0.0)
-            normalization = trapezoid(density, x)
-
-            if not np.isfinite(normalization) or normalization <= 0:
-                continue
-
-            probability_functions[i] = density / normalization
-            interval_probability[i] = interval_mass
-            fit_success[i] = True
+                # Loky isolates SLSQP calls in separate processes. Limit inner
+                # numerical threads both at worker startup and during fitting.
+                with parallel_backend("loky", inner_max_num_threads=1):
+                    with Parallel(
+                        n_jobs=n_jobs,
+                        return_as="generator",
+                        batch_size=1,
+                        pre_dispatch=n_jobs,
+                        max_nbytes="1M",
+                        mmap_mode="r",
+                    ) as parallel:
+                        results = parallel(
+                            delayed(_fit_cumulative_block)(
+                                cumulative_matrix[:, start : start + block_size],
+                                x,
+                                design,
+                                derivative_design,
+                            )
+                            for start in starts
+                        )
+                        for start, result in zip(starts, results):
+                            store_block(start, result)
+                            progress.update(result[1].size)
 
         self.probability_functions = probability_functions
         self.fit_success = fit_success
