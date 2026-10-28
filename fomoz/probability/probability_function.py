@@ -267,6 +267,7 @@ class ProbabilityFunction:
             Whether to display progress bars and timing information.
             This option does not suppress warnings.
         """
+        self._selected_features_by_threshold = None
         self.features_were_selected = False
         self.process_was_called = False
         self.cumulative_matrix = None
@@ -452,6 +453,8 @@ class ProbabilityFunction:
             Store selected features in the internal PointProbability objects.
             Set ``features_were_selected`` to True only after all thresholds
             have selected colors or received colors from a successful threshold.
+            Save a persistent mapping retrievable through `get_selected_features`,
+            including after process releases the internal objects.
 
         Notes
         -----
@@ -508,6 +511,7 @@ class ProbabilityFunction:
         )
         n_jobs = max(1, min(n_jobs, len(samples)))
 
+        self._selected_features_by_threshold = None
         self.features_were_selected = False
 
         event_lock = Lock()
@@ -651,6 +655,11 @@ class ProbabilityFunction:
                 stacklevel=2,
             )
 
+        # Commit only after every threshold has selected or received colors.
+        self._selected_features_by_threshold = {
+            s: [tuple(color) for color in self.dict_point[s].colors]
+            for s in self.variable_samples
+        }
         self.features_were_selected = True
 
         if retry_events:
@@ -662,6 +671,59 @@ class ProbabilityFunction:
                 "Feature assignment completed for all sampled thresholds.",
                 stacklevel=2,
             )
+
+    def get_selected_features(self):
+        """
+        Return retained colors at each sampled cumulative threshold.
+
+        Returns
+        -------
+        dict of float to list of tuple(str, str)
+            Threshold-to-colors mapping in variable_samples order. Each pair
+            defines the first band minus the second. Lists include features
+            assigned from the nearest successful threshold when that fallback
+            was needed; no donor or calibration-status metadata is returned.
+            These are the global features for each threshold, before
+            object-specific exclusions for missing measurements or errors.
+            The dictionary and its lists are copies and can be edited safely.
+
+        Raises
+        ------
+        RuntimeError
+            If no complete feature mapping has been saved. Run
+            select_features_grid successfully, or process through cumulative
+            estimation, before calling this method.
+
+        Notes
+        -----
+        The mapping is saved after successful feature selection and refreshed
+        after cumulative estimation, before internal PointProbability objects
+        are released. It remains available after process and update_fit,
+        including if a subsequent spline-fitting step fails. When processing
+        without feature selection, it records the colors actually used at
+        each threshold, normally all reference colors.
+
+        Starting a new feature-selection run clears the saved mapping; a
+        failed run does not expose a partially updated selection. This method
+        does not rerun calibration, matching or fitting.
+
+        Examples
+        --------
+        Inspect colors before or after processing::
+
+            for threshold, colors in pdf.get_selected_features().items():
+                print(threshold, colors)
+        """
+        if self._selected_features_by_threshold is None:
+            raise RuntimeError(
+                "No complete feature mapping is available. Run "
+                "select_features_grid() successfully or process() through "
+                "cumulative estimation first."
+            )
+        return {
+            threshold: [tuple(color) for color in colors]
+            for threshold, colors in self._selected_features_by_threshold.items()
+        }
 
     def process(
         self,
@@ -718,6 +780,8 @@ class ProbabilityFunction:
         Notes
         -----
         Internal PointProbability instances are released after cumulative estimation.
+        Their adopted color lists are retained separately and can be retrieved
+        with `get_selected_features`, even after processing or refitting.
         This method can only be started once. Subsequent calls to `update_fit`
         reuse the saved cumulative estimates without repeating matching or
         feature selection. The raw matrix requires approximately
@@ -754,6 +818,19 @@ class ProbabilityFunction:
             verbose=self.verbose,
         )
 
+        # Preserve the features actually used by cumulative estimation before
+        # releasing PointProbability objects, including the all-colors fallback.
+        self._selected_features_by_threshold = {
+            s: [
+                tuple(color)
+                for color in (
+                    self.dict_point[s].reference_dataset.colors
+                    if self.dict_point[s].colors is None
+                    else self.dict_point[s].colors
+                )
+            ]
+            for s in self.variable_samples
+        }
         for s in self.variable_samples:  # release the PointProbability objects
             self.dict_point[s] = None
 
@@ -841,6 +918,7 @@ class ProbabilityFunction:
         called repeatedly afterwards. It reuses the unchanged raw estimates
         in `cumulative_matrix`; no PointProbability instance is required.
         Each call starts a new fit, independently of previous fitted results.
+        The mapping returned by `get_selected_features` remains unchanged.
 
         Parameters
         ----------

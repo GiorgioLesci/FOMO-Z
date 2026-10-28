@@ -4,8 +4,7 @@ Reconstruct selected test-sample distributions by transferring reference weights
 The observed interval defines sample membership and feature selection. Photometric
 matching then transfers each supported test object's weight to compatible selected
 reference objects. Point measurements, or reference PDZ bin integrals for redshift,
-provide the reconstructed distribution. No individual membership-probability
-factor is applied to the transferred weights.
+provide the reconstructed distribution.
 """
 
 from copy import copy
@@ -59,6 +58,7 @@ class Reconstruction:
     ----------
     colors : list of tuple(str, str) or None
         Retained colors, defining :math:`X_{\rm sel}`; None before feature selection.
+        Use `get_selected_features` to retrieve a copy.
     discarded_colors : list of tuple(str, str)
         Colors removed by the last successful feature-selection call.
     reference_indices, test_indices : numpy.ndarray
@@ -451,7 +451,8 @@ class Reconstruction:
         -------
         list of tuple(str, str)
             Retained colors, also stored in ``colors``. Removed colors are stored in
-            ``discarded_colors``.
+            ``discarded_colors``. Use `get_selected_features` to retrieve a copy
+            of the retained list before or after processing.
 
         Raises
         ------
@@ -491,6 +492,36 @@ class Reconstruction:
         self.discarded_colors = list(self._feature_point.discarded_colors)
         return self.colors
 
+    def get_selected_features(self):
+        """
+        Return a copy of the currently retained color list.
+
+        Returns
+        -------
+        list of tuple(str, str)
+            Ordered band pairs defining colors as first minus second band.
+            These are the global retained features, before any object-specific
+            exclusions caused by missing measurements or uncertainties.
+            Editing the returned list does not change this object's colors.
+
+        Raises
+        ------
+        RuntimeError
+            If colors have not yet been defined.
+
+        Notes
+        -----
+        Call select_features_grid first. The list remains available after
+        process and get_distribution. If colors are subsequently changed,
+        process must be rerun before reconstructing a distribution.
+        This method does not perform feature selection or matching.
+        """
+        if self.colors is None:
+            raise RuntimeError(
+                "No features are available. Run select_features_grid() first."
+            )
+        return [tuple(color) for color in self.colors]
+
     @staticmethod
     def _subset(ds, indices):
         r"""
@@ -517,7 +548,8 @@ class Reconstruction:
         object's weight. Accumulate these contributions in reference_weights.
         The class docstring defines :math:`\Sigma_i` and :math:`w_{\rm rec}^j`.
         No per-object membership probabilities or reconstructed histograms are
-        computed by this method.
+        computed by this method. Retained colors remain available through
+        `get_selected_features`.
 
         Parameters
         ----------

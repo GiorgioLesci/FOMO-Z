@@ -503,7 +503,8 @@ class PointProbability:
         -------
         None
             Store selected colors in `self.colors` and removed colors in
-            `self.discarded_colors`.
+            `self.discarded_colors`. Use `get_selected_features` to retrieve
+            a copy of the retained list, also after processing.
 
         Notes
         -----
@@ -745,6 +746,36 @@ class PointProbability:
                 stacklevel=2,
             )
 
+    def get_selected_features(self):
+        """
+        Return a copy of the currently retained color list.
+
+        Returns
+        -------
+        list of tuple(str, str)
+            Ordered band pairs defining colors as first minus second band.
+            These are the global retained features, before any object-specific
+            exclusions caused by missing measurements or uncertainties.
+            Editing the returned list does not change this object's colors.
+
+        Raises
+        ------
+        RuntimeError
+            If colors have not yet been defined.
+
+        Notes
+        -----
+        If process was called without feature selection, this returns all
+        reference colors adopted by process. This does not imply that backward
+        elimination was performed.
+        This method does not perform feature selection or matching.
+        """
+        if self.colors is None:
+            raise RuntimeError(
+                "No features are available. Run select_features_grid() or process() first."
+            )
+        return [tuple(color) for color in self.colors]
+
     def process(
         self,
         min_colors_used=2,
@@ -754,6 +785,9 @@ class PointProbability:
     ):
         r"""
         Compute weighted probabilities for all test objects.
+
+        Retrieve the adopted colors with `get_selected_features` after this
+        call, including when feature selection was skipped.
 
         Use the colors stored in `self.colors`, or all reference colors
         if feature selection has not been performed. For each test
