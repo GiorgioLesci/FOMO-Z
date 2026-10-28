@@ -1038,7 +1038,7 @@ class ProbabilityFunction:
                 internal_knots,
                 np.repeat(x[-1], 4),
             )
-        )  # Questa ripetizione (4 nodi) realizza una spline cubica clamped
+        )  # This repetition (4 knots) realizes a clamped cubic spline
 
         basis = BSpline(
             knots,

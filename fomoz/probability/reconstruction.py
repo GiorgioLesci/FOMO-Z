@@ -1,4 +1,12 @@
-"""Transfer property distributions from a reference to a selected test sample."""
+r"""
+Reconstruct selected test-sample distributions by transferring reference weights.
+
+The observed interval defines sample membership and feature selection. Photometric
+matching then transfers each supported test object's weight to compatible selected
+reference objects. Point measurements, or reference PDZ bin integrals for redshift,
+provide the reconstructed distribution. No individual membership-probability
+factor is applied to the transferred weights.
+"""
 
 from copy import copy
 from concurrent.futures import ThreadPoolExecutor
@@ -15,253 +23,188 @@ from .point_probability import PointProbability
 
 class Reconstruction:
     r"""
-    Reconstruct properties of a test sample using photometric features.
+    Reconstruct population distributions using color-compatible reference objects.
 
     Parameters
     ----------
     reference_dataset, test_dataset : Dataset
-        Distinct reference and test datasets, BEFORE the interval selection.
-        Passing the same Dataset instance or sharing the same underlying
-        DataFrame raises a ValueError. Both samples must
-        contain positive-weight objects inside AND outside the interval.
-        Both samples must provide photometric magnitudes and their errors in
-        columns named ``<band>`` and ``<band>_error``, with the same candidate
-        colors. Errors from the test sample are used in photometric matching,
-        together with the reference errors.
-        Input ``weights`` have different roles: reference weights set the
-        relative contributions of analogues, while test weights set how much
-        each test object contributes to the reconstructed population.
-    selection_variable : str
-        Observed selection variable.
-        It is a numerical property defining the selection, available in both samples.
-        This should differ from the property reconstructed by
-        :meth:`~fomoz.probability.reconstruction.Reconstruction.get_distribution`,
-        which is required only in the reference sample.
+        Full reference and test samples, before applying the observed interval.
+        Both must contain positive-weight objects inside and outside that interval.
+        The same Dataset instance or underlying DataFrame cannot be used for both.
+        Provide compatible photometric bands, with magnitudes and uncertainties
+        in ``<band>`` and ``<band>_error`` columns for the retained colors.
 
-        This selection always uses observed scalar values, never PDZs.
-        Ensure the requested property has the same physical meaning in both
-        samples. In the case of redshift reconstruction, select on a
-        photometric redshift column and reconstruct the spectroscopic redshift
-        distribution from the reference.
+        Reference ``weights`` are the prior weights :math:`w_{\rm prior}^j` of
+        possible analogues. Test ``weights`` are the population contributions
+        :math:`w_{\rm test}^i`. Dataset supplies unit weights by default.
+    selection_variable : str
+        Numerical observed property :math:`s`, available in both samples with the
+        same physical meaning. Membership always uses its point values, even if
+        Dataset contains PDZs. Missing or nonfinite selection values must be
+        removed before constructing this object.
+
+        This should differ from the property :math:`x` requested later through
+        `get_distribution`; that distinction is a scientific recommendation,
+        not an enforced name check. For example, select a photometric-redshift
+        interval and reconstruct spectroscopic redshift from the reference sample.
     selection_min, selection_max : float
-        Selection is ``selection_min < value <= selection_max`` throughout,
-        including feature calibration. These limits do NOT cut the property
-        passed to :meth:`~fomoz.probability.reconstruction.Reconstruction.get_distribution`.
+        Finite bounds, with selection_min < selection_max. The observed rule is
+        ``selection_min < s <= selection_max`` in both samples and during feature
+        calibration. It does not restrict the reconstructed property or its bins.
     verbose : bool, default=True
-        Print selection counts, the reconstruction method, and matching
-        progress. Validation errors and warnings are not suppressed.
+        Print selection counts, matching progress and distribution information.
+        Warnings and validation errors remain active when False.
 
     Attributes
     ----------
     colors : list of tuple(str, str) or None
-        Colors retained by
-        :meth:`~fomoz.probability.reconstruction.Reconstruction.select_features_grid`;
-        ``None`` before calibration.
+        Retained colors, defining :math:`X_{\rm sel}`; None before feature selection.
     discarded_colors : list of tuple(str, str)
-        Candidate colors removed by feature selection.
+        Colors removed by the last successful feature-selection call.
     reference_indices, test_indices : numpy.ndarray
-        Positional indices of objects inside the selection in each original
-        :class:`~fomoz.data.dataset.Dataset` DataFrame. These are row positions,
-        not DataFrame index labels.
+        Selected row positions in the original Dataset DataFrames, not index labels.
     reference_weights : numpy.ndarray or None
-        Transferred test weights aligned to the FULL reference DataFrame.
-        Entries outside the selection are zero. Available after successful
-        :meth:`~fomoz.probability.reconstruction.Reconstruction.process`;
-        their sum equals the weight of supported selected test objects.
+        Accumulated weights :math:`w_{\rm rec}^j`, available after successful
+        `process`. Aligned with the full reference DataFrame; entries outside
+        the selected subset are zero. Their sum equals supported test weight.
     diagnostics : dict or None
-        Matching diagnostics set by
-        :meth:`~fomoz.probability.reconstruction.Reconstruction.process`.
+        Support, match counts, effective match counts and test-weight coverage;
+        see `process` for all entries and their indexing.
 
     Notes
     -----
-    In each Dataset, its non-None ``z_gal_string`` is resolved to
-    ``"redshift"`` before looking up a column, even if the original
-    column is retained. The standardized column takes precedence.
-    Other names are read literally. With ``z_gal_string=None``, no
-    original-name alias is inferred.
-
-    The constructor validates the full parent samples, records the interval
-    masks, and prepares an internal
-    :class:`~fomoz.probability.point_probability.PointProbability` for feature
-    selection. It does not yet perform feature calibration or matching.
-    The reconstruction then proceeds as follows:
-
-    1. Call :meth:`~fomoz.probability.reconstruction.Reconstruction.select_features_grid`.
-       The internal ``PointProbability`` uses the FULL reference sample to
-       identify colors that distinguish objects inside the selection interval
-       from those outside it. No external test sample is needed for this step.
-    2. Call :meth:`~fomoz.probability.reconstruction.Reconstruction.process`.
-       Both parent samples are restricted internally to the same interval in
-       ``selection_variable``. A SECOND internal ``PointProbability`` receives
-       these selected reference and test samples and the previously selected
-       colors. Its matching routines use the photometric errors of the test
-       objects as well as those of their candidate reference analogues.
-    3. For each supported test object, normalize the positive reference weights
-       over its compatible analogues. Assign these analogues a total
-       contribution equal to that test object's weight, then sum contributions
-       from all supported test objects. No membership probability is used as
-       an additional weight.
-    4. Call :meth:`~fomoz.probability.reconstruction.Reconstruction.get_distribution`
-       with a reference-property name and histogram edges. It transfers point
-       estimates, or reference PDZ bin integrals when reconstructing redshift,
-       using the accumulated contributions. The property may be
-       unavailable in the test sample and need not equal ``selection_variable``.
-       Its values are NOT restricted to the interval used for sample selection.
-
-    We adopt the notation of
-    :class:`~fomoz.probability.point_probability.PointProbability`.
-    Let :math:`\Phi` denote the full reference sample and :math:`\mathcal{R}`
-    the interval selection. Matching uses its selected subset
-    :math:`\Phi_{\mathcal{R}}`. Feature selection on the full reference retains
-    :math:`X_{\mathrm{sel}}`; for test object :math:`i`, :math:`\chi_i`
-    contains the retained colors with usable measurements and errors.
-    Compatible reference objects form the set
+    The observed sample-selection rule is
 
     .. math::
 
-        \Sigma_i = \left\{
-            j \in \Phi_{\mathcal{R}} :
-            |c_{i,k} - c_{j,k}| \leq \epsilon_{ij,k}
-            \quad \forall k \in \chi_i
-        \right\},
+        \mathcal R_{\rm obs}: s_{\min}<s\leq s_{\max}.
+
+    Call `select_features_grid` on the full reference sample to identify colors
+    that distinguish objects inside this interval from those outside it. Then
+    call `process`, which matches only the selected test and reference subsets,
+    :math:`\Psi_{\mathcal R_{\rm obs}}` and
+    :math:`\Phi_{\mathcal R_{\rm obs}}`. Finally call `get_distribution` for any
+    supported numerical reference property and bin edges. The same matches and
+    transferred weights are reused across properties and bin choices.
+
+    For test object :math:`i`, let :math:`\chi_i\subseteq X_{\rm sel}` contain
+    retained colors with finite test measurements and uncertainties. Its
+    compatible reference set is
+
+    .. math::
+
+        \Sigma_i=\left\{j\in\Phi_{\mathcal R_{\rm obs}}:
+        |c_{i,k}-c_{j,k}|\leq\epsilon_{ij,k}\quad\forall k\in\chi_i\right\},
         \qquad
-        \epsilon_{ij,k} =
-        \sqrt{\sigma_{i,k}^{2} + \sigma_{j,k}^{2}}.
+        \epsilon_{ij,k}=\sqrt{\sigma_{i,k}^2+\sigma_{j,k}^2}.
 
-    The indices :math:`i` and :math:`j` denote test and reference objects,
-    respectively. At least ``min_colors_used`` usable test colors are required.
-    For :math:`c_k=m_a-m_b`, the color uncertainty is
+    Reference measurements and errors must be usable in every compared color.
+    For :math:`c_k=m_a-m_b`, the propagated error is
+    :math:`\sigma_k=\sqrt{\sigma_{m_a}^2+\sigma_{m_b}^2}`. The propagation assumes
+    uncorrelated band errors and independent reference/test measurements.
+    Covariances between colors sharing a band are not modeled. Distinct Dataset
+    instances do not guarantee statistically independent catalogues: overlapping
+    objects or copied catalogues are not detected.
 
-    .. math::
-
-        \sigma_k = \sqrt{\sigma_{m_a}^{2} + \sigma_{m_b}^{2}}.
-
-    Errors are assumed uncorrelated between bands and between samples.
-    Covariance between colors sharing a band is not modeled. Reference and
-    test must be separate samples. The constructor rejects a shared Dataset
-    or DataFrame instance but cannot identify duplicated catalogues passed as
-    independent copies or overlapping objects in distinct catalogues.
-
-    Let :math:`x` be the reconstructed property,
-    and :math:`B_b=[x_b,x_{b+1})` a histogram interval. The empirical probability
-    assigned to test object :math:`i` has the same form as in PointProbability:
+    A positive-weight selected test object is supported if it has at least
+    ``min_colors_used`` usable colors and at least one compatible reference
+    object with positive prior weight. It distributes its entire weight among
+    those analogues:
 
     .. math::
 
-        p_i(B_b) =
-        \frac{\sum_{j\in\Sigma_i} w_{\mathrm{sel}}^{j}(B_b)}
-             {\sum_{j\in\Sigma_i} w_{\mathrm{prior}}^{j}},
+        w_{\rm rec}^j=
+        \sum_{\substack{i\in\Psi_{\mathcal R_{\rm obs}}^{\rm supported}\\
+                        j\in\Sigma_i}}
+        w_{\rm test}^i\,
+        \frac{w_{\rm prior}^j}{\sum_{k\in\Sigma_i}w_{\rm prior}^k}.
+
+    Zero-weight references contribute nothing. Consequently,
+    :math:`\sum_j w_{\rm rec}^j=\sum_{i\in\Psi_{\mathcal R_{\rm obs}}^{\rm supported}}
+    w_{\rm test}^i`, independently of the number of analogues per test object.
+    With unit weights, each match receives :math:`1/|\Sigma_i|` from that test
+    object. The accumulated weights already include the reference prior and test
+    weights; do not multiply them by either again. No estimated membership
+    probability is used as an extra factor.
+
+    For point estimates, `get_distribution` computes
+
+    .. math::
+
+        N_b=\sum_{j\in\Phi_{\mathcal R_{\rm obs}}}
+            w_{\rm rec}^j\,\delta^j(x\in B_b),
         \qquad
-        w_{\mathrm{sel}}^{j}(B_b) =
-        w_{\mathrm{prior}}^{j}\,q_j(B_b).
+        n_b=\frac{N_b}{(e_{b+1}-e_b)\sum_c N_c}.
 
-    With point estimates, :math:`q_j(B_b)=\mathbf{1}(x_j\in B_b)`.
-    For a redshift reconstruction using reference PDZs instead,
+    Here :math:`B_b=[e_b,e_{b+1})`, except that the last bin also includes its
+    right edge. The indicator :math:`\delta^j` is one when the reference point
+    value lies in the bin and zero otherwise. ``normalize=False`` returns
+    :math:`N_b`; the default returns the density :math:`n_b`, normalized over the
+    supplied bin range. A zero total count cannot be normalized.
 
-    .. math::
-
-        q_j(B_b)=\int_{z_b}^{z_{b+1}}P_j(z)\,\mathrm{d}z
-                =F_j(z_{b+1})-F_j(z_b),
-
-    where :math:`F_j` is the normalized cumulative PDZ stored by Dataset.
-    Thus PDZs replace binary histogram-bin membership, not the reference prior
-    weights. They are not truncated to the sample-selection interval.
-
-    Here :math:`w_{\mathrm{prior}}^{j}` is the reference ``weights`` entry,
-    as in PointProbability. The event :math:`x\in B_b` describes a histogram
-    bin; it is NOT the initial sample selection :math:`\mathcal{R}`. The same
-    selected colors and matching sets are used for all histogram intervals.
-    These probabilities are implicit: no new PointProbability calibration is
-    performed for each interval. For point estimates the final histogram bin
-    includes its right edge, following NumPy's convention.
-
-    PDZ integration uses linear interpolation of the reference cumulative
-    distributions at the requested bin edges, consistently with
-    SelectionDefinition. Cumulative values below and above the supplied
-    PDZ_x grid are set to zero and one, respectively.
-
-    Denote the supported, positive-weight selected test sample by
-    :math:`\mathcal{T}`. Its input weights are written
-    :math:`w_{\mathrm{prior}}^{i}`: these are the test Dataset's ``weights``
-    entries, not estimated membership probabilities. For bins covering all
-    transferred property values, the reconstructed density is
+    For redshift with reference PDZs, replace the indicator by the integrated
+    normalized reference density :math:`p^j(z)`:
 
     .. math::
 
-        \widehat p_b =
-        \frac{\sum_{i\in\mathcal{T}}
-                    w_{\mathrm{prior}}^{i}\,p_i(B_b)}
-             {\Delta x_b\sum_{i\in\mathcal{T}} w_{\mathrm{prior}}^{i}},
-        \qquad \Delta x_b=x_{b+1}-x_b.
+        N_b=\sum_{j\in\Phi_{\mathcal R_{\rm obs}}}
+            w_{\rm rec}^j\int_{e_b}^{e_{b+1}}p^j(z)\,\mathrm dz.
 
-    The implementation computes the equivalent accumulated reference weights
-    directly, without storing the probabilities for every object and bin:
+    The implementation linearly interpolates Dataset's reference cumulative PDZs
+    at bin edges and takes differences. Cumulative values outside ``PDZ_x`` are
+    zero below the grid and one above it. PDZs affect only the final redshift
+    histogram; they are not truncated to the observed selection interval and do
+    not alter feature selection, matching or ``reference_weights``. Other
+    properties always use point estimates. Test PDZs are ignored with a warning.
 
-    .. math::
+    By default, ``unmatched='drop'`` excludes unsupported positive-weight test
+    objects with a warning. The reconstruction then describes the supported
+    subset; ``diagnostics['weight_coverage']`` reports its fraction of selected
+    test weight. Use ``unmatched='raise'`` to require support for every
+    positive-weight selected test object. Zero supported weight always raises.
+    Property values or PDZ mass outside the supplied histogram range are also
+    excluded, with a warning; normalized output is conditional on that range.
 
-        w_{\mathrm{rec}}^{j} =
-        \sum_{i\in\mathcal{T}:\,j\in\Sigma_i}
-        w_{\mathrm{prior}}^{i}
-        \frac{w_{\mathrm{prior}}^{j}}
-             {\sum_{\ell\in\Sigma_i}w_{\mathrm{prior}}^{\ell}}.
+    For either Dataset, its declared ``z_gal_string`` is resolved to the
+    standardized ``'redshift'`` column before lookup. Other names are literal.
+    With no declared redshift column, ``get_distribution('redshift', ...,
+    use_pdzs=True)`` can still reconstruct supplied reference PDZs without point
+    redshifts, provided the observed selection property is available in both
+    samples. Original input PDZs are preserved; internal views disable them for
+    observed selection and matching. Keep input datasets unchanged throughout
+    this object's lifetime because indices and weights are cached.
 
-    These weights are stored in ``reference_weights``. They already contain
-    the locally normalized reference weights and the test weights: neither
-    an additional prior-weight factor nor :math:`p_i(\mathcal{R})` is applied.
-    Unnormalized bin counts sum
-    :math:`w_{\mathrm{rec}}^{j}q_j(B_b)` over the reference.
-    Normalized output divides by the total transferred weight INSIDE the
-    supplied histogram range and by each bin width. If that range excludes
-    transferred values, the output is conditional on the retained range.
-
-    By default (``unmatched='drop'``), unsupported positive-weight selected
-    test objects are excluded with a warning. Then :math:`\mathcal{T}` and the
-    distribution describe only the supported subset. ``unmatched='raise'``
-    instead requires full support; zero supported test weight always raises.
-
-    Reference/test weights must be finite and nonnegative; zero weights do not
-    contribute. Sample selection and feature calibration ALWAYS use the
-    point values of selection_variable. Reference PDZs, when used, replace
-    only the redshift values in the final distribution. They do not change
-    feature selection, matching, or reference_weights. The original reference
-    CDZs remain stored in the input Dataset even though the internal matching
-    views disable them. Test PDZs are unused and trigger a constructor warning.
-    Photometric errors remain active in matching in all modes.
-
-    Feature selection optimizes interval membership, not accuracy of the full
-    reconstructed distribution. Representativity and transfer bias need external
-    validation. No uncertainty on the reconstructed histogram is estimated.
+    This class checks finite nonnegative input weights and ignores zero weights;
+    Dataset may impose stricter validation when it is constructed. Feature
+    selection preserves binary-selection metrics within its tolerance; it does
+    not directly optimize distribution accuracy. The reference sample must
+    adequately represent the target population at compatible colors. No
+    histogram uncertainties or bootstrap realizations are computed.
 
     Examples
     --------
-    Select a sample using a property measured in both catalogues, then
-    reconstruct another property available only in the reference::
+    Select photometric-redshift tomography and reconstruct reference spectroscopic
+    redshifts. Here ``photoz`` is a numerical column in both datasets, while the
+    reference Dataset designates its spectroscopic-redshift column through
+    ``z_gal_string``::
 
         reconstruction = Reconstruction(
             reference_dataset=reference,
             test_dataset=test,
-            selection_variable="selection_property",
-            selection_min=lower,
-            selection_max=upper,
+            selection_variable="photoz",
+            selection_min=0.4,
+            selection_max=0.6,
         )
         reconstruction.select_features_grid()
-        reconstruction.process()
-        density = reconstruction.get_distribution("reference_property", edges)
-
-    For example, select an apparent-magnitude interval and reconstruct stellar
-    mass. For redshift calibration, select a photometric-redshift interval and
-    reconstruct spectroscopic redshift. All property names are user-defined.
-    The selected and reconstructed properties must be numerical; no redshift
-    condition is implicitly imposed. For reference PDZs supplied through
-    Dataset(PDZs=..., PDZ_x=...), reconstruct redshift explicitly with::
-
+        reconstruction.process(cpu_number=4, unmatched="raise")
         density = reconstruction.get_distribution(
-            "redshift", reference.PDZ_x, use_pdzs=True
+            "redshift", edges, use_pdzs=False
         )
 
-    This also works when reference.z_gal_string is None and no point redshifts
-    are available, provided selection_variable is available in both samples.
-    Use use_pdzs=False to request a point-estimate histogram instead.
+    If the reference Dataset contains PDZs, use ``use_pdzs=True`` to transfer their
+    bin integrals, or None (the default) to select that mode automatically for
+    redshift. A different numerical property can reuse the same transferred
+    weights, for example ``get_distribution('stellar_mass', mass_edges)``.
     """
 
     def __init__(
@@ -273,14 +216,17 @@ class Reconstruction:
         selection_max,
         verbose=True,
     ):
-        """
-        Validate parent samples and prepare feature calibration.
+        r"""
+        Validate full parent samples and prepare observed-interval feature selection.
 
-        Parameters and the complete reconstruction procedure are documented
-        in :class:`Reconstruction`. The first internal ``PointProbability``
-        uses only the full reference for feature selection. Matching is deferred
-        to :meth:`process`, which supplies both selected datasets and their
-        photometric errors to a separate internal ``PointProbability``.
+        See the class docstring for parameters and conventions. Validate selection
+        values and weights in both samples, store selected row positions and weights,
+        and construct a reference-only PointProbability for feature calibration.
+        No feature calibration, test matching or weight transfer is performed here.
+
+        Both samples must have positive weight inside and outside the observed
+        interval. Test PDZs are ignored and produce a warning. The inputs are retained
+        by reference and must not be modified after construction.
         """
         for name, ds in [("reference", reference_dataset), ("test", test_dataset)]:
             if not isinstance(ds, Dataset):
@@ -365,6 +311,14 @@ class Reconstruction:
             )
 
     def _selection_reference(self, ds):
+        r"""
+        Build an internal reference view for point-based interval membership.
+
+        Shallow-copy the Dataset and its DataFrame, add the resolved observed
+        selection column under the private alias used by additional_rules, and
+        clear the redshift designation and PDZ arrays on the view. Original PDZs
+        remain attached to the input Dataset for final redshift reconstruction.
+        """
         result = copy(ds)
         result.dataset = ds.dataset.copy(deep=False)
         result.dataset[self._selection_key] = ds.dataset[self._ref_key].to_numpy()
@@ -375,7 +329,13 @@ class Reconstruction:
 
     @staticmethod
     def _resolve(ds, variable):
-        """Resolve the declared redshift alias before looking up a column."""
+        r"""
+        Resolve a property name to the stored Dataset column.
+
+        A name matching the Dataset's non-None z_gal_string maps to ``'redshift'``,
+        which takes precedence over any retained original column. All other names
+        are literal. Raise KeyError if the resolved column is absent.
+        """
         requested = variable
         if ds.z_gal_string is not None and variable == ds.z_gal_string:
             variable = "redshift"
@@ -388,6 +348,13 @@ class Reconstruction:
 
     @staticmethod
     def _values(ds, key):
+        r"""
+        Return numerical property values and a missing-value mask.
+
+        Convert the resolved column to a float array. Flag nonfinite values and
+        entries matching Dataset.missing_data; return ``(values, invalid)`` aligned
+        with the Dataset rows. Non-numerical columns cannot be reconstructed.
+        """
         column = ds.dataset[key]
         values = column.to_numpy(dtype=float, na_value=np.nan)
         sentinels = ds.missing_data
@@ -400,6 +367,12 @@ class Reconstruction:
 
     @staticmethod
     def _weights(ds):
+        r"""
+        Return finite nonnegative Dataset weights, checking their total.
+
+        Raise ValueError for negative or nonfinite entries, or a nonfinite total.
+        Zero weights are accepted here and contribute no transferred weight.
+        """
         weights = ds.dataset["weights"].to_numpy(dtype=float, na_value=np.nan)
         if np.any(~np.isfinite(weights) | (weights < 0)):
             raise ValueError("Dataset weights must be finite and nonnegative.")
@@ -408,7 +381,15 @@ class Reconstruction:
         return weights
 
     def _selection_mask(self, ds, key, name):
-        """Select objects within the observed property interval, using the resolved column key."""
+        r"""
+        Validate and select ``selection_min < s <= selection_max``.
+
+        Use the resolved numerical column key. Reject any missing or nonfinite
+        selection value, and require positive-weight objects both inside and
+        outside the interval. These checks apply separately to reference and test
+        parent samples. Return a Boolean mask aligned with all input rows; selection
+        does not itself remove zero-weight objects.
+        """
         values, invalid = self._values(ds, key)
         if invalid.any():
             raise ValueError(
@@ -436,66 +417,65 @@ class Reconstruction:
         step=0.01,
         retry_calibration=True,
     ):
-        """
-        Select informative colors through `GridClassification` methods and backward elimination.
+        r"""
+        Select colors for observed-interval membership on the full reference sample.
 
-        Find the most informative colors that best allow to identify
-        reference objects within the range ``selection_min < selection_variable <= selection_max``.
-        These colors are subsequently used to match reference and test objects.
-
-        Reference weights enter calibration metrics. Test weights do not.
-
-        For details on the feature selection algorithm, see the documentation of
-        :meth:`~fomoz.probability.point_probability.PointProbability.select_features_grid`.
+        Delegate grid calibration and backward elimination to PointProbability.
+        Reference prior weights enter the calibration metrics; test data and test
+        weights do not. The target is always
+        ``selection_min < selection_variable <= selection_max``, evaluated from
+        observed point values. Reference PDZs are disabled for this step.
 
         Parameters
         ----------
         tolerance : float, default=0.1
-            Maximum fractional change allowed in purity and completeness
-            relative to their initial grid calibration values during backward
-            elimination. Forwarded unchanged to :class:`~fomoz.probability.point_probability.PointProbability`.
+            Maximum absolute relative change in purity and completeness from the
+            fixed measured initial calibration values during backward elimination.
         purity_min : float, default=0.9
-            Requested minimum purity for the initial
-            :class:`~fomoz.binary_classification.grid_classification.GridClassification`.
+            Requested minimum global purity for the initial grid calibration.
+            The measured initial purity may be higher. Greedy elimination compares
+            with that measured baseline and can yield a final purity below the
+            requested minimum within the allowed tolerance.
         grid_precision : float, default=0.15
-            Resolution of the color-color grids used by
-            :class:`~fomoz.binary_classification.grid_classification.GridClassification`.
+            Color-grid resolution passed to GridClassification.
         step : float, default=0.01
-            Threshold reduction step used during grid calibration, forwarded
-            through :class:`~fomoz.probability.point_probability.PointProbability`.
-            It is not a histogram bin width.
+            Reduction step for the bin-probability threshold scanned by grid
+            calibration. This is not a histogram bin width or a purity decrement.
         retry_calibration : bool, default=True
-            Allow the retry procedure of
-            :class:`~fomoz.probability.point_probability.PointProbability` for recognized calibration
-            failures where the grid search ends without crossing the requested
-            purity. That procedure may increase ``purity_min`` and reports the
-            change through a warning.
+            Retry the recognized ``purity_not_crossed`` failure using the reported
+            calibration purity plus 0.001, only when the proposed threshold is
+            finite, larger than the current threshold and below one. A successful
+            adjusted calibration is reported by PointProbability through a warning.
 
         Returns
         -------
         list of tuple(str, str)
-            Retained colors, also stored in ``self.colors``. Removed colors are
-            stored in ``self.discarded_colors``.
+            Retained colors, also stored in ``colors``. Removed colors are stored in
+            ``discarded_colors``.
 
         Raises
         ------
         ValueError, TypeError
-            Propagated from :class:`~fomoz.probability.point_probability.PointProbability`
-            or :class:`~fomoz.binary_classification.grid_classification.GridClassification`
-            for invalid settings or unsuccessful calibration.
+            Propagated for invalid inputs or unsuccessful grid calibration. A
+            ``no_accepted_selection`` failure is not recovered by borrowing features.
 
         Notes
         -----
-        For redshift reconstruction, feature selection targets membership in the
-        observed selection interval, for example a photometric-redshift bin.
-        It does not target membership in the bins of the reconstructed distribution.
+        The selected set is calibrated once for the observed interval, not once per
+        bin of the property reconstructed later. Unlike ProbabilityFunction, this
+        class neither switches to a complementary criterion nor copies colors from
+        another threshold. Bootstrap estimation is disabled in the delegated grid
+        calibration; its default alpha=1 disables significance filtering.
 
-        Reference PDZs are therefore not used during feature selection. They are
-        used later by ``get_distribution``, when requested or selected automatically,
-        to distribute each reference object's transferred weight across redshift
-        bins. Reference prior weights remain active during feature selection.
+        Each elimination trial removes all active grids involving one candidate
+        color. Remaining fixed masks are combined through OR. Only the candidate
+        with the highest remaining completeness is tested against both fixed
+        baseline tolerances. Removal stops if that candidate fails or two colors
+        remain. See PointProbability.select_features_grid for the implementation.
 
-        Run before :meth:`~fomoz.probability.reconstruction.Reconstruction.process`.
+        This call clears any existing transferred weights and diagnostics before
+        calibration. Call process afterwards, including after repeating feature
+        selection on an already processed object.
         """
         self.reference_weights = None
         self.diagnostics = None
@@ -513,6 +493,13 @@ class Reconstruction:
 
     @staticmethod
     def _subset(ds, indices):
+        r"""
+        Copy selected Dataset rows into a view used for matching.
+
+        Select positional indices, copy the DataFrame and reset its row labels.
+        Disable CDZs and PDZ_x only on the copied Dataset; original PDZ arrays remain
+        available through reference_dataset for the final distribution estimate.
+        """
         result = copy(ds)
         result.dataset = ds.dataset.iloc[indices].copy().reset_index(drop=True)
         result.CDZs = None
@@ -522,48 +509,94 @@ class Reconstruction:
     def process(
         self, min_colors_used=2, cpu_number=None, block_size=256, unmatched="drop"
     ):
-        """
-        Match selected test objects and accumulate reference contributions.
+        r"""
+        Match selected samples and transfer supported test weight to reference objects.
+
+        For each supported selected test object, normalize the positive reference
+        prior weights over its color-compatible set and multiply by that test
+        object's weight. Accumulate these contributions in reference_weights.
+        The class docstring defines :math:`\Sigma_i` and :math:`w_{\rm rec}^j`.
+        No per-object membership probabilities or reconstructed histograms are
+        computed by this method.
 
         Parameters
         ----------
         min_colors_used : int, default=2
-            Minimum number of selected colors with finite values and finite
-            errors for a test object. Objects below the minimum
-            are unsupported. Must not exceed the number of retained colors.
+            Minimum number of retained colors with finite test values and errors.
+            Must be positive and no larger than the retained color count. A test
+            object with fewer usable colors is unsupported.
         cpu_number : int or None, default=None
-            Number of worker threads. ``None`` uses ``max(cpu_count()-2, 1)``; explicit
-            positive integers are capped at that same limit, as in
-            :class:`~fomoz.probability.point_probability.PointProbability`.
-            Set to 1 for serial execution.
+            Maximum worker threads over blocks of selected test objects. None uses
+            ``max(cpu_count() - 2, 1)``; explicit positive integers are capped at that
+            limit. Use 1 for sequential processing. No process-based spline fitting
+            is involved in Reconstruction.
         block_size : int, default=256
-            Selected test objects per task.
+            Positive number of selected test objects per task. Each task accumulates
+            a vector with one entry per selected reference object. Bounded batches
+            limit the number of these vectors retained simultaneously.
         unmatched : {'raise', 'drop'}, default='drop'
-            ``'raise'`` fails if any positive-weight selected test object has no
-            positive-weight analogue or insufficient usable colors. ``'drop'``
-            explicitly reconstructs only the supported subset, with a warning
-            reporting both object count and weight coverage.
+            Policy for positive-weight selected test objects with insufficient
+            usable colors or no positive-weight compatible reference. 'drop' warns
+            and reconstructs only the supported subset. 'raise' rejects any such
+            object. Zero supported test weight raises under either policy.
+
+        Returns
+        -------
+        None
+            On success, store transferred weights aligned with the full reference
+            DataFrame in reference_weights. Outside-selection entries are zero.
+            Populate diagnostics with:
+
+            test_indices : numpy.ndarray of int
+                Selected row positions in the original test DataFrame.
+            supported : numpy.ndarray of bool
+                Supported positive-weight test objects.
+            n_matches : numpy.ndarray of int
+                Number of positive-weight compatible reference objects per test.
+            n_effective : numpy.ndarray of float
+                Effective match count, :math:`1/\sum_{j\in\Sigma_i}\alpha_{ij}^2`,
+                where :math:`\alpha_{ij}=w_{\rm prior}^j/
+                \sum_{k\in\Sigma_i}w_{\rm prior}^k`.
+            n_colors_used : numpy.ndarray of int
+                Number of finite retained test colors and errors. Zero-weight test
+                objects are skipped and retain zero in this array.
+            selected_test_weight, supported_test_weight : float
+                Total input weight of the selected test subset and its supported part.
+            weight_coverage : float
+                supported_test_weight / selected_test_weight.
+
+            All per-object diagnostic arrays follow test_indices. Unsupported
+            objects have zero matches and effective counts; zero-weight objects are
+            not flagged as supported. Diagnostics are also available when a run
+            reaches the unsupported-object policy check and raises there.
 
         Raises
         ------
         RuntimeError
-            If feature selection has not run.
+            If colors have not been selected, or transferred weights fail the
+            supported-test-weight conservation check.
+        ValueError
+            For invalid settings, finite negative magnitude errors in retained
+            bands of either selected sample, or a support failure under the chosen
+            policy. Lower-level input errors may also propagate.
 
         Notes
         -----
-        In both datasets, only objects inside the `selection_variable` interval
-        are considered.
+        Only objects satisfying the observed interval participate in matching.
+        Nonfinite color values or errors are made unavailable; zero errors are
+        allowed. Reference and test errors are combined in quadrature, since the
+        samples are distinct. At every usable test color, a reference analogue
+        must have usable photometry and satisfy the matching tolerance.
 
-        Magnitude errors use the ``'<band>_error'`` convention of
-        :class:`~fomoz.probability.point_probability.PointProbability`.
-        Nonfinite color values or errors are treated as unavailable. Zero errors
-        are allowed. Test and reference photometric errors are always combined
-        in quadrature when matching the two separate samples.
+        Matching reuses PointProbability routines, including the compiled matching
+        kernel, but does not call PointProbability.process. Reference/test PDZs are
+        disabled in these internal matching views. Neither a redshift-bin probability
+        nor a further reference-weight factor is applied to the transferred weights.
 
-        Changing ``self.colors`` requires re-running
-        :meth:`~fomoz.probability.reconstruction.Reconstruction.process`.
-        Input :class:`~fomoz.data.dataset.Dataset` objects
-        must remain unchanged throughout the lifetime of this reconstruction.
+        After parameter validation, previous transferred weights and diagnostics are
+        cleared. A support failure does not commit new reference_weights. The method
+        can be rerun; changing colors requires a new run before get_distribution.
+        Keep the input Dataset contents and row ordering unchanged.
         """
         # Initial checks
         if self.colors is None:
@@ -737,101 +770,88 @@ class Reconstruction:
 
     def get_distribution(self, variable, bin_edges, normalize=True, use_pdzs=None):
         r"""
-        Reconstruct a bulk property from weighted point estimates.
+        Bin transferred reference weights into a selected-test-sample distribution.
 
-        The :meth:`process` method has already matched each selected test object
-        to compatible selected reference objects and accumulated the transferred
-        reference weights:
+        Use reference_weights from a successful process call. For point estimates,
+
         .. math::
 
-            w_{\mathrm{rec}}^j =
-            \sum_{i:\,j\in\mathcal{M}_i}
-            w_{\mathrm{prior}}^i
-            \frac{w_{\mathrm{prior}}^j}
-            {\sum_{k\in\mathcal{M}_i} w_{\mathrm{prior}}^k}.
+            N_b=\sum_{j\in\Phi_{\mathcal R_{\rm obs}}}
+                w_{\rm rec}^j\,\delta^j(x\in B_b).
 
-        Here, :math:`\mathcal{M}_i` is the set of positive-weight reference
-        matches for test object :math:`i`. The weights
-        :math:`w_{\mathrm{prior}}^i` and :math:`w_{\mathrm{prior}}^j` are the
-        input test and reference prior weights, respectively. Only supported test
-        objects contribute. Reference PDZs do not enter these transferred weights.
+        For redshift with normalized reference PDZs :math:`p^j(z)`, instead compute
 
-        This method distributes the transferred weights across the requested
-        bins of ``variable``:
         .. math::
 
-            N_b = \sum_j w_{\mathrm{rec}}^j q_j(B_b).
+            N_b=\sum_{j\in\Phi_{\mathcal R_{\rm obs}}}
+                w_{\rm rec}^j\int_{e_b}^{e_{b+1}}p^j(z)\,\mathrm dz.
 
-        For point values, :math:`q_j(B_b)` equals one if the reference value
-        lies in the bin :math:`B_b`, and zero otherwise. When reconstructing redshift
-        using reference PDZs, it is instead the probability mass in that bin:
-        .. math::
-
-            q_j(B_b) = \int_{B_b} P_j(z)\,\mathrm{d}z.
-
-        Thus, PDZs replace binary bin membership with fractional contributions;
-        they do not introduce another factor into the matching normalization.
-        With ``normalize=False``, return the weighted bin counts :math:`N_b`.
-        With ``normalize=True``, return a density normalized over the supplied
-        bin range:
-        .. math::
-
-            n_b = \frac{N_b}{\Delta x_b \sum_c N_c},
-
-        where :math:`\Delta x_b` is the bin width.
+        No extra prior or test weight is applied: both are already included in
+        :math:`w_{\rm rec}^j`. The observed interval, selected colors and matching
+        sets are unchanged. This method can be called repeatedly for different
+        reference properties, bin edges and normalization choices.
 
         Parameters
         ----------
         variable : str
-            Numerical column to reconstruct, required only in the reference.
-            It should differ from ``selection_variable``, e.g. stellar mass for a
-            magnitude-selected sample, or spectroscopic redshift for a sample
-            selected in photometric redshift.
+            Numerical reference property :math:`x`. It is not required in the test
+            sample. It should differ from selection_variable, although this is not
+            enforced. Use 'redshift' or the reference Dataset's declared z_gal_string
+            alias for redshift reconstruction; other names refer to point columns.
         bin_edges : array-like of float
-            One-dimensional finite, strictly increasing edges. Unequal bin
-            widths are supported. Bins are ``[left, right)``,
-            except the last, which includes its right edge. These edges
-            need not lie inside the interval used to select the sample.
+            Finite, strictly increasing one-dimensional edges, with at least two
+            entries. Unequal widths are supported. Point-estimate bins are
+            ``[left, right)``, except the last, which also includes its right edge.
+            Edges need not fall within the observed sample-selection interval.
         normalize : bool, default=True
-            If ``True``, return a probability density with unit integral over the
-            supplied bin range. If ``False``, return sums of transferred test
-            weights in each bin. The latter are ordinary expected counts only
-            when test weights are unity; otherwise they are weighted counts.
+            Return the density :math:`n_b=N_b/[(e_{b+1}-e_b)\sum_cN_c]` if True,
+            or unnormalized weighted counts :math:`N_b` if False. With unit test
+            weights, each supported test object contributes one count in total
+            when bins cover all transferred values or PDZ probability mass.
         use_pdzs : bool or None, default=None
-            None automatically uses reference PDZs if ``variable=="redshift"`` or if it
-            equals the reference Dataset's z_gal_string alias if CDZs are available.
-            Otherwise use point estimates. True requires reference PDZs and a
-            redshift variable; False forces point estimates and warns if
-            available redshift PDZs are being bypassed. This option does not
-            change the point-based parent-sample selection or the matching.
-            PDZs are never inferred to belong to an arbitrary column name.
+            None automatically uses reference PDZs for redshift when available,
+            otherwise point estimates. True requires reference PDZs and a redshift
+            variable. False forces point estimates and warns when available
+            redshift PDZs are bypassed. PDFs for arbitrary other properties are
+            not supported. Test PDZs are never used.
 
         Returns
         -------
         numpy.ndarray
-            Array of length ``len(bin_edges)-1``. With ``normalize=True`` the units are
-            inverse units of ``variable``. Otherwise, the units are those of the
-            test weights. Edges are not returned.
+            Shape ``(len(bin_edges) - 1,)``; edges are not returned. Density units
+            are inverse units of variable. Unnormalized counts have test-weight
+            units. Normalized output integrates to one over the supplied range.
 
         Raises
         ------
         RuntimeError
-            If :meth:`~fomoz.probability.reconstruction.Reconstruction.process`
-            has not succeeded or ``self.colors`` changed afterwards.
+            If process has not succeeded or the color list changed afterwards.
+        TypeError, KeyError
+            For an invalid variable or use_pdzs argument, or a missing required
+            reference column.
+        ValueError
+            For invalid bin edges, unavailable or invalid requested PDZs, PDZ use
+            for another property, missing redshift designation in point-redshift
+            mode, invalid point values in contributing references, or zero weight
+            inside the range when normalize=True.
 
         Notes
         -----
-        For redshift reconstruction, a non-None ``reference_dataset.z_gal_string``
-        is accepted as an alias for ``"redshift"``. Point estimates are read
-        from the standardized column, even if the original column is retained.
-        With ``z_gal_string=None``, use ``"redshift"`` to access reference PDZs;
-        no point estimates are required in PDZ mode, and no other name is
-        inferred to be a redshift alias. The ``use_pdzs`` parameter controls
-        their use. Other properties use point values.
-        Values or PDZ mass outside the bin range are excluded, with a warning
-        reporting the lost weight fraction. Normalized output is therefore
-        conditional on that range. If :meth:`process` used ``unmatched='drop'``,
-        it also represents only the supported test subset.
+        The declared reference z_gal_string resolves to the standardized 'redshift'
+        column even if its original column remains present. With z_gal_string=None,
+        use 'redshift' to access supplied reference PDZs without point redshifts;
+        point-redshift reconstruction requires a declared redshift column.
+
+        Only reference rows with positive transferred weight are used. Invalid
+        point values in those rows cause an error rather than silent removal.
+        PDZ mode validates the contributing cumulative distributions and integrates
+        by linear interpolation at bin edges; see _pdz_histogram.
+
+        Values or PDZ mass outside the bin range are omitted. A lost-weight fraction
+        above 1e-12 triggers a warning. Normalization is conditional on the retained
+        range and, if unmatched='drop' excluded test objects, on the supported test
+        subset. With normalize=False, an empty represented range returns zero counts.
+        No uncertainty estimates are returned.
         """
         # Initial checks
         if self.reference_weights is None:
@@ -920,54 +940,52 @@ class Reconstruction:
 
     def _pdz_histogram(self, edges):
         r"""
-        Compute weighted bin counts from reference cumulative redshift distributions.
+        Compute transferred-weight counts from normalized reference cumulative PDZs.
 
-        For each contributing reference object, obtain the probability mass
-        in each bin from differences between its cumulative probabilities.
-        Multiply these masses by the reference weights transferred during
-        :meth:`process` and sum over reference objects:
+        For each positive-weight contributing reference, linearly interpolate its
+        cumulative redshift distribution :math:`C_{\rm ref}^j` at the bin edges:
 
         .. math::
 
-            N_b = \sum_j w_{\mathrm{rec}}^j
-            \left[F_j^{\mathrm{interp}}(e_{b+1})
-            - F_j^{\mathrm{interp}}(e_b)\right].
+            N_b=\sum_j w_{\rm rec}^j
+                [C_{\rm ref}^j(e_{b+1})-C_{\rm ref}^j(e_b)].
 
-        Here, :math:`F_j^{\mathrm{interp}}` is the reference cumulative
-        redshift distribution linearly interpolated at the requested
-        bin edges :math:`e_b`.
+        This numerically represents the bin integral of :math:`p^j(z)` in the
+        class docstring. Weights are scaled by their total before accumulation and
+        rescaled afterwards. Bin masses are clipped to [0, 1] for numerical residuals.
 
         Parameters
         ----------
         edges : numpy.ndarray
-            One-dimensional array of finite, strictly increasing redshift
-            bin edges. These conditions are checked by :meth:`get_distribution`
-            before calling this method.
+            Finite, strictly increasing redshift edges, already validated by
+            get_distribution.
 
         Returns
         -------
         counts : numpy.ndarray
-            Unnormalized weighted counts, with shape ``(len(edges) - 1,)``.
-            Counts are not divided by bin widths. For full-grid coverage,
-            their sum equals the total transferred reference weight.
+            Unnormalized weighted counts of shape ``(len(edges) - 1,)``. With full
+            PDZ-grid coverage, their sum equals total transferred reference weight.
         lost_fraction : float
-            Fraction of the total transferred weight outside the represented
-            bin range, computed as one minus the retained probability fraction.
-            This is a weighted probability fraction, not an object fraction.
+            Transferred-weight fraction of probability mass outside the bin range,
+            not the fraction of objects outside it.
+
+        Raises
+        ------
+        ValueError
+            For an invalid PDZ grid, a cumulative-array shape inconsistent with the
+            full reference, or invalid contributing cumulative distributions.
+            Rows must be finite, nondecreasing and normalized from zero to one over
+            PDZ_x, within a tolerance of 1e-10. Excess total retained mass also raises.
 
         Notes
         -----
-        This method requires reference PDZs and transferred weights computed
-        by :meth:`process`, with a positive total transferred weight.
-        CDF rows and weights refer to the full reference catalogue.
-        Only rows with positive transferred weight are checked and used.
-        Cumulative probabilities are linearly interpolated at the requested
-        bin edges. Below and above the supplied PDZ grid, cumulative values
-        are set to zero and one, respectively. The grid defines the normalized
-        probability support; probability outside that grid is unknown.
-        No matching, feature selection, or density normalization is performed.
-        The returned lost fraction is used by :meth:`get_distribution` to
-        report excluded weight; this method does not itself issue that warning.
+        Requires a successful process call and positive total transferred weight.
+        PDZ arrays retain the full input-reference row ordering. Only rows with
+        positive reference_weights are validated and used. Below and above PDZ_x,
+        interpolated cumulative values are zero and one. The supplied grid defines
+        normalized PDZ support; unrepresented probability outside it is unknown.
+        No matching, feature selection, density normalization or warning emission
+        is performed here. get_distribution handles normalization and lost weight.
         """
         reference = self.reference_dataset
         grid = np.asarray(reference.PDZ_x, dtype=float)
