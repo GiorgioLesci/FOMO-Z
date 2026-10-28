@@ -68,9 +68,9 @@ The figure below shows execution time (top) and peak memory usage (bottom) as a 
 
 ![FOMO-Z performance](https://github.com/user-attachments/assets/005a674a-e4a0-43da-b4cf-9904338531a3)
 
-The panels compare `LinearClassification` and `GridClassification` (left), `PointProbability` and `Reconstruction` (middle), and the feature-selection and processing stages of `ProbabilityFunction` (right). CPU configurations are indicated in the legends. Memory is measured using PSS, which accounts proportionally for shared memory. `ProbabilityFunction` repeats feature selection at each sampled threshold, making its computational cost substantial compared to `PointProbability` and `Reconstruction`.
+The panels compare `LinearClassification` and `GridClassification` (left), `PointProbability` and `Reconstruction` (middle), and the feature-selection and processing stages of `ProbabilityFunction` (right). CPU configurations are indicated in the legends. Memory is measured using PSS, which accounts proportionally for shared memory. Default input parameters are used where possible. `ProbabilityFunction` repeats feature selection at each sampled threshold, making its computational cost relatively substantial compared to `PointProbability` and `Reconstruction`.
 
-Once calibrated for a given reference sample and selection configuration, the resulting color selections can be applied to compatible photometric datasets through `Classifier` without repeating the calibration.
+The `LinearClassification` and `GridClassification` calibrations are computed only once, and are then applied to any test dataset using the \texttt{Classifier} class. Since this class relies on vectorized array operations over precomputed color conditions and grids, its execution time is negligible compared to that of the calibration step itself.
 
 ## Installation
 
