@@ -66,7 +66,7 @@ Unlike the `get_distribution()` method of `LinearClassification` and `GridClassi
 
 The figure below shows execution time (top) and peak memory usage (bottom) as a function of the number of photometric bands. COSMOS20 is used as the reference sample and, for the probability routines, also as the test sample.
 
-![FOMO-Z performance](https://github.com/user-attachments/assets/005a674a-e4a0-43da-b4cf-9904338531a3)
+![FOMO-Z performance](https://github.com/user-attachments/assets/fec19a2f-1631-48f7-966b-0e102459ead9)
 
 The panels compare `LinearClassification` and `GridClassification` (left), `PointProbability` and `Reconstruction` (middle), and the feature-selection and processing stages of `ProbabilityFunction` (right). CPU configurations are indicated in the legends. Memory is measured using PSS, which accounts proportionally for shared memory. Default input parameters are used where possible. `ProbabilityFunction` repeats feature selection at each sampled threshold, making its computational cost relatively substantial compared to `PointProbability` and `Reconstruction`.
 
