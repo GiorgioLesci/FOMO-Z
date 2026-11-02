@@ -128,5 +128,4 @@ Bug reports, questions, and feature suggestions are welcome through the [issue t
 ## Citation
 
 If you use `FOMO-Z` in your research, please cite the accompanying paper,
-[Lesci (2026), arXiv:2610.40875](https://arxiv.org/abs/2610.40875).
-The BibTeX entry is available on [NASA ADS](https://ui.adsabs.harvard.edu/abs/2026arXiv261040875L/exportcitation).
+[Lesci (2026), arXiv:2610.40875](https://ui.adsabs.harvard.edu/abs/2026arXiv261040875L/abstract).
